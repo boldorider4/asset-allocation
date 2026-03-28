@@ -1,5 +1,7 @@
+import argparse
 import json
 import numpy as np
+import asset_price
 
 from pathlib import Path
 from portfolio import Portfolio
@@ -60,4 +62,13 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Portfolio allocation report.")
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Fetch fresh prices; do not read or write cache.json.",
+    )
+    args = parser.parse_args()
+    if args.no_cache:
+        asset_price.IGNORE_CACHE = True
     main()

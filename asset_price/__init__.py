@@ -10,6 +10,8 @@ YFINANCE = "yfinance"
 JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
 CACHE_FILENAME = "cache.json"
+# Set True (e.g. via CLI) to skip reading/writing cache.json for prices.
+IGNORE_CACHE = False
 
 
 def _save_cache(cache: dict[str, float]) -> None:
@@ -38,14 +40,18 @@ def make_position(
     dmem: float | None = None,
     usavn: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
-    cache = _load_cache()
-    last_price = cache.get(isin)
+    if IGNORE_CACHE:
+        cache: dict[str, float] = {}
+        last_price = None
+    else:
+        cache = _load_cache()
+        last_price = cache.get(isin)
     if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, shares, value, broker, dmem, usavn, last_price)
     elif POSITION_SOURCE == JUSTETF:
         position = JustETFPosition(isin, shares, value, broker, dmem, usavn, last_price)
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-    if last_price is None and isin is not None:
+    if not IGNORE_CACHE and last_price is None and isin is not None:
         _save_price_in_cache(cache, position.last_price, isin)
     return position
