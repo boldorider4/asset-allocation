@@ -37,9 +37,10 @@ class JustETFPosition(Position):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        last_price: float | None = None,
     ) -> None:
         self._chart: dict | None = None
-        super().__init__(isin, shares, value, broker, dmem, usavn)
+        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
 
     def _http_chart_json(self, *, currency: str) -> dict:
         params = dict(self._CHART_PARAMS, currency=currency)

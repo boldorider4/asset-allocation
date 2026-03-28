@@ -21,8 +21,9 @@ class YFinancePosition(Position):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        last_price: float | None = None,
     ) -> None:
-        super().__init__(isin, shares, value, broker, dmem, usavn)
+        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
         self._retries = 10
         self._delay_s = 1
         self._ticker: yf.Ticker | None = None

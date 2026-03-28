@@ -15,6 +15,7 @@ class Position(ABC):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        last_price: float | None = None,
     ) -> None:
         self._shares = shares
         self._value = value
@@ -22,12 +23,18 @@ class Position(ABC):
         self._isin = isin
         self._dmem = dmem
         self._usavn = usavn
-        if self._isin is not None:
+        # the logic is: if last_price is provided, it means it was cached
+        if last_price is not None:
+            self._last_price = last_price
+        # if not, let's try and determine it from the ISIN
+        elif self._isin is not None:
             self._last_price = self._fast_info_price()
+            # if the fetch was unsuccessful
             if self._last_price is None:
                 raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
-        else:
-            self._last_price = None
+        # otherwise, no price is cached or determined if only the value of the position is provided
+        elif self._value is None:
+            raise RuntimeError(f"No last price for position because neither value nor ISIN was provided")
 
     @property
     def isin(self) -> str:
@@ -48,6 +55,10 @@ class Position(ABC):
     @property
     def usavn(self) -> float | None:
         return self._usavn
+
+    @property
+    def last_price(self) -> float | None:
+        return self._last_price
 
     def price_history(self) -> float:
         p = self._history_last_close()
