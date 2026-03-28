@@ -1,6 +1,6 @@
 import numpy as np
 
-from position import _price_from_isin
+from position import price_from_isin
 
 # globals
 NAME = "name"
@@ -30,7 +30,7 @@ def position_value(security: dict) -> float:
             raise ValueError(
                 f"Missing ISIN for position with shares: {security.get(NAME)}"
             )
-        return float(sh) * _price_from_isin(isin)
+        return float(sh) * price_from_isin(isin)
     val = security.get(VALUE)
     if val is not None:
         return float(val)
