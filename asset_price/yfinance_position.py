@@ -16,6 +16,8 @@ class YFinancePosition(Position):
     """
 
     _EURUSD_SYMBOL = "EURUSD=X"
+    _RETRIES = 10
+    _DELAY_S = 1
 
     def __init__(
         self, isin: str,
@@ -27,29 +29,10 @@ class YFinancePosition(Position):
         last_price: float | None = None,
     ) -> None:
         print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
-        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
-        self._retries = 10
-        self._delay_s = 1
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
         self._eur_usd_rate: float | None = None
-
-        for attempt in range(self._retries):
-            try:
-                self._ticker = yf.Ticker(isin)
-                break
-            except YFRateLimitError as e:
-                if attempt + 1 < self._retries:
-                    time.sleep(self._delay_s)
-                    continue
-                raise RuntimeError(
-                    f"Yahoo Finance rate limit after {self._retries} attempts "
-                    f"for ISIN {self._isin}"
-                ) from e
-
-        if self._ticker is None:
-            raise RuntimeError(f"Could not construct Yahoo ticker for ISIN {self._isin}")
-        self._init_eur_scaling()
+        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
 
     def _read_listing_currency(self) -> str | None:
             fast = getattr(self._ticker, "fast_info", None)
@@ -72,7 +55,6 @@ class YFinancePosition(Position):
 
         fx = _factory(self._EURUSD_SYMBOL)
         return fx.last_price
-
 
     def _init_eur_scaling(self) -> None:
         self._listing_currency = self._read_listing_currency()
@@ -100,6 +82,23 @@ class YFinancePosition(Position):
         return float(raw)
 
     def _fast_info_price(self) -> float | None:
+        for attempt in range(self._RETRIES):
+            try:
+                self._ticker = yf.Ticker(self._isin)
+                break
+            except YFRateLimitError as e:
+                if attempt + 1 < self._RETRIES:
+                    time.sleep(self._DELAY_S)
+                    continue
+                raise RuntimeError(
+                    f"Yahoo Finance rate limit after {self._RETRIES} attempts "
+                    f"for ISIN {self._isin}"
+                ) from e
+
+        if self._ticker is None:
+            raise RuntimeError(f"Could not construct Yahoo ticker for ISIN {self._isin}")
+        self._init_eur_scaling()
+
         fast = getattr(self._ticker, "fast_info", None)
         if fast is None:
             return None

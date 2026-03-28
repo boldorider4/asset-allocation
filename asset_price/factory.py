@@ -7,7 +7,7 @@ from asset_price.yfinance_position import YFinancePosition
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
-POSITION_SOURCE = JUSTETF
+POSITION_SOURCE = YFINANCE
 CACHE_FILENAME = "cache.json"
 
 
