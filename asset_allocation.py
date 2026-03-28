@@ -1,8 +1,6 @@
 import numpy as np
 
-from asset_price.justetf_position import JustETFPosition
-from asset_price.yfinance_position import YFinancePosition
-from position import Position
+from position import make_position
 
 # globals
 NAME = "name"
@@ -23,17 +21,6 @@ DMEM = "dmem"
 # 0 => 100% non-us
 USAVN = "usavn"
 
-# "yfinance" | "justetf"
-POSITION_SOURCE = "justetf"
-
-
-def _make_position(isin: str) -> Position:
-    if POSITION_SOURCE == "yfinance":
-        return YFinancePosition(isin)
-    if POSITION_SOURCE == "justetf":
-        return JustETFPosition(isin)
-    raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-
 
 def position_value(security: dict) -> float:
     sh = security.get(SHARES)
@@ -43,7 +30,7 @@ def position_value(security: dict) -> float:
             raise ValueError(
                 f"Missing ISIN for position with shares: {security.get(NAME)}"
             )
-        pos = _make_position(isin)
+        pos = make_position(isin)
         return float(sh) * pos.last_price()
     val = security.get(VALUE)
     if val is not None:
