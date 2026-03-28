@@ -49,16 +49,27 @@ class Position(ABC):
 
 
 class YFinancePosition(Position):
-    """Yahoo Finance via yfinance (ISIN as ticker symbol where supported)."""
+    """
+    Yahoo Finance via yfinance (ISIN as ticker symbol where supported).
+    Quotes are returned in EUR: for USD-listed instruments, Yahoo's
+    ``EURUSD=X`` spot (USD per 1 EUR) is stored in ``_eur_usd_rate`` and
+    ``_fast_info_price`` / ``_history_last_close`` divide raw USD by that rate.
+    """
+
+    _EURUSD_SYMBOL = "EURUSD=X"
 
     def __init__(self, isin: str) -> None:
         super().__init__(isin)
-        self._ticker = None
         self._retries = 10
-        self._delay_s = 0.1
+        self._delay_s = 1
+        self._ticker: yf.Ticker | None = None
+        self._listing_currency: str | None = None
+        self._eur_usd_rate: float | None = None
+
         for attempt in range(self._retries):
             try:
                 self._ticker = yf.Ticker(isin)
+                break
             except YFRateLimitError as e:
                 if attempt + 1 < self._retries:
                     time.sleep(self._delay_s)
@@ -67,6 +78,79 @@ class YFinancePosition(Position):
                     f"Yahoo Finance rate limit after {self._retries} attempts "
                     f"for ISIN {self._isin}"
                 ) from e
+
+        if self._ticker is None:
+            raise RuntimeError(f"Could not construct Yahoo ticker for ISIN {self._isin}")
+        self._init_eur_scaling()
+
+    def _read_listing_currency(self) -> str | None:
+            fast = getattr(self._ticker, "fast_info", None)
+            if fast is not None:
+                for key in ("currency", "currencyCode"):
+                    try:
+                        c = fast.get(key) if hasattr(fast, "get") else fast[key]
+                    except (KeyError, TypeError, AttributeError):
+                        c = None
+                    if c:
+                        return str(c).upper()
+            info = self._ticker.info
+            if isinstance(info, dict) and info.get("currency"):
+                return str(info["currency"]).upper()
+            return None
+
+    def _fetch_spot_eur_usd(self) -> float | None:
+        """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
+
+        for attempt in range(self._retries):
+            try:
+                fx = yf.Ticker(self._EURUSD_SYMBOL)
+                fast = getattr(fx, "fast_info", None)
+                if fast is not None:
+                    for key in ("last_price", "lastPrice"):
+                        try:
+                            lp = fast.get(key) if hasattr(fast, "get") else fast[key]
+                        except (KeyError, TypeError, AttributeError):
+                            lp = None
+                        if lp is not None:
+                            return float(lp)
+                for period in ("1d", "5d"):
+                    hist = fx.history(period=period, interval="1d")
+                    if not hist.empty:
+                        return float(hist["Close"].iloc[-1])
+                return None
+            except YFRateLimitError as e:
+                if attempt + 1 < self._retries:
+                    time.sleep(self._delay_s)
+                    continue
+                raise RuntimeError(
+                    f"Yahoo Finance rate limit after {self._retries} attempts "
+                    f"for ISIN {self._isin}"
+                ) from e
+
+    def _init_eur_scaling(self) -> None:
+        self._listing_currency = self._read_listing_currency()
+        if self._listing_currency == "EUR" or self._listing_currency is None:
+            self._eur_usd_rate = None
+            return
+        if self._listing_currency != "USD":
+            self._eur_usd_rate = None
+            return
+        rate = self._fetch_spot_eur_usd()
+        if rate is None or rate <= 0:
+            raise RuntimeError(
+                f"USD-listed ISIN {self._isin} but could not load {self._EURUSD_SYMBOL} for EUR conversion"
+            )
+        self._eur_usd_rate = rate
+
+    def _quote_to_eur(self, raw: float) -> float:
+        """USD listings: ``_eur_usd_rate`` is USD per 1 EUR → EUR = USD / rate."""
+        if (
+            self._listing_currency == "USD"
+            and self._eur_usd_rate is not None
+            and self._eur_usd_rate > 0
+        ):
+            return float(raw) / self._eur_usd_rate
+        return float(raw)
 
     def _fast_info_price(self) -> float | None:
         fast = getattr(self._ticker, "fast_info", None)
@@ -78,14 +162,14 @@ class YFinancePosition(Position):
             except (KeyError, TypeError, AttributeError):
                 lp = None
             if lp is not None:
-                return float(lp)
+                return self._quote_to_eur(float(lp))
         return None
 
     def _history_last_close(self) -> float | None:
         for period in ("1d", "5d"):
             hist = self._ticker.history(period=period, interval="1d")
             if not hist.empty:
-                return float(hist["Close"].iloc[-1])
+                return self._quote_to_eur(float(hist["Close"].iloc[-1]))
         return None
 
 
