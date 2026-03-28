@@ -8,18 +8,38 @@ from abc import ABC, abstractmethod
 class Position(ABC):
     """ISIN-based price lookup: fast quote vs last historical close."""
 
-    def __init__(self, isin: str) -> None:
+    def __init__(
+        self, isin: str,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+    ) -> None:
+        self._shares = shares
+        self._value = value
+        self._broker = broker
         self._isin = isin
+        self._dmem = dmem
+        self._usavn = usavn
+        if self._isin is not None:
+            self._last_price = self._fast_info_price()
+            if self._last_price is None:
+                raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
+        else:
+            self._last_price = None
 
     @property
     def isin(self) -> str:
         return self._isin
 
-    def last_price(self) -> float:
-        p = self._fast_info_price()
-        if p is None:
-            raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
-        return float(p)
+    @property
+    def value(self) -> float | None:
+        if self._value is not None:
+            return self._value
+        if self._shares is not None:
+            return self._shares * self._last_price
+        return None
 
     def price_history(self) -> float:
         p = self._history_last_close()

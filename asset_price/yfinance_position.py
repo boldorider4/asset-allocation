@@ -14,8 +14,15 @@ class YFinancePosition(Position):
 
     _EURUSD_SYMBOL = "EURUSD=X"
 
-    def __init__(self, isin: str) -> None:
-        super().__init__(isin)
+    def __init__(
+        self, isin: str,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+    ) -> None:
+        super().__init__(isin, shares, value, broker, dmem, usavn)
         self._retries = 10
         self._delay_s = 1
         self._ticker: yf.Ticker | None = None
@@ -135,7 +142,6 @@ if __name__ == "__main__":
     try:
         print(
             f"YFinance {_sample} last={_y.last_price():.4f} "
-            f"hist={_y.price_history():.4f}"
         )
     except Exception as ex:
         print(f"YFinance {_sample} (optional): {ex!r}")

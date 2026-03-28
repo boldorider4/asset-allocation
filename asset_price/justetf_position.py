@@ -30,9 +30,16 @@ class JustETFPosition(Position):
     _RETRIES = 10
     _DELAY_S = 0.1
 
-    def __init__(self, isin: str) -> None:
-        super().__init__(isin)
+    def __init__(
+        self, isin: str,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+    ) -> None:
         self._chart: dict | None = None
+        super().__init__(isin, shares, value, broker, dmem, usavn)
 
     def _http_chart_json(self, *, currency: str) -> dict:
         params = dict(self._CHART_PARAMS, currency=currency)
@@ -98,4 +105,4 @@ class JustETFPosition(Position):
 if __name__ == "__main__":
     _sample = "IE000BI8OT95"
     _j = JustETFPosition(_sample)
-    print(f"JustETF {_sample} last={_j.last_price():.4f} hist={_j.price_history():.4f}")
+    print(f"JustETF {_sample} last={_j.last_price():.4f}")

@@ -43,19 +43,15 @@ def load_portfolio(path: Path | None = None) -> dict[str, list[dict]]:
 
 
 def position_value(security: dict) -> float:
-    sh = security.get(SHARES)
-    isin = security.get(ISIN)
-    if sh is not None:
-        if not isin:
-            raise ValueError(
-                f"Missing ISIN for position with shares: {security.get(NAME)}"
-            )
-        pos = make_position(isin)
-        return float(sh) * pos.last_price()
-    val = security.get(VALUE)
-    if val is not None:
-        return float(val)
-    raise ValueError(f"Cannot value position: {security.get(NAME)}")
+    pos = make_position(
+        isin=security.get(ISIN),
+        shares=security.get(SHARES),
+        value=security.get(VALUE),
+        broker=security.get(BROKER),
+        dmem=security.get(DMEM),
+        usavn=security.get(USAVN),
+    )
+    return pos.value
 
 
 def main():
