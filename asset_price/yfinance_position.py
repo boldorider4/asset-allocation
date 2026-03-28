@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
-from position import Position
+from asset_price.position import Position
 
 class YFinancePosition(Position):
     """

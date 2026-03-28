@@ -5,20 +5,6 @@ Position pricing: abstract base plus Yahoo Finance and JustETF implementations.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
-from asset_price.justetf_position import JustETFPosition
-from asset_price.yfinance_position import YFinancePosition
-
-# "yfinance" | "justetf"
-POSITION_SOURCE = "justetf"
-
-
-def make_position(isin: str) -> Position:
-    if POSITION_SOURCE == "yfinance":
-        return YFinancePosition(isin)
-    if POSITION_SOURCE == "justetf":
-        return JustETFPosition(isin)
-    raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-
 class Position(ABC):
     """ISIN-based price lookup: fast quote vs last historical close."""
 

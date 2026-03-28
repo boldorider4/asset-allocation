@@ -4,7 +4,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import json
-from position import Position
+from asset_price.position import Position
 
 class JustETFPosition(Position):
     """

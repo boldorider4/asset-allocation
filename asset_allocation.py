@@ -1,6 +1,6 @@
 import numpy as np
 
-from position import make_position
+from asset_price import make_position
 
 # globals
 NAME = "name"
