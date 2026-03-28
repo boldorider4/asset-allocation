@@ -45,6 +45,7 @@ def main():
     # calculate us vs. non-us allocation within developed markets
     usavn_allocation = float(np.dot(equity_portfolio.position_values, equity_portfolio.usavn)) / float(np.dot(equity_portfolio.position_values, equity_portfolio.dmem))
     print('us vs. non-us allocation within developed markets: {:.2f}%'.format(usavn_allocation * 100))
+    print('equity portfolio value: {:.2f}'.format(equity_portfolio.total_value))
 
     print("*************** Fixed maturity bond portfolio ***************")
     print('bimmer fund: {:.2f}'.format(fixed_maturity_bond_portfolio.total_value))
