@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asset-allocation"
+version = "0.1.0"
+description = "Personal asset allocation and position pricing"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "yfinance",
+]
+
+[tool.setuptools]
+py-modules = ["position", "asset_allocation"]
+packages = ["asset_price"]
