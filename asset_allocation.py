@@ -1,6 +1,8 @@
 import numpy as np
 
-from position import JustETFPosition, Position, YFinancePosition
+from asset_price.justetf_position import JustETFPosition
+from asset_price.yfinance_position import YFinancePosition
+from position import Position
 
 # globals
 NAME = "name"
