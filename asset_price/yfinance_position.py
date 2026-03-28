@@ -68,9 +68,9 @@ class YFinancePosition(Position):
 
     def _fetch_spot_eur_usd(self) -> float | None:
         """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
-        from asset_price.make_position import make_position as _make_position
+        from asset_price.factory import factory as _factory
 
-        fx = _make_position(self._EURUSD_SYMBOL)
+        fx = _factory(self._EURUSD_SYMBOL)
         return fx.last_price
 
 

@@ -25,7 +25,7 @@ def _save_price_in_cache(cache: dict[str, float], price: float, isin: str) -> No
         json.dump(cache, f)
 
 
-def make_position(
+def factory(
     isin: str,
     shares: float | None = None,
     value: float | None = None,

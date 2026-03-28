@@ -1,4 +1,4 @@
-from asset_price.make_position import make_position
+from asset_price.factory import factory as _factory
 import numpy as np
 
 
@@ -24,7 +24,7 @@ class Portfolio:
         self._name = name
         self._positions = list()
         for position in positions:
-            self._positions.append(make_position(
+            self._positions.append(_factory(
                 isin=position.get(ISIN),
                 shares=position.get(SHARES),
                 value=position.get(VALUE),
