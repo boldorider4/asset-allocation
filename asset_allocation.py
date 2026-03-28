@@ -1,7 +1,3 @@
-import numpy as np
-
-from asset_price import make_position
-
 # globals
 NAME = "name"
 SHARES = "shares"
@@ -20,23 +16,6 @@ DMEM = "dmem"
 # .7 => 70% us
 # 0 => 100% non-us
 USAVN = "usavn"
-
-
-def position_value(security: dict) -> float:
-    sh = security.get(SHARES)
-    isin = security.get(ISIN)
-    if sh is not None:
-        if not isin:
-            raise ValueError(
-                f"Missing ISIN for position with shares: {security.get(NAME)}"
-            )
-        pos = make_position(isin)
-        return float(sh) * pos.last_price()
-    val = security.get(VALUE)
-    if val is not None:
-        return float(val)
-    raise ValueError(f"Cannot value position: {security.get(NAME)}")
-
 
 ### Pillar 3 portfolio composition
 
@@ -113,25 +92,3 @@ cash_portfolio = [
       DMEM: 1,
       USAVN: 0},
     ]
-
-print("*************** Equity portfolio ***************")
-
-# calculate developed markets vs. emerging markets allocation
-dmem_values = [security[DMEM] for security in equity_portfolio]
-portfolio_values = [position_value(security) for security in equity_portfolio]
-dmem_allocation = float(np.dot(portfolio_values, dmem_values)) / float(np.sum(portfolio_values))
-print('developed markets vs. emerging markets allocation: {:.2f}%'.format(dmem_allocation * 100))
-
-# calculate us vs. non-us allocation within developed markets
-usavn_values = [security[USAVN] for security in equity_portfolio]
-usavn_allocation = float(np.dot(portfolio_values, usavn_values)) / float(np.dot(portfolio_values, dmem_values))
-print('us vs. non-us allocation within developed markets: {:.2f}%'.format(usavn_allocation * 100))
-
-print("*************** Fixed maturity bond portfolio ***************")
-print('bimmer fund: {:.2f}'.format(np.sum([position_value(security) for security in fixed_maturity_bond_portfolio])))
-
-print("*************** Emergency fund portfolio ***************")
-print('emergency fund: {:.2f}'.format(np.sum([position_value(security) for security in cash_portfolio])))
-
-print("*************** Total portfolio value ***************")
-print('total portfolio value: {:.2f}'.format(np.sum([position_value(security) for security in equity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + bond_portfolio + commodity_portfolio])))
