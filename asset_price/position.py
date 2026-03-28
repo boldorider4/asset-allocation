@@ -41,6 +41,14 @@ class Position(ABC):
             return self._shares * self._last_price
         return None
 
+    @property
+    def dmem(self) -> float | None:
+        return self._dmem
+
+    @property
+    def usavn(self) -> float | None:
+        return self._usavn
+
     def price_history(self) -> float:
         p = self._history_last_close()
         if p is None:
