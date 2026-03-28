@@ -16,7 +16,7 @@ class YFinancePosition(Position):
     """
 
     _EURUSD_SYMBOL = "EURUSD=X"
-    _RETRIES = 10
+    _RETRIES = 1
     _DELAY_S = 1
 
     def __init__(
@@ -28,7 +28,7 @@ class YFinancePosition(Position):
         usavn: float | None = None,
         last_price: float | None = None,
     ) -> None:
-        print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
+        #print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
         self._eur_usd_rate: float | None = None
@@ -97,7 +97,10 @@ class YFinancePosition(Position):
 
         if self._ticker is None:
             raise RuntimeError(f"Could not construct Yahoo ticker for ISIN {self._isin}")
-        self._init_eur_scaling()
+        if self._isin != "EURUSD=X":
+            self._init_eur_scaling()
+        else:
+            self._eur_usd_rate = 1.0
 
         fast = getattr(self._ticker, "fast_info", None)
         if fast is None:
