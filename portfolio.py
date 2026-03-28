@@ -1,4 +1,4 @@
-from asset_price import make_position
+from asset_price.make_position import make_position
 import numpy as np
 
 

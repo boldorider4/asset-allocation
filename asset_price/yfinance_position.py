@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import time
 import yfinance as yf
+
 from yfinance.exceptions import YFRateLimitError
 from asset_price.position import Position
+
 
 class YFinancePosition(Position):
     """
@@ -23,6 +26,7 @@ class YFinancePosition(Position):
         usavn: float | None = None,
         last_price: float | None = None,
     ) -> None:
+        print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
         self._retries = 10
         self._delay_s = 1
@@ -64,32 +68,11 @@ class YFinancePosition(Position):
 
     def _fetch_spot_eur_usd(self) -> float | None:
         """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
+        from asset_price.make_position import make_position as _make_position
 
-        for attempt in range(self._retries):
-            try:
-                fx = yf.Ticker(self._EURUSD_SYMBOL)
-                fast = getattr(fx, "fast_info", None)
-                if fast is not None:
-                    for key in ("last_price", "lastPrice"):
-                        try:
-                            lp = fast.get(key) if hasattr(fast, "get") else fast[key]
-                        except (KeyError, TypeError, AttributeError):
-                            lp = None
-                        if lp is not None:
-                            return float(lp)
-                for period in ("1d", "5d"):
-                    hist = fx.history(period=period, interval="1d")
-                    if not hist.empty:
-                        return float(hist["Close"].iloc[-1])
-                return None
-            except YFRateLimitError as e:
-                if attempt + 1 < self._retries:
-                    time.sleep(self._delay_s)
-                    continue
-                raise RuntimeError(
-                    f"Yahoo Finance rate limit after {self._retries} attempts "
-                    f"for ISIN {self._isin}"
-                ) from e
+        fx = _make_position(self._EURUSD_SYMBOL)
+        return fx.last_price
+
 
     def _init_eur_scaling(self) -> None:
         self._listing_currency = self._read_listing_currency()
