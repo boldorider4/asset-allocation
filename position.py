@@ -53,16 +53,12 @@ class YFinancePosition(Position):
 
     def __init__(self, isin: str) -> None:
         super().__init__(isin)
+        self._ticker = None
         self._retries = 10
         self._delay_s = 0.1
-
-    def _ticker(self) -> yf.Ticker:
-        return yf.Ticker(self._isin)
-
-    def _with_yf_retry(self, fn):
         for attempt in range(self._retries):
             try:
-                return fn()
+                self._ticker = yf.Ticker(isin)
             except YFRateLimitError as e:
                 if attempt + 1 < self._retries:
                     time.sleep(self._delay_s)
@@ -73,32 +69,24 @@ class YFinancePosition(Position):
                 ) from e
 
     def _fast_info_price(self) -> float | None:
-        def _read() -> float | None:
-            ticker = self._ticker()
-            fast = getattr(ticker, "fast_info", None)
-            if fast is None:
-                return None
-            for key in ("last_price", "lastPrice"):
-                try:
-                    lp = fast.get(key) if hasattr(fast, "get") else fast[key]
-                except (KeyError, TypeError, AttributeError):
-                    lp = None
-                if lp is not None:
-                    return float(lp)
+        fast = getattr(self._ticker, "fast_info", None)
+        if fast is None:
             return None
-
-        return self._with_yf_retry(_read)
+        for key in ("last_price", "lastPrice"):
+            try:
+                lp = fast.get(key) if hasattr(fast, "get") else fast[key]
+            except (KeyError, TypeError, AttributeError):
+                lp = None
+            if lp is not None:
+                return float(lp)
+        return None
 
     def _history_last_close(self) -> float | None:
-        def _read() -> float | None:
-            ticker = self._ticker()
-            for period in ("1d", "5d"):
-                hist = ticker.history(period=period, interval="1d")
-                if not hist.empty:
-                    return float(hist["Close"].iloc[-1])
-            return None
-
-        return self._with_yf_retry(_read)
+        for period in ("1d", "5d"):
+            hist = self._ticker.history(period=period, interval="1d")
+            if not hist.empty:
+                return float(hist["Close"].iloc[-1])
+        return None
 
 
 class JustETFPosition(Position):
