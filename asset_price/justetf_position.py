@@ -261,8 +261,9 @@ class JustETFPosition(Position):
 
 if __name__ == "__main__":
     # Amundi Equity World UCITS ETF (Acc)
+    print("*************** Amundi Equity World UCITS ETF (Acc) ***************")
     _sample = "IE000BI8OT95"
-    _j = JustETFPosition(_sample)
+    _j = JustETFPosition(_sample, dmem_other=1)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
     countries = _j.countries()
@@ -272,8 +273,9 @@ if __name__ == "__main__":
     print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
     # Scalable AC World Xtrackers UCITS ETF (Acc)
+    print("*************** Scalable AC World Xtrackers UCITS ETF (Acc) ***************")
     _sample = "LU2903252349"
-    _j = JustETFPosition(_sample)
+    _j = JustETFPosition(_sample, dmem_other=.5)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
     countries = _j.countries()
@@ -283,8 +285,21 @@ if __name__ == "__main__":
     print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
     # iShares MSCI EM CTB Enhanced ESG UCITS ETF
+    print("*************** iShares MSCI EM CTB Enhanced ESG UCITS ETF ***************")
     _sample = "IE00BHZPJ239"
-    _j = JustETFPosition(_sample)
+    _j = JustETFPosition(_sample, dmem_other=0)
+    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+
+    countries = _j.countries()
+    for _row in countries:
+        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+
+    # Xtrackers MSCI World ex-USA UCITS ETF
+    print("*************** Xtrackers MSCI World ex-USA UCITS ETF ***************")
+    _sample = "IE0006WW1TQ4"
+    _j = JustETFPosition(_sample, dmem_other=1)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
     countries = _j.countries()
@@ -294,8 +309,9 @@ if __name__ == "__main__":
     print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
     # EUWAX Gold II
+    print("*************** EUWAX Gold II ***************")
     _sample = "DE000EWG2LD7"
-    _j = JustETFPosition(_sample)
+    _j = JustETFPosition(_sample, dmem_other=0)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
     countries = _j.countries()
