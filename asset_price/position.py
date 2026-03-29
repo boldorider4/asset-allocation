@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 
 
 _US_MARKET_NAME = "United States"
+_OTHER_MARKET_NAME = "Other"
 
 _LIST_OF_DEVELOPED_MARKETS = [
     _US_MARKET_NAME,
@@ -39,6 +40,7 @@ class Position(ABC):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        dmem_other: float | None = None,
         last_price: float | None = None,
     ) -> None:
         self._shares = shares
@@ -46,6 +48,7 @@ class Position(ABC):
         self._broker = broker
         self._isin = isin
         self._dmem = dmem
+        self._dmem_other = dmem_other
         self._usavn = usavn
         self._countries: list[dict[str, float | str]] | None = None
         # the logic is: if last_price is provided, it means it was cached

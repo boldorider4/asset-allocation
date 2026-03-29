@@ -13,6 +13,10 @@ ISIN = "ISIN"
 # 1 => 100% developed markets
 # 0 => 100% emerging markets
 DMEM = "dmem"
+# developed markets vs. other markets breakdown when coutry listed is "other"
+# 1 => 100% of "other" is considered developed markets
+# 0.5 => 50% of "other" is considered developed markets
+DMEM_OTHER = "dmem_other"
 # us vs. non-us breakdown
 # .7 => 70% us
 # 0 => 100% non-us
@@ -31,6 +35,7 @@ class Portfolio:
                 broker=position.get(BROKER),
                 dmem=position.get(DMEM),
                 usavn=position.get(USAVN),
+                dmem_other=position.get(DMEM_OTHER),
             ))
         self._value = self._calculate_value()
         self._dmem = self._calculate_dmem()

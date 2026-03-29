@@ -26,13 +26,14 @@ class YFinancePosition(Position):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        dmem_other: float | None = None,
         last_price: float | None = None,
     ) -> None:
         #print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
         self._eur_usd_rate: float | None = None
-        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
+        super().__init__(isin, shares, value, broker, dmem, usavn, dmem_other, last_price)
 
     def _read_listing_currency(self) -> str | None:
             fast = getattr(self._ticker, "fast_info", None)

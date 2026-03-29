@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from asset_price.position import Position, _LIST_OF_DEVELOPED_MARKETS, _LIST_OF_EMERGING_MARKETS, _US_MARKET_NAME
+from asset_price.position import Position, _LIST_OF_DEVELOPED_MARKETS, _LIST_OF_EMERGING_MARKETS, _US_MARKET_NAME, _OTHER_MARKET_NAME
 
 class JustETFPosition(Position):
     """
@@ -53,10 +53,11 @@ class JustETFPosition(Position):
         broker: str | None = None,
         dmem: float | None = None,
         usavn: float | None = None,
+        dmem_other: float | None = None,
         last_price: float | None = None,
     ) -> None:
         self._chart: dict | None = None
-        super().__init__(isin, shares, value, broker, dmem, usavn, last_price)
+        super().__init__(isin, shares, value, broker, dmem, usavn, dmem_other, last_price)
 
     def _http_chart_json(self, *, currency: str) -> dict:
         params = dict(self._CHART_PARAMS, currency=currency)
@@ -224,6 +225,9 @@ class JustETFPosition(Position):
                 us += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 non_us += _row["weight_pct"]
+            elif _row["name"] == _OTHER_MARKET_NAME:
+                us += _row["weight_pct"] * self._dmem_other
+                non_us += _row["weight_pct"] * (1 - self._dmem_other)
         if us + non_us > 0:
             return us / (us + non_us)
         return 0
@@ -260,6 +264,17 @@ if __name__ == "__main__":
 
     # Scalable AC World Xtrackers UCITS ETF (Acc)
     _sample = "LU2903252349"
+    _j = JustETFPosition(_sample)
+    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+
+    countries = _j.countries()
+    for _row in countries:
+        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+
+    # iShares MSCI EM CTB Enhanced ESG UCITS ETF
+    _sample = "IE00BHZPJ239"
     _j = JustETFPosition(_sample)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
