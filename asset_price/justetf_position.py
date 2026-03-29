@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from asset_price.position import Position, _LIST_OF_DEVELOPED_MARKETS, _LIST_OF_EMERGING_MARKETS, _US_MARKET_NAME, _OTHER_MARKET_NAME
+from asset_price.position import Position
 
 class JustETFPosition(Position):
     """
