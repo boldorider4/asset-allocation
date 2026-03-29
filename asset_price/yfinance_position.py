@@ -81,6 +81,11 @@ class YFinancePosition(Position):
             return float(raw) / self._eur_usd_rate
         return float(raw)
 
+    def _compute_dev_vs_em_market(self) -> float:
+        """Compute developed markets vs. emerging markets allocation."""
+        # TODO: implement this
+        return self._dmem
+
     def _fast_info_price(self) -> float | None:
         for attempt in range(self._RETRIES):
             try:

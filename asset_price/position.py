@@ -5,6 +5,30 @@ Position pricing: abstract base plus Yahoo Finance and JustETF implementations.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 
+
+_US_MARKET_NAME = "United States"
+
+_LIST_OF_DEVELOPED_MARKETS = [
+    _US_MARKET_NAME,
+    "Canada",
+    "United Kingdom",
+    "France",
+    "Germany",
+    "Italy",
+    "Spain",
+]
+
+_LIST_OF_EMERGING_MARKETS = [
+    "Brazil",
+    "Russia",
+    "India",
+    "China",
+    "South Africa",
+    "Mexico",
+    "Argentina",
+]
+
+
 class Position(ABC):
     """ISIN-based price lookup: fast quote vs last historical close."""
 
@@ -23,6 +47,7 @@ class Position(ABC):
         self._isin = isin
         self._dmem = dmem
         self._usavn = usavn
+        self._countries: list[dict[str, float | str]] | None = None
         # the logic is: if last_price is provided, it means it was cached
         if last_price is not None:
             self._last_price = last_price
@@ -35,6 +60,8 @@ class Position(ABC):
         # otherwise, no price is cached or determined if only the value of the position is provided
         elif self._value is None:
             raise RuntimeError(f"No last price for position because neither value nor ISIN was provided")
+        if self._isin is not None:
+            self._dmem = self._compute_dev_vs_em_market()
 
     @property
     def isin(self) -> str:
@@ -65,6 +92,14 @@ class Position(ABC):
         if p is None:
             raise RuntimeError(f"No historical close for ISIN {self._isin}")
         return float(p)
+
+    def countries(self) -> list[dict[str, float | str]]:
+        return self._countries
+
+    @abstractmethod
+    def _compute_dev_vs_em_market(self) -> float:
+        """Compute developed markets vs. emerging markets allocation."""
+        ...
 
     @abstractmethod
     def _fast_info_price(self) -> float | None:
