@@ -178,6 +178,19 @@ class Position(ABC):
     def countries(self) -> list[dict[str, float | str]]:
         return self._countries
 
+    def __str__(self) -> str:
+        return (
+            f"*************** ISIN: {self.isin} ***************\n"
+            f"Value: {self.value:.2f} \n"
+            f"DMEM: {self.dmem*100:.2f}% \n"
+            f"USAVN: {self.usavn*100:.2f}% \n"
+            f"Countries: \n"
+            f"{''.join(f'{_row['name']}: {_row['weight_pct']:.2f}%\n' for _row in self.countries())}"
+        )
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""
         developed_markets = 0
