@@ -178,15 +178,43 @@ class Position(ABC):
     def countries(self) -> list[dict[str, float | str]]:
         return self._countries
 
-    @abstractmethod
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""
-        ...
+        developed_markets = 0
+        emerging_markets = 0
+        for _row in self.countries():
+            if _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
+                developed_markets += _row["weight_pct"]
+            elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
+                emerging_markets += _row["weight_pct"]
+            elif self._dmem_other is not None:
+                developed_markets += _row["weight_pct"] * self._dmem_other
+                emerging_markets += _row["weight_pct"] * (1 - self._dmem_other)
+            else:
+                developed_markets += _row["weight_pct"] * .5
+                emerging_markets += _row["weight_pct"] * .5
 
-    @abstractmethod
+        if developed_markets + emerging_markets > 0:
+            return developed_markets / (developed_markets + emerging_markets)
+        return 0
+
     def _compute_us_vs_exus_market(self) -> float:
         """Compute US vs. ex-US allocation within developed markets."""
-        ...
+        us = 0
+        non_us = 0
+        for _row in self.countries():
+            if _row["name"] == _US_MARKET_NAME:
+                us += _row["weight_pct"]
+            elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
+                non_us += _row["weight_pct"]
+            elif _row["name"] == _OTHER_MARKET_NAME:
+                if self._dmem_other is not None:
+                    non_us += _row["weight_pct"] * self._dmem_other
+                else:
+                    non_us += _row["weight_pct"] * .5
+        if us + non_us > 0:
+            return us / (us + non_us)
+        return 0
 
     @abstractmethod
     def _fast_info_price(self) -> float | None:
