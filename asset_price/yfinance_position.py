@@ -86,6 +86,11 @@ class YFinancePosition(Position):
         # TODO: implement this
         return self._dmem
 
+    def _compute_us_vs_exus_market(self) -> float:
+        """Compute us vs. non-us allocation within developed markets."""
+        # TODO: implement this
+        return self._usavn
+
     def _fast_info_price(self) -> float | None:
         for attempt in range(self._RETRIES):
             try:

@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from asset_price.position import Position, _LIST_OF_DEVELOPED_MARKETS, _LIST_OF_EMERGING_MARKETS
+from asset_price.position import Position, _LIST_OF_DEVELOPED_MARKETS, _LIST_OF_EMERGING_MARKETS, _US_MARKET_NAME
 
 class JustETFPosition(Position):
     """
@@ -215,6 +215,19 @@ class JustETFPosition(Position):
             return developed_markets / (developed_markets + emerging_markets)
         return 0
 
+    def _compute_us_vs_exus_market(self) -> float:
+        """Compute US vs. ex-US allocation within developed markets."""
+        us = 0
+        non_us = 0
+        for _row in self.countries():
+            if _row["name"] == _US_MARKET_NAME:
+                us += _row["weight_pct"]
+            elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
+                non_us += _row["weight_pct"]
+        if us + non_us > 0:
+            return us / (us + non_us)
+        return 0
+
     def _fast_info_price(self) -> float | None:
         data = self._chart_data()
         latest = data.get("latestQuote")
@@ -234,6 +247,7 @@ class JustETFPosition(Position):
 
 
 if __name__ == "__main__":
+    # Amundi Equity World UCITS ETF (Acc)
     _sample = "IE000BI8OT95"
     _j = JustETFPosition(_sample)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
@@ -242,7 +256,9 @@ if __name__ == "__main__":
     for _row in countries:
         print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
     print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
+    # Scalable AC World Xtrackers UCITS ETF (Acc)
     _sample = "LU2903252349"
     _j = JustETFPosition(_sample)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
@@ -251,7 +267,9 @@ if __name__ == "__main__":
     for _row in countries:
         print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
     print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
+    # EUWAX Gold II
     _sample = "DE000EWG2LD7"
     _j = JustETFPosition(_sample)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
@@ -260,3 +278,4 @@ if __name__ == "__main__":
     for _row in countries:
         print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
     print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")

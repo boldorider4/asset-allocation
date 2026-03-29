@@ -62,6 +62,7 @@ class Position(ABC):
             raise RuntimeError(f"No last price for position because neither value nor ISIN was provided")
         if self._isin is not None:
             self._dmem = self._compute_dev_vs_em_market()
+            self._usavn = self._compute_us_vs_exus_market()
 
     @property
     def isin(self) -> str:
@@ -99,6 +100,11 @@ class Position(ABC):
     @abstractmethod
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""
+        ...
+
+    @abstractmethod
+    def _compute_us_vs_exus_market(self) -> float:
+        """Compute US vs. ex-US allocation within developed markets."""
         ...
 
     @abstractmethod
