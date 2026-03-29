@@ -212,6 +212,13 @@ class JustETFPosition(Position):
                 developed_markets += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
                 emerging_markets += _row["weight_pct"]
+            elif self._dmem_other is not None:
+                developed_markets += _row["weight_pct"] * self._dmem_other
+                emerging_markets += _row["weight_pct"] * (1 - self._dmem_other)
+            else:
+                developed_markets += _row["weight_pct"] * .5
+                emerging_markets += _row["weight_pct"] * .5
+
         if developed_markets + emerging_markets > 0:
             return developed_markets / (developed_markets + emerging_markets)
         return 0
@@ -226,8 +233,10 @@ class JustETFPosition(Position):
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 non_us += _row["weight_pct"]
             elif _row["name"] == _OTHER_MARKET_NAME:
-                us += _row["weight_pct"] * self._dmem_other
-                non_us += _row["weight_pct"] * (1 - self._dmem_other)
+                if self._dmem_other is not None:
+                    non_us += _row["weight_pct"] * self._dmem_other
+                else:
+                    non_us += _row["weight_pct"] * .5
         if us + non_us > 0:
             return us / (us + non_us)
         return 0
