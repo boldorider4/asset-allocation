@@ -113,5 +113,15 @@ if __name__ == "__main__":
             USAVN: 0,
             DMEM_OTHER: 0,
         },
+        # State Street SPDR S&P 400 U.S. Mid Cap UCITS ETF (Acc)
+        {
+            ISIN: "IE00B4YBJ215",
+            SHARES: 80,
+            VALUE: None,
+            BROKER: "scalable",
+            DMEM: 1,
+            USAVN: 1,
+            DMEM_OTHER: 1,
+        },
     ])
     print(portfolio)
