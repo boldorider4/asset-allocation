@@ -34,7 +34,14 @@ class JustETFPosition(Position):
     # (fragment is not sent on the wire; it only matches the site's in-page anchor).
     _COUNTRY_PAGE_URL = "https://www.justetf.com/en/etf-profile.html"
     _COUNTRY_PROFILE_FRAGMENT = "holdingsSection-countries-loadMoreCountries"
-    _COUNTRY_SECTION_MARKER = "holdingsSection-countries"
+    # justETF used to expose Wicket ids like ``holdingsSection-countries``; newer
+    # profiles render the countries table with data-testids only (no load-more
+    # anchor). Accept either so we still parse the seed HTML when Wicket AJAX
+    # is absent or returns access-denied redirects.
+    _COUNTRY_SECTION_MARKERS = (
+        "holdingsSection-countries",
+        "etf-holdings_countries_table",
+    )
     _COUNTRY_DIST_WICKET = "0-1.0-holdingsSection-countries-loadMoreCountries"
     _COUNTRY_DIST_PARAMS = {"_wicket": "1"}
     _COUNTRY_ROW_RE = re.compile(
@@ -82,11 +89,14 @@ class JustETFPosition(Position):
         """
         Load country weights from justETF (profile page cookie + Wicket AJAX).
 
-        First GET matches the profile link for countries:
-        ``etf-profile.html?isin=…#holdingsSection-countries-loadMoreCountries``
-        (the hash is not sent over HTTP; it only mirrors the site's anchor).
+        First GET seeds cookies from the profile page (any ``#fragment`` in the
+        browser URL is not sent on the wire). Country holdings are detected when
+        the HTML contains legacy Wicket ids (``holdingsSection-countries``) or the
+        current ``etf-holdings_countries_table`` markup.
 
-        Second GET is the Wicket ``loadMoreCountries`` AJAX URL (expanded table).
+        Second GET is the Wicket ``loadMoreCountries`` AJAX URL when that path
+        still exists (expanded table); many profiles now ship the full table in
+        the seed HTML and/or respond with an access redirect to the AJAX URL.
 
         Despite the name, the AJAX payload is XML with an HTML table in CDATA; we
         parse that into the same shape you would get from a JSON allocation API.
@@ -111,7 +121,7 @@ class JustETFPosition(Position):
         with opener.open(req_seed, timeout=30) as resp:
             seed_html = resp.read().decode("utf-8", errors="replace")
 
-        if self._COUNTRY_SECTION_MARKER not in seed_html:
+        if not any(m in seed_html for m in self._COUNTRY_SECTION_MARKERS):
             return []
 
         wicket_headers = {
@@ -223,28 +233,28 @@ class JustETFPosition(Position):
 
 if __name__ == "__main__":
     # Amundi Equity World UCITS ETF (Acc)
-    print("*************** Amundi Equity World UCITS ETF (Acc) ***************")
-    _sample = "IE000BI8OT95"
-    _j = JustETFPosition(_sample, dmem_other=1)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    # print("*************** Amundi Equity World UCITS ETF (Acc) ***************")
+    # _sample = "IE000BI8OT95"
+    # _j = JustETFPosition(_sample, dmem_other=1)
+    # print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
-    countries = _j.countries()
-    for _row in countries:
-        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
-    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
-    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+    # countries = _j.countries()
+    # for _row in countries:
+    #     print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    # print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    # print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
-    # Scalable AC World Xtrackers UCITS ETF (Acc)
-    print("*************** Scalable AC World Xtrackers UCITS ETF (Acc) ***************")
-    _sample = "LU2903252349"
-    _j = JustETFPosition(_sample, dmem_other=.5)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    # # Scalable AC World Xtrackers UCITS ETF (Acc)
+    # print("*************** Scalable AC World Xtrackers UCITS ETF (Acc) ***************")
+    # _sample = "LU2903252349"
+    # _j = JustETFPosition(_sample, dmem_other=.5)
+    # print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
-    countries = _j.countries()
-    for _row in countries:
-        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
-    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
-    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+    # countries = _j.countries()
+    # for _row in countries:
+    #     print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    # print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    # print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
 
     # iShares MSCI EM CTB Enhanced ESG UCITS ETF
     print("*************** iShares MSCI EM CTB Enhanced ESG UCITS ETF ***************")
@@ -274,6 +284,18 @@ if __name__ == "__main__":
     print("*************** EUWAX Gold II ***************")
     _sample = "DE000EWG2LD7"
     _j = JustETFPosition(_sample, dmem_other=0)
+    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+
+    countries = _j.countries()
+    for _row in countries:
+        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+
+    # State Street SPDR S&P 400 U.S. Mid Cap UCITS ETF
+    print("*************** State Street SPDR S&P 400 U.S. Mid Cap UCITS ETF ***************")
+    _sample = "IE00B4YBJ215"
+    _j = JustETFPosition(_sample, dmem_other=1)
     print(f"JustETF {_sample} last={_j.last_price:.4f}")
 
     countries = _j.countries()
