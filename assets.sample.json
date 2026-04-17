@@ -57,4 +57,15 @@
         "usavn": 0
       }
     ],
+    "commodity_portfolio": [
+      {
+        "name": "EUWAX Gold II",
+        "shares": 20,
+        "value": 2000,
+        "broker": "scalable",
+        "ISIN": "DE000EWG2LD7",
+        "dmem": 0.88,
+        "usavn": 0.625
+      }
+    ]
 }
