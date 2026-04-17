@@ -123,5 +123,25 @@ if __name__ == "__main__":
             USAVN: 1,
             DMEM_OTHER: 1,
         },
+        # iShares US Treasury Bond 1-3Y Aggregate EUR Hedged ETF
+        {
+            ISIN: "IE00BDFK1573",
+            SHARES: 51,
+            VALUE: None,
+            BROKER: "scalable",
+            DMEM: 1,
+            USAVN: 1,
+            DMEM_OTHER: 0.7,
+        },
+        # Xtrackers II EUR Overnight Rate Swap UCITS ETF
+        {
+            ISIN: "LU0290358497",
+            SHARES: 50,
+            VALUE: None,
+            BROKER: "scalable",
+            DMEM: 1,
+            USAVN: 0,
+            DMEM_OTHER: 0.8,
+        },
     ])
     print(portfolio)
