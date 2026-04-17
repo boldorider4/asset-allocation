@@ -141,7 +141,7 @@ class Position(ABC):
         # otherwise, no price is cached or determined if only the value of the position is provided
         elif self._value is None:
             raise RuntimeError(f"No last price for position because neither value nor ISIN was provided")
-        if self._isin is not None:
+        if self.countries():
             self._dmem = self._compute_dev_vs_em_market()
             self._usavn = self._compute_us_vs_exus_market()
 
@@ -179,13 +179,21 @@ class Position(ABC):
         return self._countries
 
     def __str__(self) -> str:
+        countries_list = self.countries()
+        countries_str = ""
+        if countries_list:
+            countries_str = (
+                "Countries: \n" +
+                "".join(f"{_row['name']}: {_row['weight_pct']:.2f}%\n" for _row in countries_list)
+            )
+        dmem_str = f"{self.dmem*100:.2f}%" if self.dmem is not None else "None"
+        usavn_str = f"{self.usavn*100:.2f}%" if self.usavn is not None else "None"
         return (
             f"*************** ISIN: {self.isin} ***************\n"
             f"Value: {self.value:.2f} \n"
-            f"DMEM: {self.dmem*100:.2f}% \n"
-            f"USAVN: {self.usavn*100:.2f}% \n"
-            f"Countries: \n"
-            f"{''.join(f'{_row['name']}: {_row['weight_pct']:.2f}%\n' for _row in self.countries())}"
+            f"DMEM: {dmem_str} \n"
+            f"USAVN: {usavn_str} \n"
+            f"{countries_str}"
         )
 
     def __repr__(self) -> str:

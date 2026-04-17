@@ -72,11 +72,17 @@ class Portfolio:
         return np.sum(self.position_values)
 
     def __str__(self) -> str:
+        dmem_nonzero = [x for x in self._dmem if x is not None]
+        dmem_mean = np.mean(dmem_nonzero) if dmem_nonzero else 0
+
+        usavn_nonzero = [x for x in self._usavn if x is not None]
+        usavn_mean = np.mean(usavn_nonzero) if usavn_nonzero else 0
+
         return (
             f"*************** Portfolio: {self._name} ***************\n"
             f"Value: {self._value:.2f} \n"
-            f"DMEM: {np.mean(self._dmem) * 100:.2f}% \n"
-            f"USAVN: {np.mean(self._usavn) * 100:.2f}% \n"
+            f"DMEM: {dmem_mean * 100:.2f}% \n"
+            f"USAVN: {usavn_mean * 100:.2f}% \n"
             f"Positions:\n"
             f"{''.join(str(position) for position in self._positions)}"
         )

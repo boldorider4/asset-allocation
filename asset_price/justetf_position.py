@@ -174,7 +174,7 @@ class JustETFPosition(Position):
 
     def countries(self) -> list[dict[str, float | str]]:
         """Country allocation (name + weight_pct) from the Holdings section."""
-        if self._countries is None:
+        if self._countries is None and self._isin is not None:
             self._countries = self._fetch_countries_with_retries()
         return self._countries
 
