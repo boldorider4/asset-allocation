@@ -1,4 +1,5 @@
 from asset_price.factory import factory as _factory
+from asset_price.position import Position
 import numpy as np
 
 
@@ -26,7 +27,7 @@ USAVN = "usavn"
 class Portfolio:
     def __init__(self, name: str, positions: list[dict] | None = None):
         self._name = name
-        self._positions = list()
+        self._positions: list[Position] = list()
         for position in positions:
             self._positions.append(_factory(
                 isin=position.get(ISIN),
