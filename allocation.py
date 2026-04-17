@@ -69,7 +69,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Fetch fresh prices; do not read or write cache.json.",
     )
+    parser.add_argument(
+        "--assets-file",
+        type=Path,
+        help="Path to the assets JSON file.",
+    )
     args = parser.parse_args()
     if args.no_cache:
         set_ignore_cache_asset_price(True)
-    main()
+    main(args.assets_file)
