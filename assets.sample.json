@@ -56,14 +56,22 @@
     ],
     "cash_portfolio": [
       {
+        "name": "Tagesgeld",
+        "value": 100,
+        "broker": "scalable",
+        "ISIN": null,
+        "dmem": null,
+        "usavn": null
+      },
+      {
         "name": "Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc)",
         "shares": 80,
         "value": 10100,
         "broker": "scalable",
         "ISIN": "LU0290358497",
-        "dmem": 1,
+        "dmem": 0.667,
         "dmem_other": 1,
-        "usavn": 0
+        "usavn": 0.455
       }
     ],
     "commodity_portfolio": [
