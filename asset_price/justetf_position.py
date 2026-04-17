@@ -303,3 +303,15 @@ if __name__ == "__main__":
         print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
     print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
     print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+
+    # Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc)
+    print("*************** Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc) ***************")
+    _sample = "LU0290358497"
+    _j = JustETFPosition(_sample, dmem_other=1)
+    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+
+    countries = _j.countries()
+    for _row in countries:
+        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
+    print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
+    print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
