@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import yfinance as yf
 
-from yfinance.exceptions import YFinanceException
 from asset_price.position import Position
 
 
