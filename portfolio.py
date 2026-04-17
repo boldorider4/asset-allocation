@@ -31,6 +31,7 @@ class Portfolio:
         for position in positions:
             self._positions.append(_factory(
                 isin=position.get(ISIN),
+                name=position.get(NAME),
                 shares=position.get(SHARES),
                 value=position.get(VALUE),
                 broker=position.get(BROKER),

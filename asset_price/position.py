@@ -113,6 +113,7 @@ class Position(ABC):
 
     def __init__(
         self, isin: str,
+        name: str | None = None,
         shares: float | None = None,
         value: float | None = None,
         broker: str | None = None,
@@ -121,6 +122,7 @@ class Position(ABC):
         dmem_other: float | None = None,
         last_price: float | None = None,
     ) -> None:
+        self._name = name
         self._shares = shares
         self._value = value
         self._broker = broker
@@ -190,6 +192,7 @@ class Position(ABC):
         usavn_str = f"{self.usavn*100:.2f}%" if self.usavn is not None else "None"
         return (
             f"*************** ISIN: {self.isin} ***************\n"
+            f"Name: {self._name} \n"
             f"Value: {self.value:.2f} \n"
             f"DMEM: {dmem_str} \n"
             f"USAVN: {usavn_str} \n"
