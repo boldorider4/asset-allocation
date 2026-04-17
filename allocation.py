@@ -27,8 +27,8 @@ def load_portfolio(path: Path | None = None) -> dict[str, list[dict]]:
     return data
 
 
-def main():
-    portfolio: dict[str, list[dict]] = load_portfolio()
+def main(assets_file_path: Path | None = None):
+    portfolio: dict[str, list[dict]] = load_portfolio(assets_file_path)
 
     # make portfolios
     equity_portfolio = Portfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
