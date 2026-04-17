@@ -15,7 +15,7 @@
         "shares": 45,
         "value": 9469.5,
         "broker": "scalable",
-        "ISIN": null,
+        "ISIN": "IE00B4YBJ215",
         "dmem": 1,
         "dmem_other": 1,
         "usavn": 1
@@ -43,6 +43,15 @@
         "dmem": 1,
         "dmem_other": 1,
         "usavn": 0
+      },
+      {
+        "name": "Festgeld",
+        "value": 1000,
+        "broker": "tf-bank",
+        "ISIN": null,
+        "dmem": 1,
+        "dmem_other": 1,
+        "usavn": 0
       }
     ],
     "cash_portfolio": [
@@ -61,7 +70,7 @@
       {
         "name": "EUWAX Gold II",
         "shares": 20,
-        "value": 2000,
+        "value": null,
         "broker": "scalable",
         "ISIN": "DE000EWG2LD7",
         "dmem": 0.88,
