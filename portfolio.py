@@ -74,11 +74,11 @@ class Portfolio:
     def __str__(self) -> str:
         return (
             f"*************** Portfolio: {self._name} ***************\n"
-            f"Value: {self._calculate_value():.2f} \n"
-            f"DMEM: {self._calculate_dmem()} \n"
-            f"USAVN: {self._calculate_usavn()} \n"
+            f"Value: {self._value:.2f} \n"
+            f"DMEM: {np.mean(self._dmem) * 100:.2f}% \n"
+            f"USAVN: {np.mean(self._usavn) * 100:.2f}% \n"
             f"Positions:\n"
-            f"{''.join(str(position) for position in self._positions)}\n"
+            f"{''.join(str(position) for position in self._positions)}"
         )
 
 

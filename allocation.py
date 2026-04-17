@@ -37,7 +37,7 @@ def main(assets_file_path: Path | None = None):
     bond_portfolio = Portfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
     commodity_portfolio = Portfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
 
-    print("*************** Equity portfolio ***************")
+    print(equity_portfolio)
     # calculate developed markets vs. emerging markets allocation
     dmem_allocation = float(np.dot(equity_portfolio.position_values, equity_portfolio.dmem)) / float(np.sum(equity_portfolio.position_values))
     print('developed markets vs. emerging markets allocation: {:.2f}%'.format(dmem_allocation * 100))
@@ -45,15 +45,17 @@ def main(assets_file_path: Path | None = None):
     # calculate us vs. non-us allocation within developed markets
     usavn_allocation = float(np.dot(equity_portfolio.position_values, equity_portfolio.usavn)) / float(np.dot(equity_portfolio.position_values, equity_portfolio.dmem))
     print('us vs. non-us allocation within developed markets: {:.2f}%'.format(usavn_allocation * 100))
-    print('equity portfolio value: {:.2f}'.format(equity_portfolio.total_value))
+    print('equity portfolio value: {:.2f}\n\n'.format(equity_portfolio.total_value))
 
-    print("*************** Fixed maturity bond portfolio ***************")
-    print('bimmer fund: {:.2f}'.format(fixed_maturity_bond_portfolio.total_value))
+    print(fixed_maturity_bond_portfolio)
+    print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
 
-    print("*************** Emergency fund portfolio ***************")
-    print('emergency fund: {:.2f}'.format(cash_portfolio.total_value))
+    print(cash_portfolio)
+    print('emergency fund: {:.2f}\n\n'.format(cash_portfolio.total_value))
 
-    print("*************** Total portfolio value ***************")
+    print(commodity_portfolio)
+    print('commodity portfolio value: {:.2f}\n\n'.format(commodity_portfolio.total_value))
+
     print('total portfolio value: {:.2f}'.format(
         equity_portfolio.total_value +
         fixed_maturity_bond_portfolio.total_value +
