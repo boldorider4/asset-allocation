@@ -60,11 +60,20 @@ class Portfolio:
             "Developed Markets": developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }, title="Developed Markets vs. Emerging Markets")
+
         self._usavn_visualizer = PieChart(data={
             "US": us_within_developed,
             "Non-US": 1.0 - us_within_developed,
         }, title="US vs. Non-US (within developed markets)")
-        # self._regional_split_visualizer = PieChart(data=self._regional_split, title="Regional Split")
+
+        # now let's look at regional split: us vs. non-us vs. emerging markets
+        # Scale us_within_developed by the developed_share so that US is proportional to the total_value
+        self._regional_split = {
+            "US": us_within_developed * developed_share,
+            "Non-US": (1.0 - us_within_developed) * developed_share,
+            "Emerging Markets": 1.0 - developed_share,
+        }
+        self._regional_split_visualizer = PieChart(data=self._regional_split, title="Total Split")
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
@@ -81,8 +90,8 @@ class Portfolio:
     def plot_usavn(self) -> None:
         self._usavn_visualizer.plot()
 
-    # def plot_regional_split(self) -> None:
-    #     self._regional_split_visualizer.plot(self._regional_split)
+    def plot_regional_split(self) -> None:
+        self._regional_split_visualizer.plot()
 
     @property
     def value(self) -> float:

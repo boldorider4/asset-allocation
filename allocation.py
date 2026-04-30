@@ -1,6 +1,7 @@
 import argparse
 import json
 import numpy as np
+import matplotlib.pyplot as plt
 
 from asset_price import set_ignore_cache as set_ignore_cache_asset_price
 from pathlib import Path
@@ -49,6 +50,8 @@ def main(assets_file_path: Path | None = None):
 
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
+    equity_portfolio.plot_regional_split()
+    plt.show()
 
     print(fixed_maturity_bond_portfolio)
     print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
