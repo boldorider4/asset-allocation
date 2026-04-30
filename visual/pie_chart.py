@@ -9,8 +9,7 @@ class PieChart(Visual):
     """Pie chart from label → weight; slice areas match each weight’s share of the total."""
 
     def __init__(self, data: dict[str, float], title: str | None = None):
-        self._data = data
-        self._title = title
+        super().__init__(data=data, title=title)
 
     def plot(self) -> None:
         if not self._data:
