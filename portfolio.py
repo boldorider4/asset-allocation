@@ -45,11 +45,10 @@ class Portfolio:
         self._usavn = self._calculate_usavn()
 
         values = np.asarray(self.position_values, dtype=float)
-        total_value = float(np.sum(values))
         dmem_arr = np.asarray(self._dmem, dtype=float)
         usavn_arr = np.asarray(self._usavn, dtype=float)
         developed_share = (
-            float(np.dot(values, dmem_arr)) / total_value if total_value > 0 else 0.0
+            float(np.dot(values, dmem_arr)) / self._value if self._value > 0 else 0.0
         )
         dmem_weighted = float(np.dot(values, dmem_arr))
         us_within_developed = (
@@ -115,7 +114,7 @@ class Portfolio:
 
     @property
     def total_value(self) -> float:
-        return np.sum(self.position_values)
+        return self._value
 
     def __str__(self) -> str:
         dmem_nonzero = [x for x in self._dmem if x is not None]
