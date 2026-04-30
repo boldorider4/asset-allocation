@@ -73,7 +73,11 @@ class Portfolio:
             "Non-US": (1.0 - us_within_developed) * developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }
-        self._regional_split_visualizer = PieChart(data=self._regional_split, title="Total Split")
+        self._regional_split_visualizer = PieChart(
+            data=self._regional_split,
+            title="Total Regional Split (US vs. Non-US vs. EM): {:.2f} Euro".format(self._value),
+            factor={"value": self._value, "unit": "Euro"},
+        )
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
