@@ -44,7 +44,7 @@ class Portfolio:
         self._dmem = self._calculate_dmem()
         self._usavn = self._calculate_usavn()
 
-        values = np.asarray(self.position_values, dtype=float)
+        values = np.asarray([position.value for position in self._positions], dtype=float)
         dmem_arr = np.asarray(self._dmem, dtype=float)
         usavn_arr = np.asarray(self._usavn, dtype=float)
         developed_share = (
@@ -107,10 +107,6 @@ class Portfolio:
     @property
     def usavn(self) -> list[float]:
         return self._usavn
-
-    @property
-    def position_values(self) -> list[float]:
-        return [position.value for position in self._positions]
 
     @property
     def total_value(self) -> float:

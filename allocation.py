@@ -51,15 +51,6 @@ def main(assets_file_path: Path | None = None):
     commodity_portfolio = Portfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
 
     print(equity_portfolio)
-    # calculate developed markets vs. emerging markets allocation
-    dmem_allocation = float(np.dot(equity_portfolio.position_values, equity_portfolio.dmem)) / float(np.sum(equity_portfolio.position_values))
-    print('developed markets vs. emerging markets allocation: {:.2f}%'.format(dmem_allocation * 100))
-
-    # calculate us vs. non-us allocation within developed markets
-    usavn_allocation = float(np.dot(equity_portfolio.position_values, equity_portfolio.usavn)) / float(np.dot(equity_portfolio.position_values, equity_portfolio.dmem))
-    print('us vs. non-us allocation within developed markets: {:.2f}%'.format(usavn_allocation * 100))
-    print('equity portfolio value: {:.2f}\n\n'.format(equity_portfolio.total_value))
-
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
     equity_portfolio.plot_regional_split()
