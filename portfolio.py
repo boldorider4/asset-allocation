@@ -1,6 +1,7 @@
 from asset_price.factory import factory as _factory
 from asset_price.position import Position
 import numpy as np
+from visual.pie_chart import PieChart
 
 
 # globals
@@ -43,6 +44,28 @@ class Portfolio:
         self._dmem = self._calculate_dmem()
         self._usavn = self._calculate_usavn()
 
+        values = np.asarray(self.position_values, dtype=float)
+        total_value = float(np.sum(values))
+        dmem_arr = np.asarray(self._dmem, dtype=float)
+        usavn_arr = np.asarray(self._usavn, dtype=float)
+        developed_share = (
+            float(np.dot(values, dmem_arr)) / total_value if total_value > 0 else 0.0
+        )
+        dmem_weighted = float(np.dot(values, dmem_arr))
+        us_within_developed = (
+            float(np.dot(values, usavn_arr)) / dmem_weighted if dmem_weighted > 0 else 0.0
+        )
+
+        self._dmem_visualizer = PieChart(data={
+            "Developed Markets": developed_share,
+            "Emerging Markets": 1.0 - developed_share,
+        }, title="Developed Markets vs. Emerging Markets")
+        self._usavn_visualizer = PieChart(data={
+            "US": us_within_developed,
+            "Non-US": 1.0 - us_within_developed,
+        }, title="US vs. Non-US (within developed markets)")
+        # self._regional_split_visualizer = PieChart(data=self._regional_split, title="Regional Split")
+
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
 
@@ -51,6 +74,15 @@ class Portfolio:
 
     def _calculate_usavn(self) -> list[float]:
         return [position.usavn for position in self._positions]
+
+    def plot_dmem(self) -> None:
+        self._dmem_visualizer.plot()
+
+    def plot_usavn(self) -> None:
+        self._usavn_visualizer.plot()
+
+    # def plot_regional_split(self) -> None:
+    #     self._regional_split_visualizer.plot(self._regional_split)
 
     @property
     def value(self) -> float:

@@ -47,6 +47,9 @@ def main(assets_file_path: Path | None = None):
     print('us vs. non-us allocation within developed markets: {:.2f}%'.format(usavn_allocation * 100))
     print('equity portfolio value: {:.2f}\n\n'.format(equity_portfolio.total_value))
 
+    equity_portfolio.plot_dmem()
+    equity_portfolio.plot_usavn()
+
     print(fixed_maturity_bond_portfolio)
     print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
 
