@@ -37,7 +37,9 @@ class PieChart(Visual):
         if self._title is not None:
             fig.suptitle(self._title)
         fig.tight_layout()
-        plt.show()
+        # Non-blocking so multiple charts each get their own window.
+        plt.show(block=False)
+        plt.pause(0.01)
 
 
 if __name__ == "__main__":
@@ -46,4 +48,12 @@ if __name__ == "__main__":
         "Emerging Markets": 23,
         "ex-USA-Developed": 12,
     }
-    PieChart(data=sample, title="Regional split").plot()
+    pc0 = PieChart(data=sample, title="Regional split")
+    pc0.plot()
+    sample = {
+        "Europe": 45,
+        "Developed Markets": 23,
+        "Emerging Markets": 12,
+    }
+    pc1 = PieChart(data=sample, title="Othr Regional split")
+    pc1.plot()
