@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
-
 from visual import Visual
+
+import matplotlib.pyplot as plt
 
 
 class PieChart(Visual):
@@ -37,6 +37,7 @@ class PieChart(Visual):
         if self._title is not None:
             fig.suptitle(self._title)
         fig.tight_layout()
+        self._stagger_figure_window(fig)
         # Non-blocking so multiple charts each get their own window.
         plt.show(block=False)
         plt.pause(0.01)

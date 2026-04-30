@@ -1,5 +1,17 @@
 import argparse
 import json
+import sys
+
+import matplotlib
+
+# Match visual package: macosx backend cannot move windows; use TkAgg before pyplot import.
+if (
+    sys.platform == "darwin"
+    and "matplotlib.pyplot" not in sys.modules
+    and matplotlib.get_backend().lower() == "macosx"
+):
+    matplotlib.use("tkagg")
+
 import numpy as np
 import matplotlib.pyplot as plt
 
