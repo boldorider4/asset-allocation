@@ -46,8 +46,8 @@ def main(assets_file_path: Path | None = None):
 
     # make portfolios
     equity_portfolio = RegionalPortfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"])
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"], consolidate=True)
     bond_portfolio = RegionalPortfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
 
