@@ -1,9 +1,9 @@
 import json
 from typing import Any
 
-from asset_price import get_ignore_cache
-from asset_price.justetf_position import JustETFPosition
-from asset_price.yfinance_position import YFinancePosition
+from position import get_ignore_cache
+from position.justetf_position import JustETFPosition
+from position.yfinance_position import YFinancePosition
 
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"

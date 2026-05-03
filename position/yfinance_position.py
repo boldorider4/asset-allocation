@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import yfinance as yf
 
-from asset_price.position import Position
+from position.position import Position
 
 
 class YFinancePosition(Position):

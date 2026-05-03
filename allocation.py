@@ -15,7 +15,7 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from asset_price import set_ignore_cache as set_ignore_cache_asset_price
+from position import set_ignore_cache
 from pathlib import Path
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
@@ -90,5 +90,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.no_cache:
-        set_ignore_cache_asset_price(True)
+        set_ignore_cache(True)
     main(args.assets_file)

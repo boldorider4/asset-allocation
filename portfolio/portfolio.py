@@ -1,5 +1,5 @@
-from asset_price.factory import factory as _factory
-from asset_price.position import Position
+from position.factory import factory as _factory
+from position.position import Position
 from visual.pie_chart import PieChart
 import numpy as np
 
