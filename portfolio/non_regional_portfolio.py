@@ -8,7 +8,7 @@ class NonRegionalPortfolio(Portfolio):
 
         if consolidate:
             self._visualizer_data = {
-                name: self._value,
+                name: (1.0 if self._value > 0 else 0.0),
             }
         else:
             self._visualizer_data = dict()
@@ -18,6 +18,15 @@ class NonRegionalPortfolio(Portfolio):
                 if label in self._visualizer_data:
                     prev_val = float(self._visualizer_data[label])
                 self._visualizer_data[label] = prev_val + float(position.value)
+
+            if self._value > 0:
+                inv_total = 1.0 / self._value
+                self._visualizer_data = {
+                    k: float(v) * inv_total for k, v in self._visualizer_data.items()
+                }
+            else:
+                self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
+
 
         self._visualizer = PieChart(
             data=self._visualizer_data,
