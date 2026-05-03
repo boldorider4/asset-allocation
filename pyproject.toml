@@ -14,5 +14,5 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["position", "asset_allocation"]
-packages = ["asset_price", "visual"]
+py-modules = ["allocation"]
+packages = ["position", "visual", "portfolio"]
