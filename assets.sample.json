@@ -19,6 +19,26 @@
         "dmem": 1,
         "dmem_other": 1,
         "usavn": 1
+      },
+      {
+        "name": "iShares Core S&P 500 UCITS ETF (Acc)",
+        "shares": 45,
+        "value": 3400.25,
+        "broker": "scalable",
+        "ISIN": "IE00CXXXXXXXXX",
+        "dmem": 1,
+        "dmem_other": 1,
+        "usavn": 1
+      },
+      {
+        "name": "iShares MSCI EM CTB Enhanced ESG UCITS ETF (Acc)",
+        "shares": 45,
+        "value": 400.25,
+        "broker": "scalable",
+        "ISIN": "IE00CYYYYYYYY",
+        "dmem": 0,
+        "dmem_other": 0,
+        "usavn": 0
       }
     ],
     "bond_portfolio": [
@@ -77,6 +97,7 @@
     "commodity_portfolio": [
       {
         "name": "EUWAX Gold II",
+        "short_name": "Gold",
         "shares": 20,
         "value": null,
         "broker": "scalable",

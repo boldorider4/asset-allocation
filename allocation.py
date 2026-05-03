@@ -15,9 +15,10 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from asset_price import set_ignore_cache as set_ignore_cache_asset_price
+from position import set_ignore_cache
 from pathlib import Path
-from portfolio import Portfolio
+from portfolio.regional_portfolio import RegionalPortfolio
+from portfolio.non_regional_portfolio import NonRegionalPortfolio
 
 
 def _default_assets_path() -> Path:
@@ -44,33 +45,39 @@ def main(assets_file_path: Path | None = None):
     portfolio: dict[str, list[dict]] = load_portfolio(assets_file_path)
 
     # make portfolios
-    equity_portfolio = Portfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = Portfolio(name="fixed_maturity_bond_portfolio", positions=portfolio["fixed_maturity_bond_portfolio"])
-    cash_portfolio = Portfolio(name="cash_portfolio", positions=portfolio["cash_portfolio"])
-    bond_portfolio = Portfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
-    commodity_portfolio = Portfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"], consolidate=True)
+    bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"])
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio["pension_portfolio"])
 
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
-    equity_portfolio.plot_regional_split()
-    plt.show()
+    equity_portfolio.plot()
+
+    print(bond_portfolio)
+    bond_portfolio.plot_dmem()
+    bond_portfolio.plot_usavn()
+    bond_portfolio.plot()
 
     print(fixed_maturity_bond_portfolio)
-    print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
+    # fixed_maturity_bond_portfolio.plot()
 
     print(cash_portfolio)
-    print('emergency fund: {:.2f}\n\n'.format(cash_portfolio.total_value))
+    # cash_portfolio.plot()
 
     print(commodity_portfolio)
-    print('commodity portfolio value: {:.2f}\n\n'.format(commodity_portfolio.total_value))
+    # commodity_portfolio.plot()
 
-    print('total portfolio value: {:.2f}'.format(
-        equity_portfolio.total_value +
-        fixed_maturity_bond_portfolio.total_value +
-        cash_portfolio.total_value +
-        bond_portfolio.total_value +
-        commodity_portfolio.total_value))
+    total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
+    total_growth_portfolio.plot(title="Total Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+
+    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
+    total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    plt.show()
 
 
 if __name__ == "__main__":
@@ -78,7 +85,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Fetch fresh prices; do not read or write cache.json.",
+        help="Fetch fresh prices without reading cache.json; still update cache.json after fetches.",
     )
     parser.add_argument(
         "--assets-file",
@@ -87,5 +94,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.no_cache:
-        set_ignore_cache_asset_price(True)
+        set_ignore_cache(True)
     main(args.assets_file)

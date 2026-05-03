@@ -114,6 +114,7 @@ class Position(ABC):
     def __init__(
         self, isin: str,
         name: str | None = None,
+        short_name: str | None = None,
         shares: float | None = None,
         value: float | None = None,
         broker: str | None = None,
@@ -121,8 +122,10 @@ class Position(ABC):
         usavn: float | None = None,
         dmem_other: float | None = None,
         last_price: float | None = None,
+        cached_countries: dict[str, float] | None = None,
     ) -> None:
         self._name = name
+        self._short_name = short_name
         self._shares = shares
         self._value = value
         self._broker = broker
@@ -131,7 +134,13 @@ class Position(ABC):
         self._dmem_other = dmem_other
         self._usavn = usavn
         self._countries: list[dict[str, float | str]] | None = None
-        # the logic is: if last_price is provided, it means it was cached
+        # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        if cached_countries is not None:
+            self._countries = [
+                {"name": name, "weight_pct": float(w) * 100.0}
+                for name, w in cached_countries.items()
+            ]
+        # If last_price is provided, it was loaded from cache or supplied by the caller.
         if last_price is not None:
             self._last_price = last_price
         # if not, let's try and determine it from the ISIN

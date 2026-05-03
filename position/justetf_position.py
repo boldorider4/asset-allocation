@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from asset_price.position import Position
+from position.position import Position
 
 class JustETFPosition(Position):
     """
@@ -56,6 +56,7 @@ class JustETFPosition(Position):
     def __init__(
         self, isin: str,
         name: str | None = None,
+        short_name: str | None = None,
         shares: float | None = None,
         value: float | None = None,
         broker: str | None = None,
@@ -63,9 +64,22 @@ class JustETFPosition(Position):
         usavn: float | None = None,
         dmem_other: float | None = None,
         last_price: float | None = None,
+        cached_countries: dict[str, float] | None = None,
     ) -> None:
         self._chart: dict | None = None
-        super().__init__(isin, name, shares, value, broker, dmem, usavn, dmem_other, last_price)
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            last_price=last_price,
+            cached_countries=cached_countries,
+        )
 
     def _http_chart_json(self, *, currency: str) -> dict:
         params = dict(self._CHART_PARAMS, currency=currency)

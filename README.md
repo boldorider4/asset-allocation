@@ -48,7 +48,7 @@ From the repository root:
 python allocation.py
 ```
 
-Refresh all quotes and skip the cache:
+Refresh all quotes without reading the cache (fetched prices are still written to `cache.json`):
 
 ```bash
 python allocation.py --no-cache
