@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import TypedDict
+from uuid import uuid4
 
 from visual import Visual
 
@@ -72,8 +73,9 @@ class PieChart(Visual):
         if total <= 0:
             raise ValueError("sum of weights must be positive")
 
-        fig_kw: dict[str, str] = {"num": self._title} if self._title is not None else {}
-        fig, ax = plt.subplots(**fig_kw)
+        # Do not use title as matplotlib figure num: the same string reuses one figure and
+        # stacks new axes, so two PieCharts with the same title look like one broken window.
+        fig, ax = plt.subplots(num=str(uuid4()))
 
         if self._factor is not None:
             total_attr = float(self._factor["value"])
@@ -97,11 +99,20 @@ class PieChart(Visual):
         ax.axis("equal")
         if self._title is not None:
             fig.suptitle(self._title)
-        fig.tight_layout()
-        self._stagger_figure_window(fig)
         # Non-blocking so multiple charts each get their own window.
         plt.show(block=False)
-        plt.pause(0.01)
+        # Position/size after show so the native window exists (stagger is no-op otherwise).
+        self._stagger_figure_window(fig)
+        if self._title is not None:
+            mgr = fig.canvas.manager
+            if mgr is not None:
+                setter = getattr(mgr, "set_window_title", None)
+                if callable(setter):
+                    try:
+                        setter(self._title)
+                    except Exception:
+                        pass
+        plt.pause(0.02)
 
 
 if __name__ == "__main__":
