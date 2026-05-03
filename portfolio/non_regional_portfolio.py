@@ -7,27 +7,23 @@ class NonRegionalPortfolio(Portfolio):
         super().__init__(name, positions)
 
         if consolidate:
-            self._visualer_data = {
+            self._visualizer_data = {
                 name: self._value,
             }
         else:
-            self._visualer_data = {}
+            self._visualizer_data = dict()
             for position in self._positions:
                 prev_val = 0
                 label = position._short_name or position._name
-                if label in self._visualer_data:
-                    prev_val = float(self._visualer_data[label])
-                self._visualer_data[label] = prev_val + float(position.value)
+                if label in self._visualizer_data:
+                    prev_val = float(self._visualizer_data[label])
+                self._visualizer_data[label] = prev_val + float(position.value)
 
         self._visualizer = PieChart(
-            data=self._visualer_data,
+            data=self._visualizer_data,
             title="{}: {:.2f} Euro".format(name, self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
-
-    @property
-    def visualizer_data(self) -> dict[str, float]:
-        return self._visualer_data
 
     def plot(self) -> None:
         self._visualizer.plot()

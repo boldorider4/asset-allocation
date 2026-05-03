@@ -30,20 +30,16 @@ class RegionalPortfolio(Portfolio):
 
         # now let's look at regional split: us vs. non-us vs. emerging markets
         # Scale us_within_developed by the developed_share so that US is proportional to the total_value
-        self._regional_split = {
+        self._regional_split_data = {
             "US": us_within_developed * developed_share,
             "Non-US": (1.0 - us_within_developed) * developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }
-        self._regional_split_visualizer = PieChart(
-            data=self._regional_split,
+        self._visualizer = PieChart(
+            data=self._regional_split_data,
             title="{}: Total Regional Split (US vs. Non-US vs. EM): {:.2f} Euro".format(self._name, self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
-
-    @property
-    def visualizer_data(self) -> dict[str, float]:
-        return self._regional_split
 
     def plot_dmem(self) -> None:
         self._dmem_visualizer.plot()
@@ -52,7 +48,7 @@ class RegionalPortfolio(Portfolio):
         self._usavn_visualizer.plot()
 
     def plot_regional_split(self) -> None:
-        self._regional_split_visualizer.plot()
+        self._visualizer.plot()
 
     def __str__(self):
         return super().__str__()

@@ -44,6 +44,7 @@ class Portfolio:
         self._value = self._calculate_value()
         self._dmem = self._calculate_dmem()
         self._usavn = self._calculate_usavn()
+        self._visualizer = None # to be overridden by subclasses
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
