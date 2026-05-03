@@ -69,6 +69,9 @@ def main(assets_file_path: Path | None = None):
 
     print(commodity_portfolio)
     commodity_portfolio.plot()
+
+    total_portfolio = equity_portfolio + fixed_maturity_bond_portfolio + commodity_portfolio + cash_portfolio
+    total_portfolio.plot()
     plt.show()
 
     print('total portfolio value: {:.2f}'.format(
