@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation"
-version = "0.1.0"
+version = "0.3.1"
 description = "Personal asset allocation and position pricing"
 requires-python = ">=3.10"
 dependencies = [
