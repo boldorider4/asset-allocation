@@ -74,6 +74,14 @@ class PieChart(Visual):
         unit = (sf or of)["unit"]
         return {"value": left + right, "unit": unit}
 
+    @property
+    def title(self) -> str | None:
+        return self._title
+
+    @title.setter
+    def title(self, value: str | None) -> None:
+        self._title = value
+
     def plot(self) -> None:
         if not self._data:
             raise ValueError("data must contain at least one entry")

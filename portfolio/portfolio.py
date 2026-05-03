@@ -56,7 +56,9 @@ class Portfolio:
     def _calculate_usavn(self) -> list[float]:
         return [position.usavn for position in self._positions]
 
-    def plot(self) -> None:
+    def plot(self, title: str | None = None) -> None:
+        if title is not None:
+            self._visualizer.title = title
         if self._visualizer is not None:
             self._visualizer.plot()
         else:
