@@ -72,6 +72,9 @@ def main(assets_file_path: Path | None = None):
     print(commodity_portfolio)
     # commodity_portfolio.plot()
 
+    total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
+    total_growth_portfolio.plot(title="Total Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
     total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     plt.show()
