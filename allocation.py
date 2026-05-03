@@ -17,7 +17,8 @@ import matplotlib.pyplot as plt
 
 from asset_price import set_ignore_cache as set_ignore_cache_asset_price
 from pathlib import Path
-from portfolio import Portfolio
+from portfolio.regional_portfolio import RegionalPortfolio
+from portfolio.non_regional_portfolio import NonRegionalPortfolio
 
 
 def _default_assets_path() -> Path:
@@ -44,23 +45,23 @@ def main(assets_file_path: Path | None = None):
     portfolio: dict[str, list[dict]] = load_portfolio(assets_file_path)
 
     # make portfolios
-    equity_portfolio = Portfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = Portfolio(name="fixed_maturity_bond_portfolio", positions=portfolio["fixed_maturity_bond_portfolio"])
-    cash_portfolio = Portfolio(name="cash_portfolio", positions=portfolio["cash_portfolio"])
-    bond_portfolio = Portfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
-    commodity_portfolio = Portfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
+    equity_portfolio = RegionalPortfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="fixed_maturity_bond_portfolio", positions=portfolio["fixed_maturity_bond_portfolio"])
+    cash_portfolio = NonRegionalPortfolio(name="cash_portfolio", positions=portfolio["cash_portfolio"])
+    bond_portfolio = RegionalPortfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
+    commodity_portfolio = NonRegionalPortfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
 
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
     equity_portfolio.plot_regional_split()
-    plt.show()
 
     print(fixed_maturity_bond_portfolio)
     print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
 
     print(cash_portfolio)
-    print('emergency fund: {:.2f}\n\n'.format(cash_portfolio.total_value))
+    cash_portfolio.plot()
+    plt.show()
 
     print(commodity_portfolio)
     print('commodity portfolio value: {:.2f}\n\n'.format(commodity_portfolio.total_value))
