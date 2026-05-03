@@ -49,6 +49,7 @@ def main(assets_file_path: Path | None = None):
     fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
     cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"], consolidate=True)
     bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"])
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
 
     print(equity_portfolio)
@@ -70,7 +71,7 @@ def main(assets_file_path: Path | None = None):
     print(commodity_portfolio)
     commodity_portfolio.plot()
 
-    total_portfolio = equity_portfolio + fixed_maturity_bond_portfolio + commodity_portfolio + cash_portfolio
+    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio
     total_portfolio.plot()
     plt.show()
 
