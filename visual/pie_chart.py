@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TypedDict
 
 from visual import Visual
@@ -26,6 +27,36 @@ class PieChart(Visual):
         if factor is not None and ("value" not in factor or "unit" not in factor):
             raise ValueError("factor must contain both 'value' and 'unit' keys")
         self._factor = factor
+
+    def __add__(self, other: object) -> PieChart:
+        if not isinstance(other, PieChart):
+            return NotImplemented
+
+        merged: dict[str, float] = deepcopy(self._data)
+        for k, v in other._data.items():
+            merged[k] = merged.get(k, 0) + v
+
+        title_parts: list[str] = []
+        if self._title:
+            title_parts.append(self._title)
+        if other._title:
+            title_parts.append(other._title)
+        merged_title = " + ".join(title_parts) if title_parts else None
+
+        merged_factor = self._merge_factor_with(other)
+        return PieChart(data=merged, title=merged_title, factor=merged_factor)
+
+    def _merge_factor_with(self, other: PieChart) -> _PieFactor | None:
+        sf, of = self._factor, other._factor
+        if sf is None and of is None:
+            return None
+        if sf is not None and of is not None and sf["unit"] != of["unit"]:
+            return None
+
+        left = float(sf["value"]) if sf is not None else float(sum(self._data.values()))
+        right = float(of["value"]) if of is not None else float(sum(other._data.values()))
+        unit = (sf or of)["unit"]
+        return {"value": left + right, "unit": unit}
 
     def plot(self) -> None:
         if not self._data:
@@ -74,29 +105,46 @@ class PieChart(Visual):
 
 
 if __name__ == "__main__":
-    sample = {
-        "USA": 45,
-        "Emerging Markets": 23,
-        "ex-USA-Developed": 22,
-    }
-    pc0 = PieChart(data=sample, title="Regional split")
-    pc0.plot()
-    sample = {
+    # sample_0 = {
+    #     "USA": 45,
+    #     "Emerging Markets": 23,
+    #     "ex-USA-Developed": 22,
+    # }
+    # pc0 = PieChart(data=sample_0, title="Regional split")
+    # pc0.plot()
+
+    # sample_1 = {
+    #     "Europe": 45,
+    #     "Developed Markets": 23,
+    #     "Emerging Markets": 11,
+    # }
+    # pc1 = PieChart(data=sample_1, title="Other Regional split")
+    # pc1.plot()
+
+    sample_2 = {
         "Europe": 45,
         "Developed Markets": 23,
-        "Emerging Markets": 11,
+        "Emerging Markets": 32,
     }
-    pc1 = PieChart(data=sample, title="Other Regional split")
-    pc1.plot()
-    sample = {
-        "Europe": 45,
-        "Developed Markets": 23,
-        "Emerging Markets": 12,
-    }
-    factor = {
+    factor_2 = {
         "value": 100000,
         "unit": "USD",
     }
-    pc2 = PieChart(data=sample, title="Labeled Regional split", factor=factor)
+    pc2 = PieChart(data=sample_2, title="Labeled Regional split #1", factor=factor_2)
     pc2.plot()
+
+    sample_3 = {
+        "Europe": 45,
+        "Developed Markets": 10,
+        "Emerging Markets": 45,
+    }
+    factor_3 = {
+        "value": 100000,
+        "unit": "USD",
+    }
+    pc3 = PieChart(data=sample_3, title="Labeled Regional split #2", factor=factor_3)
+    pc3.plot()
+
+    pc4 = pc2 + pc3
+    pc4.plot()
     plt.show()
