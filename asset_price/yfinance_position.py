@@ -21,6 +21,7 @@ class YFinancePosition(Position):
     def __init__(
         self, isin: str,
         name: str | None = None,
+        short_name: str | None = None,
         shares: float | None = None,
         value: float | None = None,
         broker: str | None = None,
@@ -33,7 +34,18 @@ class YFinancePosition(Position):
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
         self._eur_usd_rate: float | None = None
-        super().__init__(isin, name, shares, value, broker, dmem, usavn, dmem_other, last_price)
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            last_price=last_price,
+        )
 
     def _read_listing_currency(self) -> str | None:
             fast = getattr(self._ticker, "fast_info", None)

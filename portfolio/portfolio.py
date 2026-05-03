@@ -5,6 +5,7 @@ import numpy as np
 
 # globals
 NAME = "name"
+SHORT_NAME = "short_name"
 SHARES = "shares"
 VALUE = "value"
 BROKER = "broker"
@@ -32,6 +33,7 @@ class Portfolio:
             self._positions.append(_factory(
                 isin=position.get(ISIN),
                 name=position.get(NAME),
+                short_name=position.get(SHORT_NAME),
                 shares=position.get(SHARES),
                 value=position.get(VALUE),
                 broker=position.get(BROKER),

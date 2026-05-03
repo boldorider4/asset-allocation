@@ -97,6 +97,7 @@
     "commodity_portfolio": [
       {
         "name": "EUWAX Gold II",
+        "short_name": "Gold",
         "shares": 20,
         "value": null,
         "broker": "scalable",

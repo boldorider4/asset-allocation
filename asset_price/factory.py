@@ -28,6 +28,7 @@ def _save_price_in_cache(cache: dict[str, float], price: float, isin: str) -> No
 def factory(
     isin: str,
     name: str | None = None,
+    short_name: str | None = None,
     shares: float | None = None,
     value: float | None = None,
     broker: str | None = None,
@@ -42,9 +43,9 @@ def factory(
         cache = _load_cache()
         last_price = cache.get(isin)
     if POSITION_SOURCE == YFINANCE:
-        position = YFinancePosition(isin, name, shares, value, broker, dmem, usavn, dmem_other, last_price)
+        position = YFinancePosition(isin, name, short_name, shares, value, broker, dmem, usavn, dmem_other, last_price)
     elif POSITION_SOURCE == JUSTETF:
-        position = JustETFPosition(isin, name, shares, value, broker, dmem, usavn, dmem_other, last_price)
+        position = JustETFPosition(isin, name, short_name, shares, value, broker, dmem, usavn, dmem_other, last_price)
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
     if not get_ignore_cache() and last_price is None and isin is not None:

@@ -114,6 +114,7 @@ class Position(ABC):
     def __init__(
         self, isin: str,
         name: str | None = None,
+        short_name: str | None = None,
         shares: float | None = None,
         value: float | None = None,
         broker: str | None = None,
@@ -123,6 +124,7 @@ class Position(ABC):
         last_price: float | None = None,
     ) -> None:
         self._name = name
+        self._short_name = short_name
         self._shares = shares
         self._value = value
         self._broker = broker
