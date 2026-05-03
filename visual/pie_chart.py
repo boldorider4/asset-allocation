@@ -29,13 +29,34 @@ class PieChart(Visual):
             raise ValueError("factor must contain both 'value' and 'unit' keys")
         self._factor = factor
 
+    def _merge_weights(self, other: PieChart) -> tuple[float, float] | None:
+        """Return (left, right) portfolio weights for weighted merge, or None for plain additive merge."""
+        sf, of = self._factor, other._factor
+        if sf is None and of is None:
+            return None
+        if sf is not None and of is not None and sf["unit"] != of["unit"]:
+            return None
+        left = float(sf["value"]) if sf is not None else float(sum(self._data.values()))
+        right = float(of["value"]) if of is not None else float(sum(other._data.values()))
+        return (left, right)
+
     def __add__(self, other: object) -> PieChart:
         if not isinstance(other, PieChart):
             return NotImplemented
 
-        merged: dict[str, float] = deepcopy(self._data)
-        for k, v in other._data.items():
-            merged[k] = merged.get(k, 0) + v
+        weights = self._merge_weights(other)
+        if weights is None:
+            merged: dict[str, float] = deepcopy(self._data)
+            for k, v in other._data.items():
+                merged[k] = merged.get(k, 0) + v
+        else:
+            left, right = weights
+            total_w = left + right
+            keys = set(self._data) | set(other._data)
+            merged = {
+                k: (self._data.get(k, 0) * left + other._data.get(k, 0) * right) / total_w
+                for k in keys
+            }
 
         title_parts: list[str] = []
         if self._title:
@@ -44,18 +65,14 @@ class PieChart(Visual):
             title_parts.append(other._title)
         merged_title = " + ".join(title_parts) if title_parts else None
 
-        merged_factor = self._merge_factor_with(other)
+        merged_factor = self._merge_factor_with(other, weights)
         return PieChart(data=merged, title=merged_title, factor=merged_factor)
 
-    def _merge_factor_with(self, other: PieChart) -> _PieFactor | None:
+    def _merge_factor_with(self, other: PieChart, weights: tuple[float, float] | None) -> _PieFactor | None:
+        if weights is None:
+            return None
+        left, right = weights
         sf, of = self._factor, other._factor
-        if sf is None and of is None:
-            return None
-        if sf is not None and of is not None and sf["unit"] != of["unit"]:
-            return None
-
-        left = float(sf["value"]) if sf is not None else float(sum(self._data.values()))
-        right = float(of["value"]) if of is not None else float(sum(other._data.values()))
         unit = (sf or of)["unit"]
         return {"value": left + right, "unit": unit}
 
