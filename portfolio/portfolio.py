@@ -1,5 +1,6 @@
 from asset_price.factory import factory as _factory
 from asset_price.position import Position
+from visual.pie_chart import PieChart
 import numpy as np
 
 
@@ -44,7 +45,7 @@ class Portfolio:
         self._value = self._calculate_value()
         self._dmem = self._calculate_dmem()
         self._usavn = self._calculate_usavn()
-        self._visualizer = None # to be overridden by subclasses
+        self._visualizer: PieChart | None = None  # subclasses set a PieChart
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
@@ -54,6 +55,12 @@ class Portfolio:
 
     def _calculate_usavn(self) -> list[float]:
         return [position.usavn for position in self._positions]
+
+    def plot(self) -> None:
+        if self._visualizer is not None:
+            self._visualizer.plot()
+        else:
+            print("No visualizer set for portfolio")
 
     @property
     def value(self) -> float:
@@ -86,6 +93,20 @@ class Portfolio:
             f"Positions:\n"
             f"{''.join(str(position) for position in self._positions)}"
         )
+
+    def __add__(self, other: 'Portfolio') -> 'Portfolio':
+        if not isinstance(other, Portfolio):
+            return NotImplemented
+        merged = object.__new__(Portfolio)
+        merged._name = f"{self._name} + {other._name}"
+        merged._positions = self._positions + other._positions
+        merged._value = self._value + other._value
+        merged._dmem = None
+        merged._usavn = None
+        sv, ov = self._visualizer, other._visualizer
+        if sv is not None and ov is not None:
+            merged._visualizer = sv + ov
+        return merged
 
 
 if __name__ == "__main__":
