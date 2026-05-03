@@ -10,31 +10,26 @@ YFINANCE = "yfinance"
 JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
 CACHE_FILENAME = "cache.json"
+# Per-ISIN value in ``cache.json`` (written by ``_save_position_in_cache``).
+_CACHE_LAST_PRICE = "last_price"
+_CACHE_COUNTRIES = "countries"
 
 
-def _parse_cache_entry(raw: Any) -> tuple[float | None, dict[str, float] | None]:
+def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
     """
-    Returns (last_price, cached_countries).
-    ``cached_countries`` is None if country weights are not in the cache (fetch at use).
-    If present, values are fractions of 1 (e.g. 0.89 for 89%); see ``_save_position_in_cache``.
-    Legacy entries are a single number: ``{"ISIN": 12.34}``.
+    Returns ``(last_price, cached_countries)``.
+    ``cached_countries`` is ``None`` if there are no stored weights (fetch at use).
+    Country values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
     """
-    if raw is None:
+    if not isinstance(entry, dict):
         return None, None
-    if isinstance(raw, (int, float)):
-        return float(raw), None
-    if isinstance(raw, dict):
-        lp = raw.get("last_price")
-        if lp is None:
-            return None, None
-        last_price = float(lp)
-        co = raw.get("countries")
-        if co is None:
-            return last_price, None
-        if isinstance(co, dict):
-            return last_price, {str(k): float(v) for k, v in co.items()}
-        return last_price, None
-    return None, None
+    lp = entry.get(_CACHE_LAST_PRICE)
+    if lp is None:
+        lp = 0
+    co = entry.get(_CACHE_COUNTRIES)
+    if co is None:
+        return float(lp), None
+    return float(lp), {str(k): float(v) for k, v in co.items()}
 
 
 def _load_cache() -> dict[str, Any]:
@@ -60,8 +55,8 @@ def _save_position_in_cache(
     countries: list[dict[str, float | str]] | None,
 ) -> None:
     cache[isin] = {
-        "last_price": last_price,
-        "countries": _countries_to_cache_fractions(countries),
+        _CACHE_LAST_PRICE: last_price,
+        _CACHE_COUNTRIES: _countries_to_cache_fractions(countries),
     }
     with open(CACHE_FILENAME, "w") as f:
         json.dump(cache, f, indent=2)
