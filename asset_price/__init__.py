@@ -1,6 +1,6 @@
 """ISIN-based price sources (JustETF, Yahoo Finance)."""
 
-# Set True (e.g. via CLI) to skip reading/writing cache.json for prices.
+# Set True (e.g. via CLI) to skip reading cache.json for prices; fresh data is still written.
 IGNORE_CACHE = False
 
 def get_ignore_cache() -> bool:

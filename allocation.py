@@ -81,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Fetch fresh prices; do not read or write cache.json.",
+        help="Fetch fresh prices without reading cache.json; still update cache.json after fetches.",
     )
     parser.add_argument(
         "--assets-file",
