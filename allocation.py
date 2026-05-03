@@ -46,25 +46,30 @@ def main(assets_file_path: Path | None = None):
 
     # make portfolios
     equity_portfolio = RegionalPortfolio(name="equity_portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="fixed_maturity_bond_portfolio", positions=portfolio["fixed_maturity_bond_portfolio"])
-    cash_portfolio = NonRegionalPortfolio(name="cash_portfolio", positions=portfolio["cash_portfolio"])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"])
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"])
     bond_portfolio = RegionalPortfolio(name="bond_portfolio", positions=portfolio["bond_portfolio"])
-    commodity_portfolio = NonRegionalPortfolio(name="commodity_portfolio", positions=portfolio["commodity_portfolio"])
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
 
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
     equity_portfolio.plot_regional_split()
 
+    print(bond_portfolio)
+    bond_portfolio.plot_dmem()
+    bond_portfolio.plot_usavn()
+    bond_portfolio.plot_regional_split()
+
     print(fixed_maturity_bond_portfolio)
-    print('bimmer fund: {:.2f}\n\n'.format(fixed_maturity_bond_portfolio.total_value))
+    fixed_maturity_bond_portfolio.plot()
 
     print(cash_portfolio)
     cash_portfolio.plot()
-    plt.show()
 
     print(commodity_portfolio)
-    print('commodity portfolio value: {:.2f}\n\n'.format(commodity_portfolio.total_value))
+    commodity_portfolio.plot()
+    plt.show()
 
     print('total portfolio value: {:.2f}'.format(
         equity_portfolio.total_value +
