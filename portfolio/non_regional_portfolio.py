@@ -34,9 +34,6 @@ class NonRegionalPortfolio(Portfolio):
             factor={"value": self._value, "unit": "Euro"},
         )
 
-    def plot(self) -> None:
-        self._visualizer.plot()
-
     def _calculate_dmem(self) -> None:
         return None
 

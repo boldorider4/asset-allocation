@@ -56,13 +56,22 @@ class Portfolio:
     def _calculate_usavn(self) -> list[float]:
         return [position.usavn for position in self._positions]
 
-    def plot(self, title: str | None = None) -> None:
+    def plot(
+        self,
+        title: str | None = None,
+        *,
+        label_fontsize: float | None = None,
+        autopct_fontsize: float | None = None,
+    ) -> None:
+        if self._visualizer is None:
+            print("No visualizer set for portfolio")
+            return
         if title is not None:
             self._visualizer.title = title
-        if self._visualizer is not None:
-            self._visualizer.plot()
-        else:
-            print("No visualizer set for portfolio")
+        self._visualizer.plot(
+            label_fontsize=label_fontsize,
+            autopct_fontsize=autopct_fontsize,
+        )
 
     @property
     def value(self) -> float:

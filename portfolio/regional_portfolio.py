@@ -47,8 +47,5 @@ class RegionalPortfolio(Portfolio):
     def plot_usavn(self) -> None:
         self._usavn_visualizer.plot()
 
-    def plot_regional_split(self) -> None:
-        self._visualizer.plot()
-
     def __str__(self):
         return super().__str__()

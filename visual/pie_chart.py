@@ -82,7 +82,12 @@ class PieChart(Visual):
     def title(self, value: str | None) -> None:
         self._title = value
 
-    def plot(self) -> None:
+    def plot(
+        self,
+        *,
+        label_fontsize: float | None = None,
+        autopct_fontsize: float | None = None,
+    ) -> None:
         if not self._data:
             raise ValueError("data must contain at least one entry")
 
@@ -113,12 +118,18 @@ class PieChart(Visual):
         else:
             autopct_arg = "%1.1f%%"
 
-        ax.pie(
+        _wedges, texts, autotexts = ax.pie(
             sizes,
             labels=labels,
             autopct=autopct_arg,
             startangle=90,
         )
+        if label_fontsize is not None:
+            for t in texts:
+                t.set_fontsize(label_fontsize)
+        if autopct_fontsize is not None:
+            for t in autotexts:
+                t.set_fontsize(autopct_fontsize)
         ax.axis("equal")
         if self._title is not None:
             fig.suptitle(self._title)

@@ -48,5 +48,10 @@ class Visual(ABC):
             pass
 
     @abstractmethod
-    def plot(self) -> None:
+    def plot(
+        self,
+        *,
+        label_fontsize: float | None = None,
+        autopct_fontsize: float | None = None,
+    ) -> None:
         pass

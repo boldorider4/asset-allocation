@@ -55,12 +55,12 @@ def main(assets_file_path: Path | None = None):
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
-    equity_portfolio.plot_regional_split()
+    equity_portfolio.plot()
 
     print(bond_portfolio)
     bond_portfolio.plot_dmem()
     bond_portfolio.plot_usavn()
-    bond_portfolio.plot_regional_split()
+    bond_portfolio.plot()
 
     print(fixed_maturity_bond_portfolio)
     fixed_maturity_bond_portfolio.plot()
@@ -72,7 +72,7 @@ def main(assets_file_path: Path | None = None):
     commodity_portfolio.plot()
 
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio
-    total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value))
+    total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     plt.show()
 
 
