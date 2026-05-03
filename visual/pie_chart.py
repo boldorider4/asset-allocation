@@ -50,7 +50,8 @@ class PieChart(Visual):
         else:
             left, right = weights
             total_w = left + right
-            keys = set(self._data) | set(other._data)
+            # Preserve insertion order: self keys first, then keys only in other (matches additive branch).
+            keys = list(dict.fromkeys([*self._data, *other._data]))
             merged = {
                 k: (self._data.get(k, 0) * left + other._data.get(k, 0) * right) / total_w
                 for k in keys
