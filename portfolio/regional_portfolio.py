@@ -37,7 +37,7 @@ class RegionalPortfolio(Portfolio):
         }
         self._visualizer = PieChart(
             data=self._regional_split_data,
-            title="{}: Total Regional Split (US vs. Non-US vs. EM): {:.2f} Euro".format(self._name, self._value),
+            title="{}: Regional Split (US vs. Non-US vs. EM): {:.2f} Euro".format(self._name, self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
 
