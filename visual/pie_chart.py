@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import TypedDict
 from uuid import uuid4
@@ -12,6 +13,26 @@ class _PieFactor(TypedDict):
     unit: str
 
 import matplotlib.pyplot as plt
+
+
+def _group_thousands(n: float, *, decimals: int = 2) -> str:
+    """Format a float with an apostrophe every three digits before the decimal (e.g. 1'000'000.00)."""
+    return format(n, f",.{decimals}f").replace(",", "'")
+
+
+# Decimal literals in titles (e.g. from "{:.2f}"); ``(?!\.\d)`` avoids matching the first octets of "192.168.0.1".
+_TITLE_FLOAT = re.compile(r"-?\d+\.\d+(?!\.\d)")
+
+
+def _title_with_grouped_floats(s: str) -> str:
+    """Replace each decimal float substring in *s* with ``_group_thousands`` (preserving fractional width)."""
+
+    def repl(m: re.Match[str]) -> str:
+        raw = m.group(0)
+        frac = raw.partition(".")[2]
+        return _group_thousands(float(raw), decimals=len(frac))
+
+    return _TITLE_FLOAT.sub(repl, s)
 
 
 class PieChart(Visual):
@@ -113,7 +134,7 @@ class PieChart(Visual):
             def autopct(pct: float) -> str:
                 # pct is wedge share in percent (matplotlib); portions sum to total_attr.
                 portion = pct / 100 * total_attr
-                return f"{pct:.1f}%\n{portion:.2f} {unit}"
+                return f"{pct:.1f}%\n{_group_thousands(portion)} {unit}"
 
             autopct_arg = autopct
         else:
@@ -132,19 +153,20 @@ class PieChart(Visual):
             for t in autotexts:
                 t.set_fontsize(autopct_fontsize)
         ax.axis("equal")
-        if self._title is not None:
-            fig.suptitle(self._title)
+        display_title = _title_with_grouped_floats(self._title) if self._title is not None else None
+        if display_title is not None:
+            fig.suptitle(display_title)
         # Non-blocking so multiple charts each get their own window.
         plt.show(block=False)
         # Position/size after show so the native window exists (stagger is no-op otherwise).
         self._stagger_figure_window(fig)
-        if self._title is not None:
+        if display_title is not None:
             mgr = fig.canvas.manager
             if mgr is not None:
                 setter = getattr(mgr, "set_window_title", None)
                 if callable(setter):
                     try:
-                        setter(self._title)
+                        setter(display_title)
                     except Exception:
                         pass
         plt.pause(0.02)
