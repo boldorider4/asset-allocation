@@ -25,8 +25,6 @@ class PieChart(Visual):
         factor: _PieFactor | None = None,
     ):
         super().__init__(data=data, title=title)
-        if factor is not None and ("value" not in factor or "unit" not in factor):
-            raise ValueError("factor must contain both 'value' and 'unit' keys")
         self._factor = factor
 
     def _merge_weights(self, other: PieChart) -> tuple[float, float] | None:
