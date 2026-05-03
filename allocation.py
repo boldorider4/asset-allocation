@@ -51,6 +51,7 @@ def main(assets_file_path: Path | None = None):
     bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"])
     non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio["pension_portfolio"])
 
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
@@ -63,15 +64,15 @@ def main(assets_file_path: Path | None = None):
     bond_portfolio.plot()
 
     print(fixed_maturity_bond_portfolio)
-    fixed_maturity_bond_portfolio.plot()
+    # fixed_maturity_bond_portfolio.plot()
 
     print(cash_portfolio)
-    cash_portfolio.plot()
+    # cash_portfolio.plot()
 
     print(commodity_portfolio)
-    commodity_portfolio.plot()
+    # commodity_portfolio.plot()
 
-    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio
+    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
     total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     plt.show()
 
