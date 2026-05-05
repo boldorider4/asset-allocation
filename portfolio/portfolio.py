@@ -12,6 +12,14 @@ VALUE = "value"
 BROKER = "broker"
 ISIN = "ISIN"
 
+# developed markets identifier
+DM = "dm"
+# emerging markets identifier
+EM = "em"
+# us market identifier
+US = "us"
+# non-us market identifier
+NON_US = "non_us"
 # developed markets vs. emerging markets breakdown
 # 1 => 100% developed markets
 # 0 => 100% emerging markets

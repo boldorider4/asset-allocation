@@ -157,6 +157,10 @@ class Position(ABC):
             self._usavn = self._compute_us_vs_exus_market()
 
     @property
+    def name(self) -> str | None:
+        return self._name
+
+    @property
     def isin(self) -> str:
         return self._isin
 
@@ -188,6 +192,15 @@ class Position(ABC):
 
     def countries(self) -> list[dict[str, float | str]]:
         return self._countries
+
+    def sell_value(self, value: float) -> None:
+        self._value -= value
+        if self._shares is not None:
+            self._shares -= value / self._last_price
+
+    def sell_shares(self, shares: float) -> None:
+        self._shares -= shares
+        self._value -= shares * self._last_price
 
     def __str__(self) -> str:
         countries_list = self.countries()
