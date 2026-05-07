@@ -5,16 +5,7 @@ from portfolio.portfolio import (
     DM,
     EM,
     US,
-    NON_US,
-    NAME,
-    SHORT_NAME,
-    SHARES,
-    VALUE,
-    BROKER,
-    ISIN,
-    DMEM,
-    USAVN,
-    DMEM_OTHER,
+    NON_US
 )
 from portfolio.regional_portfolio import RegionalPortfolio
 
@@ -33,59 +24,36 @@ class DeallocatableInterface(ABC):
         ...
 
 
-def _positions_to_dicts(portfolio: Portfolio) -> list[dict]:
-    rows: list[dict] = []
-    for p in portfolio._positions:
-        row: dict = {ISIN: p.isin}
-        if p.name is not None:
-            row[NAME] = p.name
-        if p._short_name is not None:
-            row[SHORT_NAME] = p._short_name
-        if p._shares is not None:
-            row[SHARES] = p._shares
-        if p._value is not None:
-            row[VALUE] = p._value
-        if p._broker is not None:
-            row[BROKER] = p._broker
-        if p._dmem is not None:
-            row[DMEM] = p._dmem
-        if p._usavn is not None:
-            row[USAVN] = p._usavn
-        if p._dmem_other is not None:
-            row[DMEM_OTHER] = p._dmem_other
-        rows.append(row)
-    return rows
-
-
 def factory(portfolio: Portfolio) -> DeallocatableInterface:
     """Return a deallocatable wrapper built from ``portfolio``'s current state."""
-    name = portfolio._name
-    positions = _positions_to_dicts(portfolio)
     if isinstance(portfolio, RegionalPortfolio):
-        return RegionalDeallocatable(name, positions)
-    return Deallocatable(name, positions)
+        return RegionalDeallocatable(portfolio)
+    return Deallocatable(portfolio)
 
 
-class Deallocatable(Portfolio, DeallocatableInterface):
+class Deallocatable(DeallocatableInterface):
+    def __init__(self, portfolio: Portfolio):
+        self._portfolio = portfolio
+
     def _refresh_portfolio_metrics(self) -> None:
-        self._value = self._calculate_value()
-        self._dmem = self._calculate_dmem()
-        self._usavn = self._calculate_usavn()
+        self._portfolio._value = self._portfolio._calculate_value()
+        self._portfolio._dmem = self._portfolio._calculate_dmem()
+        self._portfolio._usavn = self._portfolio._calculate_usavn()
 
     def _deallocate_value_by_name(self, name: str, value: float) -> None:
-        for position in self._positions:
+        for position in self._portfolio._positions:
             if position.name == name:
                 position.sell_value(value)
         self._refresh_portfolio_metrics()
 
     def _deallocate_value_by_isin(self, isin: str, value: float) -> None:
-        for position in self._positions:
+        for position in self._portfolio._positions:
             if position.isin == isin:
                 position.sell_value(value)
         self._refresh_portfolio_metrics()
 
     def _deallocate_shares_by_isin(self, isin: str, shares: float) -> None:
-        for position in self._positions:
+        for position in self._portfolio._positions:
             if position.isin == isin:
                 position.sell_shares(shares)
         self._refresh_portfolio_metrics()
@@ -100,7 +68,10 @@ class Deallocatable(Portfolio, DeallocatableInterface):
         self._deallocate_shares_by_isin(isin, shares)
 
 
-class RegionalDeallocatable(RegionalPortfolio, Deallocatable):
+class RegionalDeallocatable(Deallocatable):
+    def __init__(self, portfolio: Portfolio):
+        super().__init__(portfolio)
+
     def deallocate_value_by_region(self, region: str, value: float) -> None:
         for position in self._positions:
             sale_factor = 0.0
