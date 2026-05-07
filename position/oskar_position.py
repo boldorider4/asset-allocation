@@ -2,28 +2,21 @@
 OSKAR portfolio positions (JustETF pricing) plus a Playwright-based client for the
 logged-in cockpit «Aktuelle Gewichtung» ETF list.
 
-Credentials live in ``oskar.cred.ini`` (see ``load_oskar_credentials``). After
-``pip install`` run ``playwright install chromium`` once so the browser binary
-is available.
+Sign in manually in the browser when prompted. After ``pip install`` run
+``playwright install chromium`` once so the browser binary is available.
 """
 
 from __future__ import annotations
 
-import configparser
-import getpass
 import logging
-import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from position.justetf_position import JustETFPosition
 
 logger = logging.getLogger(__name__)
 
-# Default path next to the working directory (same pattern as ``cache.json`` in factory).
-_DEFAULT_CRED_FILENAME = "oskar.cred.ini"
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
 # mein.oskar.de rejects HeadlessChrome with a blank-page redirect; use a normal Chrome UA.
 _USER_AGENT = (
@@ -37,12 +30,6 @@ _DE_EURO_RE = re.compile(r"([\d][\d.,]*)\s*€")
 
 
 @dataclass(frozen=True)
-class OskarCredentials:
-    email: str
-    password: str
-
-
-@dataclass(frozen=True)
 class OskarWeightingEtf:
     """One ETF line from «Aktuelle Gewichtung» (leaf row with an ISIN)."""
 
@@ -51,52 +38,6 @@ class OskarWeightingEtf:
     weight_pct: float | None
     value_eur: float | None
     raw_text: str
-
-
-def load_oskar_credentials(
-    path: str | Path | None = None,
-    *,
-    section: str = "oskar",
-) -> OskarCredentials:
-    """
-    Read ``email`` from an INI file and ``password`` if present. If ``password``
-    is missing or empty in the INI, uses ``OSKAR_PASSWORD`` from the environment;
-    if still empty, prompts interactively (no echo).
-
-    Example ``oskar.cred.ini``::
-
-        [oskar]
-        email = you@example.com
-        password = your-secret
-    """
-    ini_path = Path(path) if path is not None else Path.cwd() / _DEFAULT_CRED_FILENAME
-    if not ini_path.is_file():
-        raise FileNotFoundError(f"OSKAR credentials file not found: {ini_path}")
-
-    cfg = configparser.ConfigParser()
-    cfg.read(ini_path, encoding="utf-8")
-    if section not in cfg:
-        raise KeyError(f"INI section [{section}] missing in {ini_path}")
-
-    sec = cfg[section]
-    email = (sec.get("email") or sec.get("username") or "").strip()
-    password = (sec.get("password") or "").strip()
-    if not password:
-        password = os.environ.get("OSKAR_PASSWORD", "").strip()
-    if not password:
-        logger.info(
-            "OSKAR credentials: password not in %s or OSKAR_PASSWORD; prompting (getpass)",
-            ini_path,
-        )
-        password = getpass.getpass(f"OSKAR password [{section}] ({ini_path}): ").strip()
-    if not email:
-        raise ValueError(f"{ini_path}: [{section}] needs non-empty email (or username)")
-    if not password:
-        raise ValueError(
-            f"{ini_path}: [{section}] password is empty (ini, OSKAR_PASSWORD env, and prompt)"
-        )
-
-    return OskarCredentials(email=email, password=password)
 
 
 def _parse_de_number(num: str) -> float:
@@ -135,95 +76,67 @@ def _parse_row_blob(blob: str, isin: str) -> tuple[str, float | None, float | No
     return name, weight, value_eur
 
 
-def _try_dismiss_cookie_layer(page: Any) -> None:
-    """Best-effort consent / overlay dismissal (Sourcepoint / generic)."""
-    candidates = (
-        'button:has-text("Alle akzeptieren")',
-        'button:has-text("Akzeptieren")',
-        'button:has-text("Zustimmen")',
-        '[aria-label="Close"]',
-        "button.sp_choice_allow",
-    )
-    for sel in candidates:
-        loc = page.locator(sel)
-        if loc.count() > 0:
+def _try_oskar_logout(page: Any, *, timeout_ms: int = 15_000) -> None:
+    """Best-effort: click «Ausloggen» so the session ends before the browser closes."""
+    logger.info("OSKAR logout: looking for Ausloggen")
+    for pat in (re.compile(r"^\s*Ausloggen\s*$", re.I), re.compile(r"Ausloggen", re.I)):
+        for role in ("button", "link"):
+            loc = page.get_by_role(role, name=pat)
+            if loc.count() == 0:
+                continue
             try:
-                loc.first.click(timeout=2000)
-                page.wait_for_timeout(300)
+                el = loc.first
+                if el.is_visible():
+                    el.click(timeout=timeout_ms)
+                    page.wait_for_timeout(800)
+                    logger.info("OSKAR logout: clicked %s (name match)", role)
+                    return
             except Exception:
-                pass
-
-
-def _auth0_login(page: Any, creds: OskarCredentials, *, timeout_ms: int) -> None:
-    logger.info("OSKAR Auth0 login: start url=%s", page.url)
-
-    email_selectors = (
-        'input[type="email"]',
-        'input[name="username"]',
-        "input#username",
-        'input[inputmode="email"]',
-        'input[autocomplete="username"]',
-    )
-    filled_email = False
-    for sel in email_selectors:
+                continue
+    for sel in (
+        'button:has-text("Ausloggen")',
+        'a:has-text("Ausloggen")',
+        '[role="menuitem"]:has-text("Ausloggen")',
+    ):
         loc = page.locator(sel)
-        if loc.count() > 0:
-            logger.info("OSKAR Auth0 login: found email/username field selector=%r", sel)
-            loc.first.wait_for(state="visible", timeout=timeout_ms)
-            loc.first.fill(creds.email)
-            filled_email = True
-            logger.info("OSKAR Auth0 login: filled email/username field")
-            break
-    if not filled_email:
-        logger.error("OSKAR Auth0 login: no email/username input matched")
-        raise RuntimeError("OSKAR login: could not find email / username field (Auth0)")
+        if loc.count() == 0:
+            continue
+        try:
+            loc.first.click(timeout=timeout_ms)
+            page.wait_for_timeout(800)
+            logger.info("OSKAR logout: clicked control matching %s", sel)
+            return
+        except Exception:
+            continue
+    logger.warning("OSKAR logout: no Ausloggen control found (session may stay active)")
 
-    # Identifier-first flow: Continue then password.
-    clicked_continue = False
-    for label in ("Continue", "Weiter", "Fortfahren", "Next"):
-        btn = page.get_by_role("button", name=re.compile(f"^{re.escape(label)}$", re.I))
-        if btn.count() > 0:
-            try:
-                btn.first.click(timeout=5000)
-                clicked_continue = True
-                logger.info("OSKAR Auth0 login: clicked identifier-first button label=%r", label)
-                break
-            except Exception as exc:
-                logger.debug(
-                    "OSKAR Auth0 login: identifier-first button %r click failed: %s",
-                    label,
-                    exc,
-                )
-    if not clicked_continue:
-        logger.info(
-            "OSKAR Auth0 login: no identifier-first Continue button (password may be on same page)"
+
+def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
+    """
+    Block until a human has finished Auth0 in the **headed** browser: the cockpit
+    shows «Aktuelle Gewichtung» or «Wertentwicklung» on ``mein.oskar.de``.
+    """
+    logger.warning(
+        "OSKAR manual login: complete Auth0 in the browser window (credentials + Continue / "
+        "Anmelden). Waiting up to %.0f s until cockpit tabs appear…",
+        timeout_ms / 1000,
+    )
+    try:
+        page.wait_for_function(
+            r"""() => {
+                const h = (location.hostname || '').toLowerCase();
+                if (!h.includes('mein.oskar.de')) return false;
+                const t = (document.body && document.body.innerText) || '';
+                return t.includes('Aktuelle Gewichtung') || t.includes('Wertentwicklung');
+            }""",
+            timeout=timeout_ms,
         )
-
-    logger.info("OSKAR Auth0 login: waiting for password field")
-    pwd = page.locator('input[type="password"]')
-    pwd.first.wait_for(state="visible", timeout=timeout_ms)
-    pwd.first.fill(creds.password)
-    logger.info("OSKAR Auth0 login: filled password field")
-
-    logger.info("OSKAR Auth0 login: clicking submit")
-    submit = page.locator(
-        'button[type="submit"], button[name="submit"], '
-        'button[data-action-button-primary="true"]'
-    )
-    submit.first.click()
-
-    # Wait until we are back on the OSKAR app host (or dashboard path).
-    logger.info("OSKAR Auth0 login: waiting for redirect to oskar app host")
-    page.wait_for_function(
-        """() => {
-            const h = location.hostname;
-            return h.includes('mein.oskar.de')
-                || h.includes('login.oskar.de')
-                || h.endsWith('oskar.de');
-        }""",
-        timeout=timeout_ms,
-    )
-    logger.info("OSKAR Auth0 login: done url=%s", page.url)
+    except Exception as exc:
+        raise RuntimeError(
+            "OSKAR manual login: timed out waiting for cockpit (expected «Aktuelle Gewichtung» "
+            "or «Wertentwicklung» on mein.oskar.de after Auth0)."
+        ) from exc
+    logger.info("OSKAR manual login: cockpit detected url=%s", page.url)
 
 
 def _page_needs_login(page: Any) -> bool:
@@ -297,20 +210,17 @@ def _extract_weighting_etfs_js() -> str:
 
 
 def fetch_oskar_weighting_etfs(
-    creds: OskarCredentials,
     *,
-    cred_path: str | Path | None = None,
     dashboard_url: str = _DASHBOARD_URL,
     headless: bool = True,
-    timeout_ms: int = 10_000,
+    timeout_ms: int = 120_000,
 ) -> list[OskarWeightingEtf]:
     """
-    Launch Chromium (TLS verification on), log in via Auth0, open the cockpit
-    dashboard, activate «Aktuelle Gewichtung», expand nested sections, and return
-    parsed ETF rows.
-
-    ``cred_path`` is only used in error messages when re-reading is not needed;
-    credentials are passed in ``creds``.
+    Launch Chromium (TLS verification on). If login is required, sign in **manually**
+    in the browser; the run continues once cockpit tabs («Aktuelle Gewichtung» /
+    «Wertentwicklung») appear. With ``headless=True`` and a login gate, the browser
+    is restarted **headed** once so you can complete Auth0. Then «Aktuelle Gewichtung»
+    is opened and ETF rows are parsed.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -325,6 +235,7 @@ def fetch_oskar_weighting_etfs(
     with sync_playwright() as p:
         logger.info("fetch_oskar_weighting_etfs: launching browser")
         browser = p.chromium.launch(headless=headless)
+        page: Any | None = None
         try:
             logger.info("fetch_oskar_weighting_etfs: creating context")
             context = browser.new_context(
@@ -338,11 +249,27 @@ def fetch_oskar_weighting_etfs(
             logger.info("fetch_oskar_weighting_etfs: page created")
             logger.info("fetch_oskar_weighting_etfs: navigating to dashboard")
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            _try_dismiss_cookie_layer(page)
 
             if _page_needs_login(page):
                 logger.info("fetch_oskar_weighting_etfs: page needs login")
-                _auth0_login(page, creds, timeout_ms=timeout_ms)
+                if headless:
+                    logger.info(
+                        "fetch_oskar_weighting_etfs: restarting as headed browser for manual Auth0"
+                    )
+                    browser.close()
+                    browser = p.chromium.launch(headless=False)
+                    context = browser.new_context(
+                        user_agent=_USER_AGENT,
+                        ignore_https_errors=False,
+                        locale="de-DE",
+                    )
+                    context.set_default_navigation_timeout(timeout_ms)
+                    context.set_default_timeout(timeout_ms)
+                    page = context.new_page()
+                    page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+                manual_timeout = max(timeout_ms, 300_000)
+                _wait_for_manual_oskar_login(page, timeout_ms=manual_timeout)
                 # Avoid ``networkidle``: cockpit SPAs keep analytics / long-poll traffic
                 # open so ``networkidle`` often never fires (looks like a hang).
                 page.goto(dashboard_url, wait_until="load", timeout=timeout_ms)
@@ -351,10 +278,6 @@ def fetch_oskar_weighting_etfs(
                     page.wait_for_load_state("load", timeout=timeout_ms)
                 except Exception:
                     pass
-
-            logger.info("fetch_oskar_weighting_etfs: dismissing cookie layer")
-            _try_dismiss_cookie_layer(page)
-            _try_dismiss_cookie_layer(page)
 
             logger.info("fetch_oskar_weighting_etfs: clicking weighting tab")
             _click_weighting_tab(page, timeout_ms=timeout_ms)
@@ -384,9 +307,16 @@ def fetch_oskar_weighting_etfs(
                     )
                 )
         finally:
-            browser.close()
+            try:
+                if page is not None:
+                    _try_oskar_logout(page, timeout_ms=min(15_000, timeout_ms))
+            except Exception as exc:
+                logger.warning("OSKAR logout: error before browser close: %s", exc)
+            try:
+                browser.close()
+            except Exception:
+                pass
 
-    _ = cred_path
     return rows
 
 
@@ -415,36 +345,14 @@ class OskarPosition(JustETFPosition):
         )
 
     @staticmethod
-    def default_credentials_path() -> Path:
-        return Path.cwd() / _DEFAULT_CRED_FILENAME
-
-    @staticmethod
-    def load_credentials(
-        path: str | Path | None = None,
-        *,
-        section: str = "oskar",
-    ) -> OskarCredentials:
-        return load_oskar_credentials(path, section=section)
-
-    @staticmethod
     def fetch_weighting_etfs(
-        creds: OskarCredentials | None = None,
         *,
-        cred_path: str | Path | None = None,
         dashboard_url: str = _DASHBOARD_URL,
         headless: bool = True,
-        timeout_ms: int = 10_000,
+        timeout_ms: int = 120_000,
     ) -> list[OskarWeightingEtf]:
-        """
-        Static entry point: same as :func:`fetch_oskar_weighting_etfs`, but loads
-        credentials from ``cred_path`` (or ``./oskar.cred.ini``) when ``creds``
-        is omitted.
-        """
-        if creds is None:
-            creds = load_oskar_credentials(cred_path)
+        """Same as :func:`fetch_oskar_weighting_etfs` (manual sign-in in the browser)."""
         return fetch_oskar_weighting_etfs(
-            creds,
-            cred_path=cred_path,
             dashboard_url=dashboard_url,
             headless=headless,
             timeout_ms=timeout_ms,
