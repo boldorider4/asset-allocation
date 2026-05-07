@@ -3,3 +3,4 @@ __pycache__/
 assets.json
 cache.json
 .vscode/
+oskar.cred.ini
