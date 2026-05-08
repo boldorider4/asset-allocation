@@ -627,7 +627,7 @@ def fetch_oskar_etfs(
             "Install with pip and run: playwright install chromium"
         ) from e
 
-    rows: list[OskarEtf] = []
+    rows: dict[str, OskarEtf] = {}
 
     with sync_playwright() as p:
         logger.info("fetch_oskar_etfs: launching browser")
@@ -724,7 +724,7 @@ def fetch_oskar_etfs(
                     continue
                 name, weight_pct, value_eur = _parse_row_blob(raw_text, isin)
                 logger.info("fetch_oskar_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
-                rows.append(
+                rows[isin] = (
                     OskarEtf(
                         isin=isin,
                         name=name,
