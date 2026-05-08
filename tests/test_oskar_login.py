@@ -8,9 +8,10 @@ Run from repo root::
 
     python -m unittest tests.test_oskar_login -v
 
-With pytest (install dev extras: ``pip install -e ".[dev]"``)::
+With pytest (install dev extras: ``pip install -e ".[dev]"``). If Playwright
+browsers are installed under a Cursor sandbox path, force the default cache::
 
-    pytest tests/test_oskar_login.py -v
+    PLAYWRIGHT_BROWSERS_PATH=0 pytest tests/test_oskar_login.py -s -v --log-cli-level=DEBUG
 
 """
 
@@ -34,20 +35,9 @@ class TestOskarLogin(unittest.TestCase):
             )
 
     def test_login_and_weighting_tab(self) -> None:
-        from position.oskar_position import OskarPosition, fetch_oskar_weighting_etfs
+        from oskar import fetch_oskar_weighting_etfs
 
         logger.info("OSKAR login test: start (manual Auth0, headed browser)")
-
-        pos = OskarPosition(
-            isin="IE00BF4RFH31",
-            name="iShares MSCI World Small Cap UCITS ETF",
-            short_name="MSCI World Small Cap",
-            shares=1.0,
-            value=100.0,
-            broker="oskar",
-            last_price=1.0,
-        )
-        self.assertEqual(pos.isin, "IE00BF4RFH31")
 
         logger.info("OSKAR login test: calling fetch_oskar_weighting_etfs (headed, ~5 min login wait)")
         rows = fetch_oskar_weighting_etfs(

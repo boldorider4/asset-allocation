@@ -342,6 +342,8 @@ def _expand_oskar_weighting_bucket(
     page: Any,
     top_label: str,
     sub_labels: tuple[str, ...],
+    *,
+    weighting_accum: dict[str, Any] | None = None,
 ) -> None:
     """
     Open one level-1 bucket, then expand each named sub-row in order (see
@@ -394,77 +396,113 @@ def _expand_oskar_weighting_bucket(
             row_label,
             clicked,
         )
+        if weighting_accum is not None:
+            snap = _collect_raw_weighting_rows_from_page(page)
+            _merge_weighting_items_into(
+                weighting_accum["ordered"],
+                weighting_accum["idx_by_isin"],
+                snap,
+            )
+            logger.debug(
+                "OSKAR expand: merged weighting snapshot after %r / %r → %d row(s)",
+                top_label,
+                row_label,
+                len(weighting_accum["ordered"]),
+            )
     logger.info("OSKAR expand: finished subtree for %r", top_label)
 
 
-def _expand_collapsed_sections(page: Any) -> None:
+def _expand_collapsed_sections(
+    page: Any,
+    *,
+    weighting_accum: dict[str, Any] | None = None,
+) -> None:
     """Expand «Aktuelle Gewichtung» using :data:`_OSKAR_WEIGHTING_BUCKETS`."""
     for top_label, sub_labels in _OSKAR_WEIGHTING_BUCKETS.items():
-        _expand_oskar_weighting_bucket(page, top_label, sub_labels)
+        _expand_oskar_weighting_bucket(
+            page,
+            top_label,
+            sub_labels,
+            weighting_accum=weighting_accum,
+        )
 
 
-def _extract_weighting_etfs_js() -> str:
+def _collect_weighting_positions_js() -> str:
     """
-    Collect ISINs from all text under open shadow roots, then pick the richest
-    ``innerText`` ancestor per ISIN (weight % / €) for downstream parsing.
+    After buckets are expanded, walk ``.asset-allocation`` rows in screen order:
+    level1 → category, level2 → sub-bucket, level3 leaf with an ISIN → one position
+    (ETF line as shown, including name / ISIN / % / € in ``raw`` for :func:`_parse_row_blob`).
+    Open shadow roots are visited so a tree inside a component host is still found.
     """
     return r"""
     () => {
-        const isinRe = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-        const walkRoots = (doc) => {
-            const roots = [];
-            const visit = (r) => {
-                roots.push(r);
-                r.querySelectorAll("*").forEach((el) => {
-                    try {
-                        if (el.shadowRoot) visit(el.shadowRoot);
-                    } catch (e) { /* closed shadow */ }
-                });
-            };
-            visit(doc);
-            return roots;
+        const isinStrict = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+        const isinLoose = /\b([A-Z]{2}[A-Z0-9]{9}[0-9])\b/;
+        const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+
+        const walkShadows = (node, visit) => {
+            visit(node);
+            node.querySelectorAll("*").forEach((el) => {
+                try {
+                    if (el.shadowRoot) walkShadows(el.shadowRoot, visit);
+                } catch (e) { /* closed shadow */ }
+            });
         };
-        const roots = walkRoots(document);
-        const seen = new Set();
-        const isins = [];
-        for (const r of roots) {
-            const hay = r.innerText || "";
-            const g = /\b([A-Z]{2}[A-Z0-9]{9}[0-9])\b/g;
-            let m;
-            while ((m = g.exec(hay)) !== null) {
-                const x = m[1];
-                if (!isinRe.test(x) || seen.has(x)) continue;
-                seen.add(x);
-                isins.push(x);
+
+        const allocRoots = [];
+        const seenAlloc = new Set();
+        walkShadows(document, (root) => {
+            if (!root || !root.querySelector) return;
+            const aa = root.querySelector(".asset-allocation");
+            if (aa && !seenAlloc.has(aa)) {
+                seenAlloc.add(aa);
+                allocRoots.push(aa);
             }
-        }
+        });
+
         const out = [];
-        for (const isin of isins) {
-            let bestEl = null;
-            let bestScore = -1e9;
-            for (const r of roots) {
-                r.querySelectorAll("*").forEach((el) => {
-                    const blob = (el.innerText || "").trim();
-                    if (!blob.includes(isin)) return;
-                    if (blob.length < 12 || blob.length > 6000) return;
-                    const hasPct = /%/.test(blob);
-                    const hasEur = /€|EUR/i.test(blob);
-                    const words = blob.split(/\s+/).filter(Boolean).length;
-                    const score =
-                        (hasPct ? 4 : 0) +
-                        (hasEur ? 4 : 0) +
-                        Math.min(words, 60) * 0.04 -
-                        blob.length * 0.0015;
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestEl = el;
+        for (const root of allocRoots) {
+            const rowEls = [...root.querySelectorAll("div.row")].filter((r) =>
+                ["level1", "level2", "level3"].some((lv) => r.classList.contains(lv))
+            );
+
+            let category = "";
+            let subcategory = "";
+
+            for (const r of rowEls) {
+                const asset = r.querySelector(".asset");
+                const label = norm(asset ? asset.textContent : "");
+                const blob = norm(r.innerText || "");
+
+                if (r.classList.contains("level1")) {
+                    category = label;
+                    subcategory = "";
+                    continue;
+                }
+                if (r.classList.contains("level2")) {
+                    subcategory = label;
+                    continue;
+                }
+                if (!r.classList.contains("level3")) continue;
+
+                let isin = "";
+                for (const w of blob.split(/\s+/)) {
+                    if (isinStrict.test(w)) {
+                        isin = w;
+                        break;
                     }
-                });
-            }
-            if (bestEl) {
+                }
+                if (!isin) {
+                    const m = blob.match(isinLoose);
+                    if (m) isin = m[1];
+                }
+                if (!isin || !isinStrict.test(isin)) continue;
+
                 out.push({
                     isin,
-                    raw: (bestEl.innerText || "").trim().slice(0, 5000),
+                    raw: blob.slice(0, 5000),
+                    category,
+                    subcategory,
                 });
             }
         }
@@ -473,22 +511,76 @@ def _extract_weighting_etfs_js() -> str:
     """
 
 
+def _merge_weighting_items_into(
+    ordered: list[dict[str, Any]],
+    idx_by_isin: dict[str, int],
+    items: list[dict[str, Any]],
+) -> None:
+    """
+    Merge a snapshot of weighting rows into *ordered* / *idx_by_isin* (same rules
+    as :func:`_collect_raw_weighting_rows_from_page`): first ISIN wins list order;
+    later rows with longer ``raw`` replace that slot; missing category/subcategory
+    are backfilled.
+    """
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        isin = str(item.get("isin", "")).strip()
+        raw = str(item.get("raw", "")).strip()
+        if not isin:
+            continue
+        cat = str(item.get("category", "") or "").strip()
+        sub = str(item.get("subcategory", "") or "").strip()
+        fr_url = str(item.get("frameUrl", "") or "").strip()
+        row = {
+            "isin": isin,
+            "raw": raw,
+            "category": cat,
+            "subcategory": sub,
+            "frameUrl": fr_url,
+        }
+        prev_i = idx_by_isin.get(isin)
+        if prev_i is None:
+            idx_by_isin[isin] = len(ordered)
+            ordered.append(row)
+            continue
+        prev = ordered[prev_i]
+        prev_raw = str(prev.get("raw", ""))
+        if len(raw) > len(prev_raw):
+            prev.update(row)
+        else:
+            if not str(prev.get("category", "")).strip() and cat:
+                prev["category"] = cat
+            if not str(prev.get("subcategory", "")).strip() and sub:
+                prev["subcategory"] = sub
+
+
 def _collect_raw_weighting_rows_from_page(page: Any) -> list[dict[str, Any]]:
-    """Run :func:`_extract_weighting_etfs_js` in every same-origin frame; merge by ISIN."""
-    js = _extract_weighting_etfs_js()
-    by_isin: dict[str, dict[str, Any]] = {}
+    """
+    One dict per leaf position (ETF) under ``.asset-allocation``, in on-screen
+    order for the **current** DOM. Each item includes ``isin``, ``raw`` (that row's
+    text, including name as shown), optional ``category`` / ``subcategory``, and
+    ``frameUrl``. Evaluates each same-origin frame in order.
+
+    The cockpit often **collapses** previously expanded buckets when another is
+    opened; callers that need the full list should merge snapshots over time via
+    :func:`_merge_weighting_items_into` (see :func:`_expand_collapsed_sections`).
+    """
+    js = _collect_weighting_positions_js()
+    flat: list[dict[str, Any]] = []
     for fr in page.frames:
         try:
             chunk = fr.evaluate(js)
         except Exception as exc:
             logger.debug(
-                "OSKAR weighting extract: skipped frame url=%s err=%s",
+                "OSKAR weighting positions: skipped frame url=%s err=%s",
                 (getattr(fr, "url", "") or "")[:100],
                 exc,
             )
             continue
         if not isinstance(chunk, list):
             continue
+        fr_url = getattr(fr, "url", "") or ""
         for item in chunk:
             if not isinstance(item, dict):
                 continue
@@ -496,11 +588,21 @@ def _collect_raw_weighting_rows_from_page(page: Any) -> list[dict[str, Any]]:
             raw = str(item.get("raw", "")).strip()
             if not isin:
                 continue
-            prev = by_isin.get(isin)
-            fr_url = getattr(fr, "url", "") or ""
-            if prev is None or len(raw) > len(str(prev.get("raw", ""))):
-                by_isin[isin] = {"isin": isin, "raw": raw, "frameUrl": fr_url}
-    return list(by_isin.values())
+            cat = str(item.get("category", "") or "").strip()
+            sub = str(item.get("subcategory", "") or "").strip()
+            flat.append(
+                {
+                    "isin": isin,
+                    "raw": raw,
+                    "category": cat,
+                    "subcategory": sub,
+                    "frameUrl": fr_url,
+                }
+            )
+    ordered: list[dict[str, Any]] = []
+    idx_by_isin: dict[str, int] = {}
+    _merge_weighting_items_into(ordered, idx_by_isin, flat)
+    return ordered
 
 
 def fetch_oskar_weighting_etfs(
@@ -600,11 +702,18 @@ def fetch_oskar_weighting_etfs(
 
             logger.info("fetch_oskar_weighting_etfs: clicking weighting tab")
             _click_weighting_tab(page, timeout_ms=timeout_ms)
-            _expand_collapsed_sections(page)
+            weighting_accum: dict[str, Any] = {"ordered": [], "idx_by_isin": {}}
+            _expand_collapsed_sections(page, weighting_accum=weighting_accum)
             page.wait_for_timeout(1_800)
             logger.info("fetch_oskar_weighting_etfs: evaluating weighting etfs js (all frames + shadow)")
-            raw_rows = _collect_raw_weighting_rows_from_page(page)
+            _merge_weighting_items_into(
+                weighting_accum["ordered"],
+                weighting_accum["idx_by_isin"],
+                _collect_raw_weighting_rows_from_page(page),
+            )
+            raw_rows = weighting_accum["ordered"]
 
+            logger.debug("fetch_oskar_weighting_etfs: raw_rows=%s", raw_rows)
             for item in raw_rows:
                 if not isinstance(item, dict):
                     continue
@@ -635,42 +744,3 @@ def fetch_oskar_weighting_etfs(
                 pass
 
     return rows
-
-
-class OskarPosition(JustETFPosition):
-    """JustETF-backed position; cockpit scraping helpers are static below."""
-
-    def __init__(
-        self,
-        isin: str,
-        name: str,
-        short_name: str,
-        shares: float,
-        value: float,
-        broker: str,
-        *,
-        last_price: float | None = None,
-    ):
-        super().__init__(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            last_price=last_price,
-        )
-
-    @staticmethod
-    def fetch_weighting_etfs(
-        *,
-        dashboard_url: str = _DASHBOARD_URL,
-        headless: bool = True,
-        timeout_ms: int = 120_000,
-    ) -> list[OskarWeightingEtf]:
-        """Same as :func:`fetch_oskar_weighting_etfs` (manual sign-in in the browser)."""
-        return fetch_oskar_weighting_etfs(
-            dashboard_url=dashboard_url,
-            headless=headless,
-            timeout_ms=timeout_ms,
-        )
