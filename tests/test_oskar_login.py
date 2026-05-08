@@ -12,10 +12,6 @@ With pytest (install dev extras: ``pip install -e ".[dev]"``)::
 
     pytest tests/test_oskar_login.py -v
 
-Optional full-page JSON dumps (after Gewichtung, ``expand-aktien-top`` / ``expand-anleihen-top``,
-then ``expand-aktien-opened-aktien-small-cap``-style names for each submenu chevron)::
-
-    OSKAR_DUMP_PAGE_JSON=1 pytest tests/test_oskar_login.py -s -v
 """
 
 from __future__ import annotations
@@ -57,7 +53,6 @@ class TestOskarLogin(unittest.TestCase):
         rows = fetch_oskar_weighting_etfs(
             headless=False,
             timeout_ms=120_000,
-            extra_log=logger,
         )
         self.assertIsInstance(rows, list)
         self.assertIsNotNone(rows)

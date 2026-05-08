@@ -4,23 +4,14 @@ logged-in cockpit «Aktuelle Gewichtung» ETF list.
 
 Sign in manually in the browser when prompted. After ``pip install`` run
 ``playwright install chromium`` once so the browser binary is available.
-
-**Debug dump:** set ``OSKAR_DUMP_PAGE_JSON=1`` to write ``oskar-page-debug-after-gewichtung.json``
-(right after opening Gewichtung), then ``expand-{aktien|anleihen}-top`` after each top bucket
-chevron, and ``expand-{bucket}-opened-{row-slug}`` after each successful submenu chevron
-(e.g. ``…-opened-aktien-small-cap`` from the row ``div.asset`` label).
-Override basename with ``OSKAR_PAGE_DUMP_PATH`` (suffixes appended as above).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -29,187 +20,6 @@ from position.justetf_position import JustETFPosition
 logger = logging.getLogger(__name__)
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
-# ``OSKAR_DUMP_PAGE_JSON=1``: after-gewichtung + per-click expand dumps for Aktien/Anleihen.
-# ``OSKAR_PAGE_DUMP_PATH`` / ``OSKAR_FULL_PAGE_HTML_MAX_CHARS``.
-_PAGE_DUMP_ENV = "OSKAR_DUMP_PAGE_JSON"
-_DEFAULT_PAGE_DUMP_PATH = "oskar-page-debug.json"
-_FULL_HTML_MAX_ENV = "OSKAR_FULL_PAGE_HTML_MAX_CHARS"
-
-
-def _env_flag_enabled(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
-
-
-_INTERACTIVE_DUMP_JS = r"""
-(frameUrl) => {
-    const walkShadowRoots = (doc) => {
-        const roots = [];
-        const visit = (r) => {
-            roots.push(r);
-            r.querySelectorAll("*").forEach((el) => {
-                try {
-                    if (el.shadowRoot) visit(el.shadowRoot);
-                } catch (e) {
-                    /* closed shadow */
-                }
-            });
-        };
-        visit(doc);
-        return roots;
-    };
-    const roots = walkShadowRoots(document);
-    const row = (el) => ({
-        tag: el.tagName,
-        role: el.getAttribute("role"),
-        type: el.getAttribute("type"),
-        href: (el.href || "").slice(0, 160),
-        className: (typeof el.className === "string" ? el.className : "").slice(0, 120),
-        text: (el.innerText || el.textContent || "").trim().slice(0, 220),
-        ariaLabel: el.getAttribute("aria-label"),
-        dataTestid: el.getAttribute("data-testid"),
-        ariaExpanded: el.getAttribute("aria-expanded"),
-        visible: !!(el.offsetWidth && el.offsetHeight),
-        frameUrl,
-    });
-    const buttons = [];
-    const links = [];
-    const tabs = [];
-    const menuitems = [];
-    const pushCap = (arr, el, cap) => {
-        if (arr.length >= cap) return;
-        arr.push(row(el));
-    };
-    for (const r of roots) {
-        r.querySelectorAll("button, [role='button']").forEach((el) => pushCap(buttons, el, 150));
-        r.querySelectorAll("a[href], a[role='link']").forEach((el) => pushCap(links, el, 150));
-        r.querySelectorAll('[role="tab"]').forEach((el) => pushCap(tabs, el, 80));
-        r.querySelectorAll('[role="menuitem"]').forEach((el) => pushCap(menuitems, el, 80));
-    }
-    const bodyText = ((document.body && document.body.innerText) || "").slice(0, 12000);
-    return { frameUrl, bodyTextSample: bodyText, buttons, links, tabs, menuitems };
-}
-"""
-
-
-def _build_page_debug_blob(page: Any) -> dict[str, Any]:
-    """Structured snapshot: URL, title, a11y tree, and common interactive nodes (all frames + shadow)."""
-    a11y: Any
-    try:
-        a11y = page.accessibility.snapshot(interesting_only=False)
-    except Exception as exc:
-        try:
-            body = page.locator("body")
-            snap = getattr(body, "aria_snapshot", None)
-            a11y = snap() if callable(snap) else {"error": str(exc)}
-        except Exception as exc2:
-            a11y = {"error": f"{exc!s}; fallback: {exc2!s}"}
-
-    per_frame: list[dict[str, Any]] = []
-    for fr in page.frames:
-        try:
-            sample = fr.evaluate(_INTERACTIVE_DUMP_JS, fr.url)
-            per_frame.append(sample)
-        except Exception as exc:
-            per_frame.append({"frameUrl": getattr(fr, "url", ""), "error": str(exc)})
-
-    merged = {"buttons": [], "links": [], "tabs": [], "menuitems": []}
-    for block in per_frame:
-        if "error" in block:
-            continue
-        for k in merged:
-            merged[k].extend(block.get(k, []))
-    return {
-        "url": page.url,
-        "title": page.title(),
-        "accessibility": a11y,
-        "interactiveByFrame": per_frame,
-        "interactive": merged,
-    }
-
-
-def _full_page_html_max_chars() -> int:
-    raw = os.environ.get(_FULL_HTML_MAX_ENV, "").strip()
-    if not raw:
-        return 4_000_000
-    try:
-        return max(50_000, int(raw))
-    except ValueError:
-        return 4_000_000
-
-
-def _pack_html_field(html: str, *, max_chars: int) -> dict[str, Any]:
-    n = len(html)
-    if n <= max_chars:
-        return {"truncated": False, "length": n, "html": html}
-    return {
-        "truncated": True,
-        "length": n,
-        "keptChars": max_chars,
-        "html": html[:max_chars],
-    }
-
-
-def _build_full_page_blob(page: Any) -> dict[str, Any]:
-    """Debug blob from :func:`_build_page_debug_blob` plus full serialized HTML per frame."""
-    blob: dict[str, Any] = dict(_build_page_debug_blob(page))
-    cap = _full_page_html_max_chars()
-    try:
-        blob["fullMainFrameHtml"] = _pack_html_field(page.content(), max_chars=cap)
-    except Exception as exc:
-        blob["fullMainFrameHtml"] = {"error": str(exc)}
-    by_frame: list[dict[str, Any]] = []
-    for fr in page.frames:
-        u = getattr(fr, "url", "") or ""
-        try:
-            html = fr.content()
-            by_frame.append({"frameUrl": u, **_pack_html_field(html, max_chars=cap)})
-        except Exception as exc:
-            by_frame.append({"frameUrl": u, "error": str(exc)})
-    blob["fullHtmlByFrame"] = by_frame
-    return blob
-
-
-def _dump_full_page_debug_json(
-    page: Any,
-    *,
-    tag: str,
-    extra_log: logging.Logger | None = None,
-) -> None:
-    """Write :func:`_build_full_page_blob` when ``OSKAR_DUMP_PAGE_JSON`` is enabled."""
-    if not _env_flag_enabled(_PAGE_DUMP_ENV):
-        return
-    base = Path(os.environ.get("OSKAR_PAGE_DUMP_PATH", _DEFAULT_PAGE_DUMP_PATH))
-    path = base.with_stem(f"{base.stem}-{tag}")
-    blob = _build_full_page_blob(page)
-    path.write_text(
-        json.dumps(blob, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
-    )
-    resolved = path.resolve()
-    logger.warning("OSKAR debug: wrote full-page dump to %s", resolved)
-    if extra_log is not None:
-        extra_log.info("OSKAR page dump: %s (tag=%s)", resolved, tag)
-
-
-def _oskar_expand_dump_slug(top_label: str) -> str:
-    """ASCII slug for dump filenames (e.g. «Anleihen» → ``anleihen``)."""
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", top_label.strip().lower())
-    return (s.strip("-") or "bucket")[:40]
-
-
-def _unique_oskar_opened_dump_tag(seen: set[str], bucket_slug: str, row_label: str) -> str:
-    """Build ``expand-{bucket}-opened-{row-slug}`` with numeric suffix if needed."""
-    rl = (row_label or "").strip()
-    row_slug = _oskar_expand_dump_slug(rl) if rl else "row"
-    base = f"expand-{bucket_slug}-opened-{row_slug}"
-    tag = base
-    n = 2
-    while tag in seen:
-        tag = f"{base}-{n}"
-        n += 1
-    seen.add(tag)
-    return tag
-
 
 # mein.oskar.de rejects HeadlessChrome with a blank-page redirect; use a normal Chrome UA.
 _USER_AGENT = (
@@ -463,51 +273,29 @@ def _click_weighting_tab(page: Any, *, timeout_ms: int) -> None:
             except Exception as exc:
                 logger.debug("OSKAR: weighting attempt %s frame=%s: %s", label, fr_url[:80], exc)
     raise RuntimeError(
-        "OSKAR: could not activate Gewichtung tab (try OSKAR_DUMP_PAGE_JSON=1 for after-gewichtung full-page dump)."
+        "OSKAR: could not activate Gewichtung tab."
     )
 
 
-# Only expand these top-level «Aktuelle Gewichtung» buckets (avoids infinite chevron loops
-# on Inflation / Tagesgeld / deeper-only branches).
-_OSKAR_WEIGHTING_TOP_BUCKETS = ("Aktien", "Anleihen")
-
-_COUNT_COLLAPSED_MIRRORS_IN_BUCKET_JS = r"""
-(label) => {
-    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-    const root = document.querySelector(".asset-allocation");
-    if (!root) return -1;
-    const rows = [...root.querySelectorAll("div.row")].filter((r) =>
-        ["level1", "level2", "level3"].some((lv) => r.classList.contains(lv))
-    );
-    let i0 = -1;
-    const L = norm(label);
-    for (let i = 0; i < rows.length; i++) {
-        const a = rows[i].querySelector(".asset");
-        const t = norm(a ? a.textContent : "");
-        if (rows[i].classList.contains("level1") && t === L) {
-            i0 = i;
-            break;
-        }
-    }
-    if (i0 < 0) return -1;
-    let end = rows.length;
-    for (let j = i0 + 1; j < rows.length; j++) {
-        if (rows[j].classList.contains("level1")) {
-            end = j;
-            break;
-        }
-    }
-    let c = 0;
-    for (let j = i0 + 1; j < end; j++) {
-        const em = rows[j].querySelector("em.fa-angle-right.mirror");
-        if (em && em.offsetParent) c++;
-    }
-    return c;
+# Expand top levels and then discover each sub-bucket
+_OSKAR_WEIGHTING_BUCKETS = {
+    "Aktien": (
+        "Aktien Small Cap",
+        "Aktien Europa", "Aktien Japan",
+        "Aktien Schwellenländer",
+        "Aktien Asien und pazifischer Raum",
+        "Aktien USA"
+        ),
+    "Anleihen": (
+        "Anleihen Global",
+        "Anleihen Schwellenländer"
+        ),
+    "Inflationsgeschützt": ("Gold", "Anleihen inflationsgeschützt"),
+    "Tagesgeld": ("Tagesgeld",),
 }
-"""
 
-_CLICK_FIRST_MIRROR_IN_BUCKET_JS = r"""
-(label) => {
+_CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
+([topLabel, rowLabel]) => {
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
     const root = document.querySelector(".asset-allocation");
     if (!root) return { clicked: false, rowLabel: null };
@@ -515,7 +303,7 @@ _CLICK_FIRST_MIRROR_IN_BUCKET_JS = r"""
         ["level1", "level2", "level3"].some((lv) => r.classList.contains(lv))
     );
     let i0 = -1;
-    const L = norm(label);
+    const L = norm(topLabel);
     for (let i = 0; i < rows.length; i++) {
         const a = rows[i].querySelector(".asset");
         const t = norm(a ? a.textContent : "");
@@ -525,48 +313,40 @@ _CLICK_FIRST_MIRROR_IN_BUCKET_JS = r"""
         }
     }
     if (i0 < 0) return { clicked: false, rowLabel: null };
+    let end = rows.length;
     for (let j = i0 + 1; j < rows.length; j++) {
+        if (rows[j].classList.contains("level1")) {
+            end = j;
+            break;
+        }
+    }
+    const RL = norm(rowLabel);
+    for (let j = i0 + 1; j < end; j++) {
         const r = rows[j];
-        if (r.classList.contains("level1")) break;
+        const asset = r.querySelector(".asset");
+        const t = norm(asset ? asset.textContent : "");
+        if (t !== RL) continue;
         const em = r.querySelector("em.fa-angle-right.mirror");
         if (em && em.offsetParent) {
-            const row = em.closest("div.row");
-            const asset = row ? row.querySelector(".asset") : null;
-            const rowLabel = norm(asset ? asset.textContent : "") || null;
             em.click();
-            return { clicked: true, rowLabel };
+            return { clicked: true, rowLabel: t || null };
         }
+        return { clicked: false, rowLabel: t || null };
     }
     return { clicked: false, rowLabel: null };
 }
 """
 
 
-def _mirror_count_in_weighting_bucket(page: Any, top_label: str) -> int:
-    """Number of visible ``fa-angle-right.mirror`` chevrons in subtree, or ``-1`` if bucket missing."""
-    try:
-        n = page.evaluate(_COUNT_COLLAPSED_MIRRORS_IN_BUCKET_JS, top_label)
-    except Exception:
-        return -1
-    if isinstance(n, bool):
-        return -1
-    try:
-        return int(n)
-    except (TypeError, ValueError):
-        return -1
-
-
 def _expand_oskar_weighting_bucket(
     page: Any,
     top_label: str,
-    *,
-    max_sub_clicks: int,
-    extra_log: logging.Logger | None = None,
+    sub_labels: tuple[str, ...],
 ) -> None:
     """
-    Open one level-1 bucket, then expand subtree chevrons while **mirror count**
-    changes after each click. Stops when count is 0, no click is possible, or the
-    count stops changing (stuck / no real progress).
+    Open one level-1 bucket, then expand each named sub-row in order (see
+    :data:`_OSKAR_WEIGHTING_BUCKETS`). Skips missing buckets or rows; rows without
+    a visible collapse chevron are left as-is.
     """
     root = page.locator(".asset-allocation").first
     if root.count() == 0:
@@ -591,84 +371,36 @@ def _expand_oskar_weighting_bucket(
     except Exception as exc:
         logger.debug("OSKAR expand: top %r chevron skip: %s", top_label, exc)
 
-    slug = _oskar_expand_dump_slug(top_label)
     page.wait_for_timeout(200)
-    _dump_full_page_debug_json(page, tag=f"expand-{slug}-top", extra_log=extra_log)
-
-    stagnation = 0
-    opened_dump_tags: set[str] = set()
-    for _ in range(max_sub_clicks):
-        before = _mirror_count_in_weighting_bucket(page, top_label)
-        if before < 0:
-            logger.warning("OSKAR expand: could not locate bucket %r for mirror count", top_label)
-            break
-        if before == 0:
-            logger.info("OSKAR expand: bucket=%r no collapsed subtree chevrons left", top_label)
-            break
+    for row_label in sub_labels:
         try:
-            raw = page.evaluate(_CLICK_FIRST_MIRROR_IN_BUCKET_JS, top_label)
+            raw = page.evaluate(_CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS, [top_label, row_label])
         except Exception as exc:
-            logger.debug("OSKAR expand: subtree %r click failed: %s", top_label, exc)
-            break
+            logger.debug(
+                "OSKAR expand: bucket=%r row=%r mirror click failed: %s",
+                top_label,
+                row_label,
+                exc,
+            )
+            continue
         if isinstance(raw, dict):
             clicked = bool(raw.get("clicked"))
-            row_label = str(raw.get("rowLabel") or "").strip()
         else:
             clicked = bool(raw)
-            row_label = ""
         page.wait_for_timeout(480)
-        after = _mirror_count_in_weighting_bucket(page, top_label)
-        if after < 0:
-            after = before
         logger.info(
-            "OSKAR expand: bucket=%r collapsed_chevrons=%d->%d clicked=%s row=%r",
+            "OSKAR expand: bucket=%r sub_row=%r clicked=%s",
             top_label,
-            before,
-            after,
+            row_label,
             clicked,
-            row_label or None,
         )
-
-        if not clicked:
-            stagnation += 1
-            if stagnation >= 2:
-                logger.info(
-                    "OSKAR expand: stop bucket=%r (no clickable mirror, stagnation=%s)",
-                    top_label,
-                    stagnation,
-                )
-                break
-            continue
-        if after == before:
-            stagnation += 1
-            if stagnation >= 2:
-                logger.warning(
-                    "OSKAR expand: stop bucket=%r (mirror count unchanged after click, likely stuck)",
-                    top_label,
-                )
-                break
-            continue
-
-        stagnation = 0
-        dump_tag = _unique_oskar_opened_dump_tag(opened_dump_tags, slug, row_label)
-        _dump_full_page_debug_json(page, tag=dump_tag, extra_log=extra_log)
     logger.info("OSKAR expand: finished subtree for %r", top_label)
 
 
-def _expand_collapsed_sections(
-    page: Any,
-    *,
-    max_rounds: int = 20,
-    extra_log: logging.Logger | None = None,
-) -> None:
-    """
-    Expand «Aktuelle Gewichtung» only under **Aktien** and **Anleihen** (see
-    :func:`_expand_oskar_weighting_bucket`). ``max_rounds`` caps subtree clicks
-    per bucket; expansion also stops when collapsed-chevron count stops changing.
-    """
-    sub = max(1, max_rounds)
-    for lbl in _OSKAR_WEIGHTING_TOP_BUCKETS:
-        _expand_oskar_weighting_bucket(page, lbl, max_sub_clicks=sub, extra_log=extra_log)
+def _expand_collapsed_sections(page: Any) -> None:
+    """Expand «Aktuelle Gewichtung» using :data:`_OSKAR_WEIGHTING_BUCKETS`."""
+    for top_label, sub_labels in _OSKAR_WEIGHTING_BUCKETS.items():
+        _expand_oskar_weighting_bucket(page, top_label, sub_labels)
 
 
 def _extract_weighting_etfs_js() -> str:
@@ -776,7 +508,6 @@ def fetch_oskar_weighting_etfs(
     dashboard_url: str = _DASHBOARD_URL,
     headless: bool = True,
     timeout_ms: int = 120_000,
-    extra_log: logging.Logger | None = None,
 ) -> list[OskarWeightingEtf]:
     """
     Launch Chromium (TLS verification on). If login is required, sign in **manually**
@@ -784,9 +515,6 @@ def fetch_oskar_weighting_etfs(
     «Wertentwicklung» / «Gewichtung») appear. With ``headless=True`` and a login gate,
     the browser is restarted **headed** once so you can complete Auth0. Then the
     weighting tab is opened and ETF rows are parsed.
-
-    If ``extra_log`` is set (e.g. the test module logger), each full-page JSON dump
-    path is also emitted at INFO on that logger.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -872,8 +600,7 @@ def fetch_oskar_weighting_etfs(
 
             logger.info("fetch_oskar_weighting_etfs: clicking weighting tab")
             _click_weighting_tab(page, timeout_ms=timeout_ms)
-            _dump_full_page_debug_json(page, tag="after-gewichtung", extra_log=extra_log)
-            _expand_collapsed_sections(page, extra_log=extra_log)
+            _expand_collapsed_sections(page)
             page.wait_for_timeout(1_800)
             logger.info("fetch_oskar_weighting_etfs: evaluating weighting etfs js (all frames + shadow)")
             raw_rows = _collect_raw_weighting_rows_from_page(page)
@@ -940,12 +667,10 @@ class OskarPosition(JustETFPosition):
         dashboard_url: str = _DASHBOARD_URL,
         headless: bool = True,
         timeout_ms: int = 120_000,
-        extra_log: logging.Logger | None = None,
     ) -> list[OskarWeightingEtf]:
         """Same as :func:`fetch_oskar_weighting_etfs` (manual sign-in in the browser)."""
         return fetch_oskar_weighting_etfs(
             dashboard_url=dashboard_url,
             headless=headless,
             timeout_ms=timeout_ms,
-            extra_log=extra_log,
         )
