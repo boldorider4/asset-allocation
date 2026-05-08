@@ -87,6 +87,7 @@ def factory(
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
 
     if broker == OSKAR:
+        global global_oskar_etfs
         # fetch lazily the cockpit ETFs from oskar
         if not global_oskar_etfs:
             global_oskar_etfs = fetch_oskar_etfs()
