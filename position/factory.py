@@ -4,7 +4,9 @@ from typing import Any
 from position import get_ignore_cache
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
+from oskar import OskarEtf, fetch_oskar_etfs
 
+OSKAR = "oskar"
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
@@ -13,6 +15,9 @@ CACHE_FILENAME = "cache.json"
 # Per-ISIN value in ``cache.json`` (written by ``_save_position_in_cache``).
 _CACHE_LAST_PRICE = "last_price"
 _CACHE_COUNTRIES = "countries"
+
+# Per-ISIN cockpit ETFs from oskar (written by ``_save_position_in_cache``).
+global_oskar_etfs: dict[str, OskarEtf] = {}
 
 
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
@@ -80,6 +85,18 @@ def factory(
         cached_countries: dict[str, float] | None = None
     else:
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
+
+    if broker == OSKAR:
+        global global_oskar_etfs
+        # fetch lazily the cockpit ETFs from oskar
+        if not global_oskar_etfs:
+            global_oskar_etfs = fetch_oskar_etfs()
+        oskar_etf = global_oskar_etfs.get(isin)
+        if oskar_etf:
+            # inherit the value from the oskar etf
+            value = oskar_etf.value_eur
+            shares = None
+
     if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(
             isin,
