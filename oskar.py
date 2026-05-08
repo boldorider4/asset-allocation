@@ -33,7 +33,7 @@ _DE_EURO_RE = re.compile(r"([\d][\d.,]*)\s*€")
 
 
 @dataclass(frozen=True)
-class OskarWeightingEtf:
+class OskarEtf:
     """One ETF line from «Aktuelle Gewichtung» (leaf row with an ISIN)."""
 
     isin: str
@@ -237,10 +237,11 @@ def _page_needs_login(page: Any) -> bool:
     return False
 
 
-def _click_weighting_tab(page: Any, *, timeout_ms: int) -> None:
+def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
     """
-    Open the current-weighting view. Cockpit may host tabs in a child ``frame`` or
-    shadow root; Playwright's role/text locators are evaluated per frame.
+    Open the cockpit asset-allocation view (German UI: «Gewichtung» / «Aktuelle Gewichtung»).
+    Cockpit may host tabs in a child ``frame`` or shadow root; Playwright's role/text
+    locators are evaluated per frame.
     """
     t = min(timeout_ms, 60_000)
     attempts = [
@@ -259,7 +260,7 @@ def _click_weighting_tab(page: Any, *, timeout_ms: int) -> None:
             try:
                 loc = factory(fr)
             except Exception as exc:
-                logger.debug("OSKAR: weighting scope %s factory %s: %s", fr_url, label, exc)
+                logger.debug("OSKAR: allocation tab scope %s factory %s: %s", fr_url, label, exc)
                 continue
             if loc.count() == 0:
                 continue
@@ -267,18 +268,18 @@ def _click_weighting_tab(page: Any, *, timeout_ms: int) -> None:
                 first = loc.first
                 first.wait_for(state="visible", timeout=t)
                 first.click(timeout=t)
-                logger.info("OSKAR: opened weighting view via %s (frame=%s)", label, fr_url[:120])
+                logger.info("OSKAR: opened allocation view via %s (frame=%s)", label, fr_url[:120])
                 page.wait_for_timeout(800)
                 return
             except Exception as exc:
-                logger.debug("OSKAR: weighting attempt %s frame=%s: %s", label, fr_url[:80], exc)
+                logger.debug("OSKAR: allocation tab attempt %s frame=%s: %s", label, fr_url[:80], exc)
     raise RuntimeError(
         "OSKAR: could not activate Gewichtung tab."
     )
 
 
 # Expand top levels and then discover each sub-bucket
-_OSKAR_WEIGHTING_BUCKETS = {
+_OSKAR_ALLOCATION_BUCKETS = {
     "Aktien": (
         "Aktien Small Cap",
         "Aktien Europa", "Aktien Japan",
@@ -338,16 +339,16 @@ _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
 """
 
 
-def _expand_oskar_weighting_bucket(
+def _expand_oskar_allocation_bucket(
     page: Any,
     top_label: str,
     sub_labels: tuple[str, ...],
     *,
-    weighting_accum: dict[str, Any] | None = None,
+    merge_state: dict[str, Any] | None = None,
 ) -> None:
     """
     Open one level-1 bucket, then expand each named sub-row in order (see
-    :data:`_OSKAR_WEIGHTING_BUCKETS`). Skips missing buckets or rows; rows without
+    :data:`_OSKAR_ALLOCATION_BUCKETS`). Skips missing buckets or rows; rows without
     a visible collapse chevron are left as-is.
     """
     root = page.locator(".asset-allocation").first
@@ -396,18 +397,18 @@ def _expand_oskar_weighting_bucket(
             row_label,
             clicked,
         )
-        if weighting_accum is not None:
-            snap = _collect_raw_weighting_rows_from_page(page)
-            _merge_weighting_items_into(
-                weighting_accum["ordered"],
-                weighting_accum["idx_by_isin"],
+        if merge_state is not None:
+            snap = _collect_raw_rows_from_page(page)
+            _merge_row_snapshots_into(
+                merge_state["ordered"],
+                merge_state["idx_by_isin"],
                 snap,
             )
             logger.debug(
-                "OSKAR expand: merged weighting snapshot after %r / %r → %d row(s)",
+                "OSKAR expand: merged row snapshot after %r / %r → %d row(s)",
                 top_label,
                 row_label,
-                len(weighting_accum["ordered"]),
+                len(merge_state["ordered"]),
             )
     logger.info("OSKAR expand: finished subtree for %r", top_label)
 
@@ -415,19 +416,19 @@ def _expand_oskar_weighting_bucket(
 def _expand_collapsed_sections(
     page: Any,
     *,
-    weighting_accum: dict[str, Any] | None = None,
+    merge_state: dict[str, Any] | None = None,
 ) -> None:
-    """Expand «Aktuelle Gewichtung» using :data:`_OSKAR_WEIGHTING_BUCKETS`."""
-    for top_label, sub_labels in _OSKAR_WEIGHTING_BUCKETS.items():
-        _expand_oskar_weighting_bucket(
+    """Expand «Aktuelle Gewichtung» using :data:`_OSKAR_ALLOCATION_BUCKETS`."""
+    for top_label, sub_labels in _OSKAR_ALLOCATION_BUCKETS.items():
+        _expand_oskar_allocation_bucket(
             page,
             top_label,
             sub_labels,
-            weighting_accum=weighting_accum,
+            merge_state=merge_state,
         )
 
 
-def _collect_weighting_positions_js() -> str:
+def _collect_allocation_positions_js() -> str:
     """
     After buckets are expanded, walk ``.asset-allocation`` rows in screen order:
     level1 → category, level2 → sub-bucket, level3 leaf with an ISIN → one position
@@ -511,14 +512,14 @@ def _collect_weighting_positions_js() -> str:
     """
 
 
-def _merge_weighting_items_into(
+def _merge_row_snapshots_into(
     ordered: list[dict[str, Any]],
     idx_by_isin: dict[str, int],
     items: list[dict[str, Any]],
 ) -> None:
     """
-    Merge a snapshot of weighting rows into *ordered* / *idx_by_isin* (same rules
-    as :func:`_collect_raw_weighting_rows_from_page`): first ISIN wins list order;
+    Merge a snapshot of DOM rows into *ordered* / *idx_by_isin* (same rules
+    as :func:`_collect_raw_rows_from_page`): first ISIN wins list order;
     later rows with longer ``raw`` replace that slot; missing category/subcategory
     are backfilled.
     """
@@ -555,7 +556,7 @@ def _merge_weighting_items_into(
                 prev["subcategory"] = sub
 
 
-def _collect_raw_weighting_rows_from_page(page: Any) -> list[dict[str, Any]]:
+def _collect_raw_rows_from_page(page: Any) -> list[dict[str, Any]]:
     """
     One dict per leaf position (ETF) under ``.asset-allocation``, in on-screen
     order for the **current** DOM. Each item includes ``isin``, ``raw`` (that row's
@@ -564,16 +565,16 @@ def _collect_raw_weighting_rows_from_page(page: Any) -> list[dict[str, Any]]:
 
     The cockpit often **collapses** previously expanded buckets when another is
     opened; callers that need the full list should merge snapshots over time via
-    :func:`_merge_weighting_items_into` (see :func:`_expand_collapsed_sections`).
+    :func:`_merge_row_snapshots_into` (see :func:`_expand_collapsed_sections`).
     """
-    js = _collect_weighting_positions_js()
+    js = _collect_allocation_positions_js()
     flat: list[dict[str, Any]] = []
     for fr in page.frames:
         try:
             chunk = fr.evaluate(js)
         except Exception as exc:
             logger.debug(
-                "OSKAR weighting positions: skipped frame url=%s err=%s",
+                "OSKAR allocation rows: skipped frame url=%s err=%s",
                 (getattr(fr, "url", "") or "")[:100],
                 exc,
             )
@@ -601,22 +602,22 @@ def _collect_raw_weighting_rows_from_page(page: Any) -> list[dict[str, Any]]:
             )
     ordered: list[dict[str, Any]] = []
     idx_by_isin: dict[str, int] = {}
-    _merge_weighting_items_into(ordered, idx_by_isin, flat)
+    _merge_row_snapshots_into(ordered, idx_by_isin, flat)
     return ordered
 
 
-def fetch_oskar_weighting_etfs(
+def fetch_oskar_etfs(
     *,
     dashboard_url: str = _DASHBOARD_URL,
     headless: bool = True,
     timeout_ms: int = 120_000,
-) -> list[OskarWeightingEtf]:
+) -> list[OskarEtf]:
     """
     Launch Chromium (TLS verification on). If login is required, sign in **manually**
     in the browser; the run continues once cockpit tabs («Aktuelle Gewichtung» /
     «Wertentwicklung» / «Gewichtung») appear. With ``headless=True`` and a login gate,
     the browser is restarted **headed** once so you can complete Auth0. Then the
-    weighting tab is opened and ETF rows are parsed.
+    allocation tab is opened and ETF rows are parsed.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -626,14 +627,14 @@ def fetch_oskar_weighting_etfs(
             "Install with pip and run: playwright install chromium"
         ) from e
 
-    rows: list[OskarWeightingEtf] = []
+    rows: list[OskarEtf] = []
 
     with sync_playwright() as p:
-        logger.info("fetch_oskar_weighting_etfs: launching browser")
+        logger.info("fetch_oskar_etfs: launching browser")
         browser = p.chromium.launch(headless=headless)
         page: Any | None = None
         try:
-            logger.info("fetch_oskar_weighting_etfs: creating context")
+            logger.info("fetch_oskar_etfs: creating context")
             context = browser.new_context(
                 user_agent=_USER_AGENT,
                 ignore_https_errors=False,
@@ -642,8 +643,8 @@ def fetch_oskar_weighting_etfs(
             context.set_default_navigation_timeout(timeout_ms)
             context.set_default_timeout(timeout_ms)
             page = context.new_page()
-            logger.info("fetch_oskar_weighting_etfs: page created")
-            logger.info("fetch_oskar_weighting_etfs: navigating to dashboard")
+            logger.info("fetch_oskar_etfs: page created")
+            logger.info("fetch_oskar_etfs: navigating to dashboard")
             page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
             try:
                 page.wait_for_load_state("load", timeout=min(60_000, timeout_ms))
@@ -657,7 +658,7 @@ def fetch_oskar_weighting_etfs(
             cockpit_ok = _cockpit_ready(page)
             if needs_login or not cockpit_ok:
                 logger.info(
-                    "fetch_oskar_weighting_etfs: waiting for you to sign in or cockpit to load "
+                    "fetch_oskar_etfs: waiting for you to sign in or cockpit to load "
                     "(url=%s needs_login=%s cockpit_ready=%s)",
                     page.url,
                     needs_login,
@@ -665,7 +666,7 @@ def fetch_oskar_weighting_etfs(
                 )
                 if headless:
                     logger.info(
-                        "fetch_oskar_weighting_etfs: restarting as headed browser for manual Auth0"
+                        "fetch_oskar_etfs: restarting as headed browser for manual Auth0"
                     )
                     browser.close()
                     browser = p.chromium.launch(headless=False)
@@ -700,20 +701,20 @@ def fetch_oskar_weighting_etfs(
             _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
             page.wait_for_timeout(1_200)
 
-            logger.info("fetch_oskar_weighting_etfs: clicking weighting tab")
-            _click_weighting_tab(page, timeout_ms=timeout_ms)
-            weighting_accum: dict[str, Any] = {"ordered": [], "idx_by_isin": {}}
-            _expand_collapsed_sections(page, weighting_accum=weighting_accum)
+            logger.info("fetch_oskar_etfs: clicking allocation tab")
+            _click_allocation_tab(page, timeout_ms=timeout_ms)
+            merge_state: dict[str, Any] = {"ordered": [], "idx_by_isin": {}}
+            _expand_collapsed_sections(page, merge_state=merge_state)
             page.wait_for_timeout(1_800)
-            logger.info("fetch_oskar_weighting_etfs: evaluating weighting etfs js (all frames + shadow)")
-            _merge_weighting_items_into(
-                weighting_accum["ordered"],
-                weighting_accum["idx_by_isin"],
-                _collect_raw_weighting_rows_from_page(page),
+            logger.info("fetch_oskar_etfs: evaluating ETF row js (all frames + shadow)")
+            _merge_row_snapshots_into(
+                merge_state["ordered"],
+                merge_state["idx_by_isin"],
+                _collect_raw_rows_from_page(page),
             )
-            raw_rows = weighting_accum["ordered"]
+            raw_rows = merge_state["ordered"]
 
-            logger.debug("fetch_oskar_weighting_etfs: raw_rows=%s", raw_rows)
+            logger.debug("fetch_oskar_etfs: raw_rows=%s", raw_rows)
             for item in raw_rows:
                 if not isinstance(item, dict):
                     continue
@@ -722,9 +723,9 @@ def fetch_oskar_weighting_etfs(
                 if not _ISIN_STRICT.match(isin):
                     continue
                 name, weight_pct, value_eur = _parse_row_blob(raw_text, isin)
-                logger.info("fetch_oskar_weighting_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
+                logger.info("fetch_oskar_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
                 rows.append(
-                    OskarWeightingEtf(
+                    OskarEtf(
                         isin=isin,
                         name=name,
                         weight_pct=weight_pct,

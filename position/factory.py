@@ -4,7 +4,7 @@ from typing import Any
 from position import get_ignore_cache
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
-from oskar import OskarWeightingEtf, fetch_oskar_weighting_etfs
+from oskar import OskarEtf, fetch_oskar_etfs
 
 OSKAR = "oskar"
 # "yfinance" | "justetf"
@@ -16,8 +16,8 @@ CACHE_FILENAME = "cache.json"
 _CACHE_LAST_PRICE = "last_price"
 _CACHE_COUNTRIES = "countries"
 
-# Per-ISIN weighting etfs from oskar (written by ``_save_position_in_cache``).
-global_weighting_etfs: dict[str, OskarWeightingEtf] = {}
+# Per-ISIN cockpit ETFs from oskar (written by ``_save_position_in_cache``).
+global_oskar_etfs: dict[str, OskarEtf] = {}
 
 
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
@@ -87,13 +87,14 @@ def factory(
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
 
     if broker == OSKAR:
-        # fetch lazily the weighting etfs from oskar
-        weighting_etfs = fetch_oskar_weighting_etfs()
-        for weighting_etf in weighting_etfs:
-            if weighting_etf.isin == isin:
-                # inherit the value from the weighting etf
-                value = weighting_etf.value_eur
-                shares = None
+        # fetch lazily the cockpit ETFs from oskar
+        if not global_oskar_etfs:
+            global_oskar_etfs = fetch_oskar_etfs()
+        oskar_etf = global_oskar_etfs.get(isin)
+        if oskar_etf:
+            # inherit the value from the oskar etf
+            value = oskar_etf.value_eur
+            shares = None
 
     if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(

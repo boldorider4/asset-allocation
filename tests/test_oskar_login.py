@@ -34,16 +34,16 @@ class TestOskarLogin(unittest.TestCase):
                 format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             )
 
-    def test_login_and_weighting_tab(self) -> None:
-        from oskar import fetch_oskar_weighting_etfs
+    def test_login_and_oskar_etfs(self) -> None:
+        from oskar import fetch_oskar_etfs
 
         logger.info("OSKAR login test: start (manual Auth0, headed browser)")
 
-        logger.info("OSKAR login test: calling fetch_oskar_weighting_etfs (headed, ~5 min login wait)")
-        rows = fetch_oskar_weighting_etfs(
+        logger.info("OSKAR login test: calling fetch_oskar_etfs (headed, ~5 min login wait)")
+        rows = fetch_oskar_etfs(
             headless=False,
             timeout_ms=120_000,
         )
         self.assertIsInstance(rows, list)
         self.assertIsNotNone(rows)
-        logger.info("OSKAR login test: done weighting rows=%d", len(rows))
+        logger.info("OSKAR login test: done rows=%d", len(rows))
