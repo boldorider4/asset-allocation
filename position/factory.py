@@ -1,10 +1,12 @@
 import json
 from typing import Any
 
-from position import get_ignore_cache, get_fetch_oskar
+from position import get_ignore_cache, get_fetch_oskar, get_assets_file
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 from oskar import OskarEtf, fetch_oskar_etfs
+from utils import portfolio as global_portfolio
+from utils import write_portfolio_to_file
 
 OSKAR = "oskar"
 # "yfinance" | "justetf"
@@ -91,11 +93,21 @@ def factory(
         # fetch lazily the cockpit ETFs from oskar
         if not global_oskar_etfs:
             global_oskar_etfs = fetch_oskar_etfs()
-        oskar_etf = global_oskar_etfs.get(isin)
-        if oskar_etf:
-            # inherit the value from the oskar etf
-            value = oskar_etf.value_eur
-            shares = None
+            # update the assets file with the new oskar etfs
+            for oskar_etf in global_oskar_etfs.values():
+                for positions in global_portfolio.values():
+                    for position in positions:
+                        if position.get("isin") == oskar_etf.isin:
+                            position["value"] = oskar_etf.value_eur
+                            position["shares"] = None
+            write_portfolio_to_file(get_assets_file())
+
+        if isin in global_oskar_etfs:
+            oskar_etf = global_oskar_etfs.get(isin)
+            if oskar_etf:
+                # inherit the value from the oskar etf
+                value = oskar_etf.value_eur
+                shares = None
 
     if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(

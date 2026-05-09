@@ -1,5 +1,4 @@
 import argparse
-import json
 import sys
 
 import matplotlib
@@ -15,34 +14,18 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from position import set_ignore_cache, set_fetch_oskar
+from position import set_ignore_cache, set_fetch_oskar, set_assets_file, get_assets_file
 from pathlib import Path
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
+from utils import portfolio, load_portfolio
 
 
-def _default_assets_path() -> Path:
-    return Path(__file__).resolve().parent / "assets.json"
-
-
-def load_portfolio(path: Path | None = None) -> dict[str, list[dict]]:
-    """Load portfolio buckets from a JSON file (default: assets.json next to this module)."""
-    assets_path = path or _default_assets_path()
-    with assets_path.open(encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError("assets root must be a JSON object")
-    for key, positions in data.items():
-        if not isinstance(positions, list):
-            raise ValueError(f"{key!r} must be a JSON array")
-        for i, pos in enumerate(positions):
-            if not isinstance(pos, dict):
-                raise ValueError(f"{key}[{i}] must be a JSON object")
-    return data
-
-
-def main(assets_file_path: Path | None = None):
-    portfolio: dict[str, list[dict]] = load_portfolio(assets_file_path)
+def main():
+    # Populate the module-level ``utils.portfolio`` in place so other modules
+    # (e.g. ``position.factory``) that imported it see the loaded data.
+    portfolio.clear()
+    portfolio.update(load_portfolio(get_assets_file()))
 
     # make portfolios
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
@@ -102,4 +85,6 @@ if __name__ == "__main__":
         set_ignore_cache(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
-    main(args.assets_file)
+    if args.assets_file:
+        set_assets_file(args.assets_file)
+    main()
