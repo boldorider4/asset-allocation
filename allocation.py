@@ -15,7 +15,7 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from position import set_ignore_cache
+from position import set_ignore_cache, set_fetch_oskar
 from pathlib import Path
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
@@ -92,7 +92,14 @@ if __name__ == "__main__":
         type=Path,
         help="Path to the assets JSON file.",
     )
+    parser.add_argument(
+        "--fetch-oskar",
+        action="store_true",
+        help="Log into Oskar and scrape ETF positions.",
+    )
     args = parser.parse_args()
     if args.no_cache:
         set_ignore_cache(True)
+    if args.fetch_oskar:
+        set_fetch_oskar(True)
     main(args.assets_file)

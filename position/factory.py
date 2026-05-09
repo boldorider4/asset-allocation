@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from position import get_ignore_cache
+from position import get_ignore_cache, get_fetch_oskar
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 from oskar import OskarEtf, fetch_oskar_etfs
@@ -86,7 +86,7 @@ def factory(
     else:
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
 
-    if broker == OSKAR:
+    if broker == OSKAR and get_fetch_oskar():
         global global_oskar_etfs
         # fetch lazily the cockpit ETFs from oskar
         if not global_oskar_etfs:

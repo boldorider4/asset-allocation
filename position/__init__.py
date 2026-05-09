@@ -2,6 +2,7 @@
 
 # Set True (e.g. via CLI) to skip reading cache.json for prices; fresh data is still written.
 IGNORE_CACHE = False
+FETCH_OSKAR = False
 
 def get_ignore_cache() -> bool:
     global IGNORE_CACHE
@@ -10,3 +11,11 @@ def get_ignore_cache() -> bool:
 def set_ignore_cache(ignore_cache: bool) -> None:
     global IGNORE_CACHE
     IGNORE_CACHE = ignore_cache
+
+def get_fetch_oskar() -> bool:
+    global FETCH_OSKAR
+    return FETCH_OSKAR
+
+def set_fetch_oskar(fetch_oskar: bool) -> None:
+    global FETCH_OSKAR
+    FETCH_OSKAR = fetch_oskar
