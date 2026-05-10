@@ -101,7 +101,8 @@ def factory(
                 for positions in global_portfolio.values():
                     for position in positions:
                         pos_isin = position.get("ISIN") or position.get("isin")
-                        if pos_isin == oskar_etf.isin:
+                        pos_broker = position.get("broker") or position.get("Broker")
+                        if pos_isin == oskar_etf.isin and pos_broker == OSKAR:
                             position["value"] = oskar_etf.value_eur
                             position["shares"] = None
             write_portfolio_to_file(get_assets_file())
