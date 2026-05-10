@@ -1,9 +1,10 @@
 import json
 from typing import Any
 
-from utils import get_ignore_cache, get_incognito_value_factor
+from utils import get_fetch_oskar, get_ignore_cache, get_incognito_value_factor
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
+from oskar import OSKAR
 
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
@@ -79,7 +80,8 @@ def factory(
         value_scale = get_incognito_value_factor()
     # Always load the on-disk map so writes merge all ISINs (including with ``--no-cache``).
     cache = _load_cache()
-    if get_ignore_cache():
+    # do not cache if cache is specifically ignored or if the broker is OSKAR and fetch oskar is enabled
+    if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR):
         last_price = None
         cached_countries: dict[str, float] | None = None
     else:
