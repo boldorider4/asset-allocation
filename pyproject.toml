@@ -29,5 +29,5 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
 log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
-py-modules = ["allocation", "utils", "oskar"]
+py-modules = ["allocation", "logger", "utils", "oskar"]
 packages = ["position", "visual", "portfolio"]

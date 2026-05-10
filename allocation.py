@@ -1,4 +1,5 @@
 import argparse
+import logging
 import sys
 
 import matplotlib
@@ -15,6 +16,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from pathlib import Path
+
+from logger import configure_cli_logging
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from utils import (
@@ -103,7 +106,14 @@ def cli() -> None:
         action="store_true",
         help="Show fake values for asset allocation.",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level for stderr (default: INFO). Use DEBUG for verbose OSKAR steps.",
+    )
     args = parser.parse_args()
+    configure_cli_logging(getattr(logging, args.log_level))
     if args.no_cache:
         set_ignore_cache(True)
     if args.fetch_oskar:
