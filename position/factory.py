@@ -121,11 +121,7 @@ def factory(
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-    if (
-        (get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR))
-        and isin is not None
-        and position.last_price is not None
-    ):
+    if isin is not None and position.last_price is not None:
         countries = (
             position.countries() if isinstance(position, JustETFPosition) else None
         )
