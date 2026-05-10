@@ -38,6 +38,8 @@ def _load_cache() -> dict[str, Any]:
         with open(CACHE_FILENAME, "r") as f:
             return json.load(f)
     except FileNotFoundError:
+        with open(CACHE_FILENAME, "w") as f:
+            json.dump({}, f, indent=2)
         return {}
 
 
