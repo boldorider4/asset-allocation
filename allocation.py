@@ -76,7 +76,7 @@ def main():
     plt.show()
 
 
-if __name__ == "__main__":
+def cli() -> None:
     parser = argparse.ArgumentParser(description="Portfolio allocation report.")
     parser.add_argument(
         "--no-cache",
@@ -101,3 +101,7 @@ if __name__ == "__main__":
     if args.assets_file:
         set_assets_file(args.assets_file)
     main()
+
+
+if __name__ == "__main__":
+    cli()
