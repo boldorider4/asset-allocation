@@ -63,9 +63,9 @@ def main():
     equity_portfolio.plot()
 
     print(bond_portfolio)
-    bond_portfolio.plot_dmem()
-    bond_portfolio.plot_usavn()
-    bond_portfolio.plot()
+    # bond_portfolio.plot_dmem()
+    # bond_portfolio.plot_usavn()
+    # bond_portfolio.plot()
 
     print(fixed_maturity_bond_portfolio)
     # fixed_maturity_bond_portfolio.plot()
