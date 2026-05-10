@@ -11,6 +11,7 @@ not silently confirm a bug shared by the loader.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 import tempfile
@@ -23,7 +24,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils import load_portfolio, write_portfolio_to_file  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from utils import (  # noqa: E402
+    apply_incognito_scaling,
+    get_incognito_value_factor,
+    load_portfolio,
+    set_incognito_value_factor,
+    write_portfolio_to_file,
+)
 from utils import portfolio as global_portfolio  # noqa: E402
 
 SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
@@ -108,6 +117,35 @@ class TestWritePortfolioToFile(unittest.TestCase):
         self.assertEqual(untouched["ISIN"], "IE00B4YBJ215")
         self.assertEqual(untouched["value"], 9469.5)
         self.assertEqual(untouched["shares"], 45)
+
+
+class TestIncognitoScaling(unittest.TestCase):
+    def test_sets_factor_from_explicit_values_without_mutating_dict(self) -> None:
+        saved = copy.deepcopy(dict(global_portfolio))
+        saved_factor = get_incognito_value_factor()
+        try:
+            global_portfolio.clear()
+            global_portfolio.update(
+                {
+                    "a": [{"value": 40.0}],
+                    "b": [{"value": 60.0}],
+                }
+            )
+            with patch("random.randint", return_value=25000):
+                apply_incognito_scaling()
+            self.assertEqual(get_incognito_value_factor(), 250.0)
+            self.assertAlmostEqual(global_portfolio["a"][0]["value"], 40.0)
+            self.assertAlmostEqual(global_portfolio["b"][0]["value"], 60.0)
+            raw_total = sum(
+                float(p["value"])
+                for positions in global_portfolio.values()
+                for p in positions
+            )
+            self.assertEqual(raw_total, 100.0)
+        finally:
+            global_portfolio.clear()
+            global_portfolio.update(copy.deepcopy(saved))
+            set_incognito_value_factor(saved_factor)
 
 
 if __name__ == "__main__":

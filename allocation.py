@@ -24,8 +24,11 @@ from utils import (
     set_ignore_cache,
     set_fetch_oskar,
     set_assets_file,
+    set_incognito,
     get_assets_file,
     get_fetch_oskar,
+    get_incognito,
+    apply_incognito_scaling,
 )
 from oskar import update_oskar_etfs_in_portfolio
 
@@ -40,6 +43,9 @@ def main():
         update_oskar_etfs_in_portfolio()
         write_portfolio_to_file(get_assets_file())
 
+    if get_incognito():
+        apply_incognito_scaling()
+
     # make portfolios
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
     fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
@@ -48,6 +54,8 @@ def main():
     non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio["pension_portfolio"])
+    total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
+    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
     print(equity_portfolio)
     equity_portfolio.plot_dmem()
@@ -68,10 +76,7 @@ def main():
     print(commodity_portfolio)
     # commodity_portfolio.plot()
 
-    total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_growth_portfolio.plot(title="Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-
-    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
     total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     plt.show()
 
@@ -93,6 +98,11 @@ def cli() -> None:
         action="store_true",
         help="Log into Oskar and scrape ETF positions.",
     )
+    parser.add_argument(
+        "--incognito",
+        action="store_true",
+        help="Show fake values for asset allocation.",
+    )
     args = parser.parse_args()
     if args.no_cache:
         set_ignore_cache(True)
@@ -100,6 +110,8 @@ def cli() -> None:
         set_fetch_oskar(True)
     if args.assets_file:
         set_assets_file(args.assets_file)
+    if args.incognito:
+        set_incognito(True)
     main()
 
 

@@ -8,6 +8,9 @@ portfolio: dict[str, list[dict]] = {}
 # Set True (e.g. via CLI) to skip reading cache.json for prices; fresh data is still written.
 IGNORE_CACHE = False
 FETCH_OSKAR = False
+INCOGNITO = False
+# Applied by ``apply_incognito_scaling``; ``Position`` / ``factory`` multiply monetary amounts by this.
+INCOGNITO_VALUE_FACTOR: float = 1.0
 # Optional override path for the assets JSON file; ``None`` means use the default location.
 ASSETS_FILE: Path | None = None
 
@@ -40,6 +43,84 @@ def get_assets_file() -> Path | None:
 def set_assets_file(assets_file: Path) -> None:
     global ASSETS_FILE
     ASSETS_FILE = assets_file
+
+
+def get_incognito() -> bool:
+    global INCOGNITO
+    return INCOGNITO
+
+
+def set_incognito(incognito: bool) -> None:
+    global INCOGNITO
+    INCOGNITO = incognito
+
+
+def get_incognito_value_factor() -> float:
+    global INCOGNITO_VALUE_FACTOR
+    return INCOGNITO_VALUE_FACTOR
+
+
+def set_incognito_value_factor(factor: float) -> None:
+    global INCOGNITO_VALUE_FACTOR
+    INCOGNITO_VALUE_FACTOR = factor
+
+
+def _incognito_cached_last_price(isin: str | None) -> float | None:
+    """
+    ``last_price`` from ``cache.json`` for incognito totals only.
+
+    Uses ``position.factory``'s ``_load_cache`` / ``_parse_cache_entry`` so parsing matches
+    the rest of the app. Lazy-imported to avoid cycles at ``utils`` import time.
+
+    Returns ``None`` when there is no cache row; otherwise ``float(lp)`` (including ``0.0``
+    when ``last_price`` is absent in the row).
+    """
+    if not isin:
+        return None
+    from position.factory import _load_cache, _parse_cache_entry
+
+    lp, _ = _parse_cache_entry(_load_cache().get(isin))
+    return None if lp is None else float(lp)
+
+
+def apply_incognito_scaling() -> None:
+    """
+    Pick a random total in ``[10001, 54999]`` and set ``INCOGNITO_VALUE_FACTOR`` so that
+    (when positions use cached prices / explicit JSON values) portfolio totals match that
+    target. Does **not** mutate the ``portfolio`` dict; scaling is applied when building
+    ``Position`` instances via ``factory`` (see ``get_incognito_value_factor``).
+
+    Totals use explicit JSON ``value`` when set. Otherwise uses **cache.json only**
+    (``shares`` × cached ``last_price``); missing cache entry or missing price → **0**
+    for that line (no network / no ``factory``).
+
+    Lazy-imports factory helpers to avoid import cycles with ``utils``.
+    """
+    global portfolio
+
+    import random
+
+    from portfolio.portfolio import ISIN, SHARES, VALUE
+
+    total = 0.0
+    for positions in portfolio.values():
+        for pos in positions:
+            raw = pos.get(VALUE)
+            # Explicit JSON ``value`` is authoritative; do not mix in shares × cache here.
+            if raw is not None:
+                total += float(raw)
+            else:
+                lp = _incognito_cached_last_price(pos.get(ISIN))
+                sh = pos.get(SHARES)
+                if lp is not None and sh is not None:
+                    total += float(sh) * float(lp)
+
+    if total <= 0:
+        return
+
+    target = float(random.randint(10001, 54999))
+    factor = target / total
+    set_incognito_value_factor(factor)
 
 
 def _default_assets_path() -> Path:

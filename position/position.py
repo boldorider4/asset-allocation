@@ -123,11 +123,13 @@ class Position(ABC):
         dmem_other: float | None = None,
         last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
+        value_scale: float = 1.0,
     ) -> None:
         self._name = name
         self._short_name = short_name
         self._shares = shares
         self._value = value
+        self._value_scale = value_scale
         self._broker = broker
         self._isin = isin
         self._dmem = dmem
@@ -162,11 +164,16 @@ class Position(ABC):
 
     @property
     def value(self) -> float | None:
+        base: float | None
         if self._value is not None:
-            return self._value
-        if self._shares is not None:
-            return self._shares * self._last_price
-        return None
+            base = self._value
+        elif self._shares is not None and self._last_price is not None:
+            base = self._shares * self._last_price
+        else:
+            base = None
+        if base is None:
+            return None
+        return base * self._value_scale
 
     @property
     def dmem(self) -> float | None:

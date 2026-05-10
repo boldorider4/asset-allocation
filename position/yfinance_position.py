@@ -30,6 +30,7 @@ class YFinancePosition(Position):
         dmem_other: float | None = None,
         last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
+        value_scale: float = 1.0,
     ) -> None:
         #print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         self._ticker: yf.Ticker | None = None
@@ -47,6 +48,7 @@ class YFinancePosition(Position):
             dmem_other=dmem_other,
             last_price=last_price,
             cached_countries=cached_countries,
+            value_scale=value_scale,
         )
 
     def _read_listing_currency(self) -> str | None:
@@ -68,7 +70,7 @@ class YFinancePosition(Position):
         """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
         from position.factory import factory as _factory
 
-        fx = _factory(self._EURUSD_SYMBOL)
+        fx = _factory(self._EURUSD_SYMBOL, value_scale=1.0)
         return fx.last_price
 
     def _init_eur_scaling(self) -> None:

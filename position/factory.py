@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from utils import get_ignore_cache
+from utils import get_ignore_cache, get_incognito_value_factor
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 
@@ -72,7 +72,11 @@ def factory(
     dmem: float | None = None,
     usavn: float | None = None,
     dmem_other: float | None = None,
+    *,
+    value_scale: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
+    if value_scale is None:
+        value_scale = get_incognito_value_factor()
     # Always load the on-disk map so writes merge all ISINs (including with ``--no-cache``).
     cache = _load_cache()
     if get_ignore_cache():
@@ -94,6 +98,7 @@ def factory(
             dmem_other,
             last_price,
             cached_countries=cached_countries,
+            value_scale=value_scale,
         )
     elif POSITION_SOURCE == JUSTETF:
         position = JustETFPosition(
@@ -108,6 +113,7 @@ def factory(
             dmem_other,
             last_price,
             cached_countries=cached_countries,
+            value_scale=value_scale,
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
