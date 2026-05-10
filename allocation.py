@@ -34,19 +34,27 @@ from utils import (
     apply_incognito_scaling,
 )
 from oskar import update_oskar_etfs_in_portfolio
+from logger import attach_color_stderr_handler_for_module
 
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 def main():
     # Populate the module-level ``utils.portfolio`` in place so other modules
     # (e.g. ``position.factory``) that imported it see the loaded data.
+    assets_path = get_assets_file()
+    logger.info("Loading portfolio from %s", assets_path)
     portfolio.clear()
-    portfolio.update(load_portfolio(get_assets_file()))
+    portfolio.update(load_portfolio(assets_path))
     # update the oskar etfs in the portfolio
     if get_fetch_oskar():
+        logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio()
-        write_portfolio_to_file(get_assets_file())
+        write_portfolio_to_file(assets_path)
+        logger.info("Wrote updated portfolio to %s", assets_path)
 
     if get_incognito():
+        logger.info("Incognito mode: scaling display values")
         apply_incognito_scaling()
 
     # make portfolios
@@ -81,6 +89,7 @@ def main():
 
     total_growth_portfolio.plot(title="Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    logger.info("Opening chart window (close window to exit)")
     plt.show()
 
 

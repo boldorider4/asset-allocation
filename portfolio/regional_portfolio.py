@@ -1,11 +1,24 @@
-from portfolio.portfolio import Portfolio
-import numpy as np
-from visual.pie_chart import PieChart
+import logging
 
+import numpy as np
+
+from portfolio.portfolio import Portfolio
+from visual.pie_chart import PieChart
+from logger import attach_color_stderr_handler_for_module
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 class RegionalPortfolio(Portfolio):
     def __init__(self, name: str, positions: list[dict]):
         super().__init__(name, positions)
+
+        if self._value <= 0 and self._positions:
+            logger.warning(
+                "Regional portfolio %r has zero total value with %d position(s)",
+                name,
+                len(self._positions),
+            )
 
         values = np.asarray([position.value for position in self._positions], dtype=float)
         dmem_arr = np.asarray(self._dmem, dtype=float)

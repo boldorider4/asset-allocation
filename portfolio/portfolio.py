@@ -1,8 +1,14 @@
-from position.factory import factory as _factory
-from position.position import Position
-from visual.pie_chart import PieChart
+import logging
+
 import numpy as np
 
+from position.factory import factory as _factory
+from position.position import Position
+from logger import attach_color_stderr_handler_for_module
+from visual.pie_chart import PieChart
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 # globals
 NAME = "name"
@@ -64,7 +70,7 @@ class Portfolio:
         autopct_fontsize: float | None = None,
     ) -> None:
         if self._visualizer is None:
-            print("No visualizer set for portfolio")
+            logger.warning("No visualizer set for portfolio %r; skipping plot", self._name)
             return
         if title is not None:
             self._visualizer.title = title

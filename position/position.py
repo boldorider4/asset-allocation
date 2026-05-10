@@ -3,7 +3,14 @@ Position pricing: abstract base plus Yahoo Finance and JustETF implementations.
 """
 
 from __future__ import annotations
+
+import logging
 from abc import ABC, abstractmethod
+
+from logger import attach_color_stderr_handler_for_module
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 
 _US_MARKET_NAME = "United States"
@@ -150,10 +157,14 @@ class Position(ABC):
             self._last_price = self._fast_info_price()
             # if the fetch was unsuccessful
             if self._last_price is None:
+                logger.error("No fast/quote price for ISIN %s", self._isin)
                 raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
         # otherwise, no price is cached or determined if only the value of the position is provided
         elif self._value is None:
-            raise RuntimeError(f"No last price for position because neither value nor ISIN was provided")
+            logger.error("No last price: neither value nor ISIN was provided")
+            raise RuntimeError(
+                "No last price for position because neither value nor ISIN was provided"
+            )
         if self.countries():
             self._dmem = self._compute_dev_vs_em_market()
             self._usavn = self._compute_us_vs_exus_market()
@@ -190,6 +201,7 @@ class Position(ABC):
     def price_history(self) -> float:
         p = self._history_last_close()
         if p is None:
+            logger.warning("No historical close for ISIN %s", self._isin)
             raise RuntimeError(f"No historical close for ISIN {self._isin}")
         return float(p)
 
@@ -234,8 +246,15 @@ class Position(ABC):
                 developed_markets += _row["weight_pct"] * .5
                 emerging_markets += _row["weight_pct"] * .5
 
-        if developed_markets + emerging_markets > 0:
-            return developed_markets / (developed_markets + emerging_markets)
+        total = developed_markets + emerging_markets
+        if total > 0:
+            return developed_markets / total
+        if self._countries:
+            logger.warning(
+                "DMEM weights sum to zero for ISIN %s (%d country rows); using 0.0",
+                self._isin,
+                len(self._countries),
+            )
         return 0
 
     def _compute_us_vs_exus_market(self) -> float:

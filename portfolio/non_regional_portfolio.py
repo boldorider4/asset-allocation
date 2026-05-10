@@ -1,10 +1,22 @@
+import logging
+
 from portfolio.portfolio import Portfolio
 from visual.pie_chart import PieChart
+from logger import attach_color_stderr_handler_for_module
 
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 class NonRegionalPortfolio(Portfolio):
     def __init__(self, name: str, positions: list[dict], consolidate: bool = False):
         super().__init__(name, positions)
+
+        if self._value <= 0 and self._positions:
+            logger.warning(
+                "Non-regional portfolio %r has zero total value with %d position(s)",
+                name,
+                len(self._positions),
+            )
 
         if consolidate:
             self._visualizer_data = {

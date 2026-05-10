@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import http.cookiejar
+import logging
 import json
 import re
 import time
@@ -8,6 +10,10 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from position.position import Position
+from logger import attach_color_stderr_handler_for_module
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 class JustETFPosition(Position):
     """
@@ -154,12 +160,21 @@ class JustETFPosition(Position):
         try:
             with opener.open(req_dist, timeout=30) as resp:
                 xml_text = resp.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
+            logger.warning(
+                "JustETF country Wicket request failed for %s (HTTP %s); using profile HTML",
+                self._isin,
+                e.code,
+            )
             return self._countries_from_html_table(seed_html)
 
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError:
+            logger.warning(
+                "JustETF country XML parse failed for %s; using profile HTML",
+                self._isin,
+            )
             return self._countries_from_html_table(seed_html)
         for comp in root.findall(".//component"):
             fragment = comp.text or ""
@@ -235,6 +250,7 @@ class JustETFPosition(Position):
         latest = data.get("latestQuote")
         if isinstance(latest, dict) and latest.get("raw") is not None:
             return float(latest["raw"])
+        logger.warning("JustETF chart has no latestQuote for ISIN %s", self._isin)
         return None
 
     def _history_last_close(self) -> float | None:
