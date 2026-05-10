@@ -20,6 +20,8 @@ _CACHE_COUNTRIES = "countries"
 
 # Per-ISIN cockpit ETFs from oskar (written by ``_save_position_in_cache``).
 global_oskar_etfs: dict[str, OskarEtf] = {}
+_OSKAR_FETCH_MAX_ATTEMPTS = 3
+global_oskar_fetch_attempts = 0
 
 
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
@@ -89,10 +91,11 @@ def factory(
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
 
     if broker == OSKAR and get_fetch_oskar():
-        global global_oskar_etfs
+        global global_oskar_etfs, global_oskar_fetch_attempts
         # fetch lazily the cockpit ETFs from oskar
-        if not global_oskar_etfs:
+        if not global_oskar_etfs and global_oskar_fetch_attempts < _OSKAR_FETCH_MAX_ATTEMPTS:
             global_oskar_etfs = fetch_oskar_etfs()
+            global_oskar_fetch_attempts += 1
             # update the assets file with the new oskar etfs
             for oskar_etf in global_oskar_etfs.values():
                 for positions in global_portfolio.values():
