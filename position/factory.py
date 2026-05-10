@@ -1,14 +1,10 @@
 import json
 from typing import Any
 
-from position import get_ignore_cache, get_fetch_oskar, get_assets_file
+from position import get_ignore_cache
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
-from oskar import OskarEtf, fetch_oskar_etfs
-from utils import portfolio as global_portfolio
-from utils import write_portfolio_to_file
 
-OSKAR = "oskar"
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
@@ -17,11 +13,6 @@ CACHE_FILENAME = "cache.json"
 # Per-ISIN value in ``cache.json`` (written by ``_save_position_in_cache``).
 _CACHE_LAST_PRICE = "last_price"
 _CACHE_COUNTRIES = "countries"
-
-# Per-ISIN cockpit ETFs from oskar (written by ``_save_position_in_cache``).
-global_oskar_etfs: dict[str, OskarEtf] = {}
-_OSKAR_FETCH_MAX_ATTEMPTS = 3
-global_oskar_fetch_attempts = 0
 
 
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
@@ -89,30 +80,6 @@ def factory(
         cached_countries: dict[str, float] | None = None
     else:
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
-
-    if broker == OSKAR and get_fetch_oskar():
-        global global_oskar_etfs, global_oskar_fetch_attempts
-        # fetch lazily the cockpit ETFs from oskar
-        if not global_oskar_etfs and global_oskar_fetch_attempts < _OSKAR_FETCH_MAX_ATTEMPTS:
-            global_oskar_etfs = fetch_oskar_etfs()
-            global_oskar_fetch_attempts += 1
-            # update the assets file with the new oskar etfs
-            for oskar_etf in global_oskar_etfs.values():
-                for positions in global_portfolio.values():
-                    for position in positions:
-                        pos_isin = position.get("ISIN") or position.get("isin")
-                        pos_broker = position.get("broker") or position.get("Broker")
-                        if pos_isin == oskar_etf.isin and pos_broker == OSKAR:
-                            position["value"] = oskar_etf.value_eur
-                            position["shares"] = None
-            write_portfolio_to_file(get_assets_file())
-
-        if isin in global_oskar_etfs:
-            oskar_etf = global_oskar_etfs.get(isin)
-            if oskar_etf:
-                # inherit the value from the oskar etf
-                value = oskar_etf.value_eur
-                shares = None
 
     if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(

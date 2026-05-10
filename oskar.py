@@ -16,8 +16,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from position.justetf_position import JustETFPosition
+from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
+
+_OSKAR = "oskar"
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
 
@@ -782,3 +785,18 @@ def fetch_oskar_etfs(
                 pass
 
     return rows
+
+
+global global_oskar_etfs
+global_oskar_etfs: dict[str, OskarEtf] = {}
+def update_oskar_etfs_in_portfolio():
+    global_oskar_etfs = fetch_oskar_etfs()
+    # update the assets file with the new oskar etfs
+    for oskar_etf in global_oskar_etfs.values():
+        for positions in global_portfolio.values():
+            for position in positions:
+                pos_isin = position.get("ISIN") or position.get("isin")
+                pos_broker = position.get("broker") or position.get("Broker")
+                if pos_isin == oskar_etf.isin and pos_broker == _OSKAR:
+                    position["value"] = oskar_etf.value_eur
+                    position["shares"] = None

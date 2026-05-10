@@ -14,11 +14,12 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from position import set_ignore_cache, set_fetch_oskar, set_assets_file, get_assets_file
+from position import set_ignore_cache, set_fetch_oskar, set_assets_file, get_assets_file, get_fetch_oskar
 from pathlib import Path
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
-from utils import portfolio, load_portfolio
+from utils import portfolio, load_portfolio, write_portfolio_to_file
+from oskar import update_oskar_etfs_in_portfolio
 
 
 def main():
@@ -26,6 +27,10 @@ def main():
     # (e.g. ``position.factory``) that imported it see the loaded data.
     portfolio.clear()
     portfolio.update(load_portfolio(get_assets_file()))
+    # update the oskar etfs in the portfolio
+    if get_fetch_oskar():
+        update_oskar_etfs_in_portfolio()
+        write_portfolio_to_file(get_assets_file())
 
     # make portfolios
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
