@@ -278,6 +278,35 @@ def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
     )
 
 
+def _wait_for_allocation_scope(page: Any, *, timeout_ms: int) -> Any:
+    """Return the frame/page whose DOM contains the allocation widget."""
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    last_urls: list[str] = []
+    while time.monotonic() < deadline:
+        last_urls = []
+        for fr in page.frames:
+            try:
+                fr_url = getattr(fr, "url", "") or ""
+                last_urls.append(fr_url[:120])
+                root = fr.locator(".asset-allocation").first
+                if root.count() > 0:
+                    root.wait_for(state="visible", timeout=min(5_000, timeout_ms))
+                    logger.info("OSKAR: allocation widget detected (frame=%s)", fr_url[:120])
+                    return fr
+            except Exception as exc:
+                logger.debug(
+                    "OSKAR: allocation widget wait skipped frame url=%s err=%s",
+                    (getattr(fr, "url", "") or "")[:100],
+                    exc,
+                )
+        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=2_000)
+        page.wait_for_timeout(500)
+    raise RuntimeError(
+        "OSKAR: timed out waiting for .asset-allocation after opening Gewichtung "
+        f"(frames={last_urls})."
+    )
+
+
 # Expand top levels and then discover each sub-bucket
 _OSKAR_ALLOCATION_BUCKETS = {
     "Aktien": (
@@ -341,6 +370,7 @@ _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
 
 def _expand_oskar_allocation_bucket(
     page: Any,
+    allocation_scope: Any,
     top_label: str,
     sub_labels: tuple[str, ...],
     *,
@@ -351,12 +381,12 @@ def _expand_oskar_allocation_bucket(
     :data:`_OSKAR_ALLOCATION_BUCKETS`). Skips missing buckets or rows; rows without
     a visible collapse chevron are left as-is.
     """
-    root = page.locator(".asset-allocation").first
+    root = allocation_scope.locator(".asset-allocation").first
     if root.count() == 0:
         logger.warning("OSKAR expand: no .asset-allocation on page")
         return
     top_row = root.locator("div.row.level1").filter(
-        has=page.locator(
+        has=allocation_scope.locator(
             "div.asset",
             has_text=re.compile(rf"^\s*{re.escape(top_label)}\s*$", re.I),
         )
@@ -377,7 +407,7 @@ def _expand_oskar_allocation_bucket(
     page.wait_for_timeout(200)
     for row_label in sub_labels:
         try:
-            raw = page.evaluate(_CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS, [top_label, row_label])
+            raw = allocation_scope.evaluate(_CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS, [top_label, row_label])
         except Exception as exc:
             logger.debug(
                 "OSKAR expand: bucket=%r row=%r mirror click failed: %s",
@@ -415,6 +445,7 @@ def _expand_oskar_allocation_bucket(
 
 def _expand_collapsed_sections(
     page: Any,
+    allocation_scope: Any,
     *,
     merge_state: dict[str, Any] | None = None,
 ) -> None:
@@ -422,6 +453,7 @@ def _expand_collapsed_sections(
     for top_label, sub_labels in _OSKAR_ALLOCATION_BUCKETS.items():
         _expand_oskar_allocation_bucket(
             page,
+            allocation_scope,
             top_label,
             sub_labels,
             merge_state=merge_state,
@@ -703,8 +735,13 @@ def fetch_oskar_etfs(
 
             logger.info("fetch_oskar_etfs: clicking allocation tab")
             _click_allocation_tab(page, timeout_ms=timeout_ms)
+            allocation_scope = _wait_for_allocation_scope(page, timeout_ms=timeout_ms)
             merge_state: dict[str, Any] = {"ordered": [], "idx_by_isin": {}}
-            _expand_collapsed_sections(page, merge_state=merge_state)
+            _expand_collapsed_sections(
+                page,
+                allocation_scope,
+                merge_state=merge_state,
+            )
             page.wait_for_timeout(1_800)
             logger.info("fetch_oskar_etfs: evaluating ETF row js (all frames + shadow)")
             _merge_row_snapshots_into(
