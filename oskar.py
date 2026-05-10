@@ -20,6 +20,9 @@ from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
 
+global global_oskar_etfs
+global_oskar_etfs: dict[str, OskarEtf] = {}
+
 _OSKAR = "oskar"
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
@@ -646,7 +649,7 @@ def fetch_oskar_etfs(
     dashboard_url: str = _DASHBOARD_URL,
     headless: bool = True,
     timeout_ms: int = 120_000,
-) -> list[OskarEtf]:
+) -> dict[str, OskarEtf]:
     """
     Launch Chromium (TLS verification on). If login is required, sign in **manually**
     in the browser; the run continues once cockpit tabs («Aktuelle Gewichtung» /
@@ -787,9 +790,8 @@ def fetch_oskar_etfs(
     return rows
 
 
-global global_oskar_etfs
-global_oskar_etfs: dict[str, OskarEtf] = {}
 def update_oskar_etfs_in_portfolio():
+    global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
     # update the assets file with the new oskar etfs
     for oskar_etf in global_oskar_etfs.values():

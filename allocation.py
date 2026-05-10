@@ -14,11 +14,19 @@ if (
 import numpy as np
 import matplotlib.pyplot as plt
 
-from position import set_ignore_cache, set_fetch_oskar, set_assets_file, get_assets_file, get_fetch_oskar
 from pathlib import Path
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
-from utils import portfolio, load_portfolio, write_portfolio_to_file
+from utils import (
+    portfolio,
+    load_portfolio,
+    write_portfolio_to_file,
+    set_ignore_cache,
+    set_fetch_oskar,
+    set_assets_file,
+    get_assets_file,
+    get_fetch_oskar,
+)
 from oskar import update_oskar_etfs_in_portfolio
 
 

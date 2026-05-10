@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from position import get_ignore_cache
+from utils import get_ignore_cache
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 

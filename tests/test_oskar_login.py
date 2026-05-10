@@ -44,6 +44,6 @@ class TestOskarLogin(unittest.TestCase):
             headless=False,
             timeout_ms=120_000,
         )
-        self.assertIsInstance(rows, list)
-        self.assertIsNotNone(rows)
+        self.assertIsInstance(rows, dict)
+        self.assertGreater(len(rows), 0)
         logger.info("OSKAR login test: done rows=%d", len(rows))
