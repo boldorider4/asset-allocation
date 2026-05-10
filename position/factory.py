@@ -4,7 +4,7 @@ from typing import Any
 from utils import get_fetch_oskar, get_ignore_cache, get_incognito_value_factor
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
-from oskar import OSKAR
+from oskar import _OSKAR as OSKAR
 
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
@@ -78,7 +78,7 @@ def factory(
 ) -> JustETFPosition | YFinancePosition:
     if value_scale is None:
         value_scale = get_incognito_value_factor()
-    # Always load the on-disk map so writes merge all ISINs (including with ``--no-cache``).
+    # Always load the on-disk map so ``--no-cache`` writes merge all ISINs.
     cache = _load_cache()
     # do not cache if cache is specifically ignored or if the broker is OSKAR and fetch oskar is enabled
     if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR):
@@ -119,7 +119,11 @@ def factory(
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-    if isin is not None and position.last_price is not None:
+    if (
+        get_ignore_cache()
+        and isin is not None
+        and position.last_price is not None
+    ):
         countries = (
             position.countries() if isinstance(position, JustETFPosition) else None
         )

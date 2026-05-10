@@ -86,7 +86,7 @@ def cli() -> None:
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Fetch fresh prices without reading cache.json; still update cache.json after fetches.",
+        help="Fetch fresh prices without reading cache.json; write fetched prices to cache.json.",
     )
     parser.add_argument(
         "--assets-file",

@@ -5,7 +5,7 @@ from pathlib import Path
 global portfolio
 portfolio: dict[str, list[dict]] = {}
 
-# Set True (e.g. via CLI) to skip reading cache.json for prices; fresh data is still written.
+# Set True (e.g. via ``--no-cache``) to skip reading cache.json for prices; fresh data is then written back.
 IGNORE_CACHE = False
 FETCH_OSKAR = False
 INCOGNITO = False
