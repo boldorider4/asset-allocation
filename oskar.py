@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from position.justetf_position import JustETFPosition
+from logger import attach_color_stderr_handler_for_module
 from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 global global_oskar_etfs
 global_oskar_etfs: dict[str, OskarEtf] = {}

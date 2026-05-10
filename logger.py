@@ -15,7 +15,7 @@ _LEVEL_COLORS = {
 _RESET = "\033[0m"
 
 
-class _ColorLevelFormatter(logging.Formatter):
+class ColorLevelFormatter(logging.Formatter):
     """Prefix each line with a level tag; color the tag when stderr is a TTY."""
 
     def __init__(self, fmt: str, datefmt: str | None, *, use_color: bool) -> None:
@@ -38,6 +38,32 @@ class _ColorLevelFormatter(logging.Formatter):
         return base[:idx] + color + base[idx:end] + _RESET + base[end:]
 
 
+_STDERR_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_STDERR_DATEFMT = "%H:%M:%S"
+
+
+def attach_color_stderr_handler_for_module(logger: logging.Logger) -> None:
+    """Use :class:`ColorLevelFormatter` on ``logger`` when the root logger is not configured yet.
+
+    If the root logger already has handlers (e.g. ``configure_cli_logging``, tests, or host
+    app), child log records propagate and this is a no-op.
+    """
+    if logger.handlers:
+        return
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    use_color = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        ColorLevelFormatter(
+            _STDERR_LOG_FORMAT, datefmt=_STDERR_DATEFMT, use_color=use_color
+        )
+    )
+    logger.addHandler(handler)
+    logger.propagate = False
+
+
 def configure_cli_logging(level: int) -> None:
     root = logging.getLogger()
     root.handlers.clear()
@@ -45,9 +71,10 @@ def configure_cli_logging(level: int) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(level)
     use_color = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     handler.setFormatter(
-        _ColorLevelFormatter(fmt, datefmt="%H:%M:%S", use_color=use_color)
+        ColorLevelFormatter(
+            _STDERR_LOG_FORMAT, datefmt=_STDERR_DATEFMT, use_color=use_color
+        )
     )
     root.addHandler(handler)
     if level <= logging.DEBUG:
