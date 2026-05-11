@@ -140,11 +140,13 @@ class JustETFPosition(Position):
             **self._HEADERS,
             "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         }
+        logger.info("JustETF: fetching seed HTML from %s", seed_url)
         req_seed = urllib.request.Request(seed_url, headers=seed_headers, method="GET")
         with opener.open(req_seed, timeout=30) as resp:
             seed_html = resp.read().decode("utf-8", errors="replace")
 
         if not any(m in seed_html for m in self._COUNTRY_SECTION_MARKERS):
+            logger.warning("JustETF: no country section markers found in seed HTML")
             return []
 
         wicket_headers = {
@@ -166,8 +168,10 @@ class JustETFPosition(Position):
                 self._isin,
                 e.code,
             )
+            logger.warning("JustETF: using profile HTML to parse countries")
             return self._countries_from_html_table(seed_html)
 
+        logger.info("JustETF: XML text parsed successfully")
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError:
@@ -175,23 +179,29 @@ class JustETFPosition(Position):
                 "JustETF country XML parse failed for %s; using profile HTML",
                 self._isin,
             )
+            logger.warning("JustETF: using profile HTML to parse countries")
             return self._countries_from_html_table(seed_html)
         for comp in root.findall(".//component"):
             fragment = comp.text or ""
             if "etf-holdings_countries_table" in fragment:
+                logger.info("JustETF: found countries in fragment")
                 parsed = self._countries_from_html_table(fragment)
                 if parsed:
                     return parsed
+        logger.info("JustETF: no countries found in fragment, using profile HTML")
         return self._countries_from_html_table(seed_html)
 
     def _fetch_countries_with_retries(self) -> list[dict[str, float | str]]:
+        logger.info("JustETF: fetching countries with retries %d", self._RETRIES)
         for attempt in range(self._RETRIES):
             try:
+                logger.info("JustETF: attempt %d", attempt)
                 return self._http_country_dist_json()
             except urllib.error.HTTPError as e:
                 if (e.code == 429 or e.code >= 500) and attempt + 1 < self._RETRIES:
                     time.sleep(self._DELAY_S)
                     continue
+                logger.error("JustETF: HTTP error %d", e.code)
                 raise RuntimeError(
                     f"JustETF HTTP {e.code} while fetching country dist for {self._isin}"
                 ) from e
@@ -199,7 +209,9 @@ class JustETFPosition(Position):
                 if attempt + 1 < self._RETRIES:
                     time.sleep(self._DELAY_S)
                     continue
+                logger.error("JustETF: URL error")
                 raise
+        logger.error("JustETF: country fetch failed after %d attempts", self._RETRIES)
         raise RuntimeError(
             f"JustETF country fetch failed for {self._isin} after {self._RETRIES} attempts"
         )
@@ -249,6 +261,7 @@ class JustETFPosition(Position):
         data = self._chart_data()
         latest = data.get("latestQuote")
         if isinstance(latest, dict) and latest.get("raw") is not None:
+            logger.info("JustETF: latest quote found")
             return float(latest["raw"])
         logger.warning("JustETF chart has no latestQuote for ISIN %s", self._isin)
         return None

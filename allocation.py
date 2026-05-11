@@ -68,23 +68,23 @@ def main():
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
-    print(equity_portfolio)
+    # print(equity_portfolio)
     equity_portfolio.plot_dmem()
     equity_portfolio.plot_usavn()
     equity_portfolio.plot()
 
-    print(bond_portfolio)
+    # print(bond_portfolio)
     # bond_portfolio.plot_dmem()
     # bond_portfolio.plot_usavn()
     # bond_portfolio.plot()
 
-    print(fixed_maturity_bond_portfolio)
+    # print(fixed_maturity_bond_portfolio)
     # fixed_maturity_bond_portfolio.plot()
 
-    print(cash_portfolio)
+    # print(cash_portfolio)
     # cash_portfolio.plot()
 
-    print(commodity_portfolio)
+    # print(commodity_portfolio)
     # commodity_portfolio.plot()
 
     total_growth_portfolio.plot(title="Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)

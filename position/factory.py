@@ -1,10 +1,15 @@
 import json
+import logging
 from typing import Any
 
 from utils import get_fetch_oskar, get_ignore_cache, get_incognito_value_factor
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 from oskar import _OSKAR as OSKAR
+from logger import attach_color_stderr_handler_for_module
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 # "yfinance" | "justetf"
 YFINANCE = "yfinance"
@@ -34,10 +39,12 @@ def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | Non
 
 
 def _load_cache() -> dict[str, Any]:
+    logger.info("Factory: loading cache from %s", CACHE_FILENAME)
     try:
         with open(CACHE_FILENAME, "r") as f:
             return json.load(f)
     except FileNotFoundError:
+        logger.info("Factory: cache file not found, creating empty cache")
         with open(CACHE_FILENAME, "w") as f:
             json.dump({}, f, indent=2)
         return {}
@@ -79,14 +86,17 @@ def factory(
     value_scale: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
     if value_scale is None:
+        logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
     # Always load the on-disk map so ``--no-cache`` writes merge all ISINs.
     cache = _load_cache()
     # do not cache if cache is specifically ignored or if the broker is OSKAR and fetch oskar is enabled
     if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR):
+        logger.info("Factory: ignoring cache")
         last_price = None
         cached_countries: dict[str, float] | None = None
     else:
+        logger.info("Factory: parsing cache entry for ISIN %s", isin)
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
 
     if POSITION_SOURCE == YFINANCE:

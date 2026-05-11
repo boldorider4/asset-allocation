@@ -49,8 +49,11 @@ class Portfolio:
                 dmem_other=position.get(DMEM_OTHER),
             ))
         self._value = self._calculate_value()
+        logger.info("Portfolio %r: built total value %.2f from %d position(s)", name, self._value, len(self._positions))
         self._dmem = self._calculate_dmem()
+        logger.info("Portfolio %r: calculated DMEM values: %r", name, self._dmem)
         self._usavn = self._calculate_usavn()
+        logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
         self._visualizer: PieChart | None = None  # subclasses set a PieChart
 
     def _calculate_value(self) -> float:
