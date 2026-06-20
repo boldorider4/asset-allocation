@@ -48,6 +48,17 @@ class OskarEtf:
     weight_pct: float | None
     value_eur: float | None
     raw_text: str
+    category: str = ""
+    subcategory: str = ""
+
+
+_OSKAR_CATEGORY_TO_PORTFOLIO: dict[str, str] = {
+    "Aktien": "equity_portfolio",
+    "Anleihen": "bond_portfolio",
+    "Inflationsgeschützt": "commodity_portfolio",
+    "Tagesgeld": "cash_portfolio",
+}
+_DEFAULT_OSKAR_PORTFOLIO_BUCKET = "equity_portfolio"
 
 
 def _parse_de_number(num: str) -> float:
@@ -767,6 +778,8 @@ def fetch_oskar_etfs(
                 if not _ISIN_STRICT.match(isin):
                     continue
                 name, weight_pct, value_eur = _parse_row_blob(raw_text, isin)
+                category = str(item.get("category", "") or "").strip()
+                subcategory = str(item.get("subcategory", "") or "").strip()
                 logger.info("fetch_oskar_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
                 rows[isin] = (
                     OskarEtf(
@@ -775,6 +788,8 @@ def fetch_oskar_etfs(
                         weight_pct=weight_pct,
                         value_eur=value_eur,
                         raw_text=raw_text,
+                        category=category,
+                        subcategory=subcategory,
                     )
                 )
         finally:
@@ -791,11 +806,31 @@ def fetch_oskar_etfs(
     return rows
 
 
+def _oskar_portfolio_bucket(oskar_etf: OskarEtf) -> str:
+    return _OSKAR_CATEGORY_TO_PORTFOLIO.get(
+        oskar_etf.category,
+        _DEFAULT_OSKAR_PORTFOLIO_BUCKET,
+    )
+
+
+def _new_oskar_portfolio_position(oskar_etf: OskarEtf) -> dict[str, Any]:
+    return {
+        "name": oskar_etf.name,
+        "ISIN": oskar_etf.isin,
+        "shares": None,
+        "value": oskar_etf.value_eur,
+        "broker": _OSKAR,
+        "dmem": 1,
+        "dmem_other": 1,
+        "usavn": 0,
+    }
+
+
 def update_oskar_etfs_in_portfolio():
     global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
-    # update the assets file with the new oskar etfs
     for oskar_etf in global_oskar_etfs.values():
+        matched = False
         for positions in global_portfolio.values():
             for position in positions:
                 pos_isin = position.get("ISIN") or position.get("isin")
@@ -803,3 +838,14 @@ def update_oskar_etfs_in_portfolio():
                 if pos_isin == oskar_etf.isin and pos_broker == _OSKAR:
                     position["value"] = oskar_etf.value_eur
                     position["shares"] = None
+                    matched = True
+        if matched:
+            continue
+        bucket = _oskar_portfolio_bucket(oskar_etf)
+        global_portfolio.setdefault(bucket, []).append(_new_oskar_portfolio_position(oskar_etf))
+        logger.info(
+            "update_oskar_etfs_in_portfolio: added missing ISIN %s to %r (value=%s)",
+            oskar_etf.isin,
+            bucket,
+            oskar_etf.value_eur,
+        )
