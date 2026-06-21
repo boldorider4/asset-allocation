@@ -789,26 +789,6 @@ def fetch_oskar_etfs(
     return rows
 
 
-def _oskar_portfolio_bucket(oskar_etf: OskarEtf) -> str:
-    return _OSKAR_CATEGORY_TO_PORTFOLIO.get(
-        oskar_etf.category,
-        _DEFAULT_OSKAR_PORTFOLIO_BUCKET,
-    )
-
-
-def _new_oskar_portfolio_position(oskar_etf: OskarEtf) -> dict[str, Any]:
-    return {
-        "name": oskar_etf.name,
-        "ISIN": oskar_etf.isin,
-        "shares": None,
-        "value": oskar_etf.value_eur,
-        "broker": _OSKAR,
-        "dmem": 1,
-        "dmem_other": 1,
-        "usavn": 0,
-    }
-
-
 def update_oskar_etfs_in_portfolio():
     global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
@@ -824,8 +804,19 @@ def update_oskar_etfs_in_portfolio():
                     matched = True
         if matched:
             continue
-        bucket = _oskar_portfolio_bucket(oskar_etf)
-        global_portfolio.setdefault(bucket, []).append(_new_oskar_portfolio_position(oskar_etf))
+        bucket = _OSKAR_CATEGORY_TO_PORTFOLIO.get(oskar_etf.category, _DEFAULT_OSKAR_PORTFOLIO_BUCKET)
+        global_portfolio.setdefault(bucket, []).append(
+            {
+                "name": oskar_etf.name,
+                "ISIN": oskar_etf.isin,
+                "shares": None,
+                "value": oskar_etf.value_eur,
+                "broker": _OSKAR,
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
         logger.info(
             "update_oskar_etfs_in_portfolio: added missing ISIN %s to %r (value=%s)",
             oskar_etf.isin,
