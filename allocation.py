@@ -1,6 +1,8 @@
 import argparse
 import logging
 import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import matplotlib
 
@@ -10,8 +12,6 @@ if sys.platform == "darwin" and matplotlib.get_backend().lower() == "macosx":
 
 import numpy as np
 import matplotlib.pyplot as plt
-
-from pathlib import Path
 
 from logger import configure_cli_logging
 from common import (
@@ -39,6 +39,20 @@ from utils import (
 )
 from logger import attach_color_stderr_handler_for_module
 from oskar import update_oskar_etfs_in_portfolio
+
+
+def _package_version() -> str:
+    try:
+        return version("asset-allocation")
+    except PackageNotFoundError:
+        print(
+            "error: asset-allocation is not installed; run `pip install -e .` from the project root",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+__version__ = _package_version()
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -98,7 +112,16 @@ def main():
 
 
 def cli() -> None:
-    parser = argparse.ArgumentParser(description="Portfolio allocation report.")
+    parser = argparse.ArgumentParser(
+        description="Portfolio allocation report.",
+        epilog=f"version {__version__}",
+    )
+    parser.add_argument(
+        "--version",
+        "-v",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--no-cache",
         action="store_true",
