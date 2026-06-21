@@ -841,13 +841,13 @@ def update_oskar_etfs_in_portfolio():
     global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
     # unique set of ISINs from OSKAR
-    oskar_isins = set(global_oskar_etfs)
-    # unique set of ISINs that have been scanned, including those in the portfolio that are not in OSKAR
+    fetched_oskar_isins = set(global_oskar_etfs)
+    # unique set of ISINs that have been scanned, including those in the portfolio that are not freshly fetched from OSKAR
     scanned_oskar_isins: set[str | None] = set()
     # list of positions to remove from the portfolio because missing from OSKAR
     to_remove: list[tuple[str, dict[str, Any]]] = []
 
-    if not oskar_isins:
+    if not fetched_oskar_isins:
         logger.warning(
             "update_oskar_etfs_in_portfolio: no OSKAR ETFs fetched; leaving portfolio unchanged",
         )
@@ -859,14 +859,16 @@ def update_oskar_etfs_in_portfolio():
             for position in positions:
                 pos_isin = position.get("ISIN") or position.get("isin")
                 pos_broker = position.get("broker") or position.get("Broker")
+                pos_name = position.get("name") or position.get("Name") or ""
                 # it doesn't make to process non-OSKAR positions
                 if pos_broker != _OSKAR:
                     continue
                 # it doesn't make to process positions that have already been scanned (removed or updated)
                 if pos_isin in scanned_oskar_isins:
                     continue
-                # if oskar position is in global portfolio but freshly fetched from OSKAR, it means OSKAR removed it
-                if pos_isin not in oskar_isins:
+                # if oskar position is in global portfolio but not freshly fetched from OSKAR, it means OSKAR removed it
+                # make an exception for Tagesgeld or those oskar portoflio positions without an ISIN
+                if pos_isin not in fetched_oskar_isins and not (pos_isin is None or pos_name == _OSKAR_CATEGORY_TAGESGELD):
                     # add to the list of positions to remove from the portfolio
                     to_remove.append((bucket, position))
                     logger.info(
@@ -879,7 +881,7 @@ def update_oskar_etfs_in_portfolio():
                     continue
                 # this oskar position is in the global portfolio and in OSKAR, it matches the oskar etf at hand
                 # so update the position with the new value and shares in the portfolio
-                if pos_isin == oskar_etf.isin:
+                if pos_isin == oskar_etf.isin or (pos_name == oskar_etf.name or pos_name == _OSKAR_CATEGORY_TAGESGELD):
                     position["value"] = oskar_etf.value_eur
                     position["shares"] = None
                     matched = True
