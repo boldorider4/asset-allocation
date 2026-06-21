@@ -14,6 +14,14 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from logger import configure_cli_logging
+from common import (
+    BOND_PORTFOLIO,
+    CASH_PORTFOLIO,
+    COMMODITY_PORTFOLIO,
+    EQUITY_PORTFOLIO,
+    FIXED_MATURITY_BOND_PORTFOLIO,
+    PENSION_PORTFOLIO,
+)
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from utils import (
@@ -29,8 +37,8 @@ from utils import (
     get_incognito,
     apply_incognito_scaling,
 )
-from oskar import update_oskar_etfs_in_portfolio
 from logger import attach_color_stderr_handler_for_module
+from oskar import update_oskar_etfs_in_portfolio
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -54,13 +62,13 @@ def main():
         apply_incognito_scaling()
 
     # make portfolios
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"], consolidate=True)
-    bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"])
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio["pension_portfolio"])
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio[EQUITY_PORTFOLIO])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio[CASH_PORTFOLIO], consolidate=True)
+    bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio[BOND_PORTFOLIO])
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio[BOND_PORTFOLIO], consolidate=True)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 

@@ -16,6 +16,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from logger import attach_color_stderr_handler_for_module
+from common import (
+    BOND_PORTFOLIO,
+    CASH_PORTFOLIO,
+    COMMODITY_PORTFOLIO,
+    EQUITY_PORTFOLIO,
+)
 from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
@@ -321,12 +327,12 @@ _OSKAR_CATEGORY_INFLATIONSGESCHUTZT = "Inflationsgeschützt"
 _OSKAR_CATEGORY_TAGESGELD = "Tagesgeld"
 
 _OSKAR_CATEGORY_TO_PORTFOLIO: dict[str, str] = {
-    _OSKAR_CATEGORY_AKTIEN: "equity_portfolio",
-    _OSKAR_CATEGORY_ANLEIHEN: "bond_portfolio",
-    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: "commodity_portfolio",
-    _OSKAR_CATEGORY_TAGESGELD: "cash_portfolio",
+    _OSKAR_CATEGORY_AKTIEN: EQUITY_PORTFOLIO,
+    _OSKAR_CATEGORY_ANLEIHEN: BOND_PORTFOLIO,
+    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: COMMODITY_PORTFOLIO,
+    _OSKAR_CATEGORY_TAGESGELD: CASH_PORTFOLIO,
 }
-_DEFAULT_OSKAR_PORTFOLIO_BUCKET = "equity_portfolio"
+_DEFAULT_OSKAR_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 
 
 # Expand top levels and then discover each sub-bucket
