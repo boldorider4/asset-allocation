@@ -69,8 +69,10 @@ def _parse_row_blob(blob: str, isin: str) -> tuple[str, float | None, float | No
     idx = next((i for i, ln in enumerate(lines) if ln == isin), -1)
     if idx > 0:
         name = lines[idx - 1]
-    elif idx == 0:
-        name = ""
+    elif idx < 0 and isin in blob:
+        pos = blob.find(isin)
+        if pos > 0:
+            name = blob[:pos].strip()
 
     weight: float | None = None
     value_eur: float | None = None

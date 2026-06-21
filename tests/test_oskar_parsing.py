@@ -9,7 +9,29 @@ from oskar import (
     _OSKAR_CATEGORY_AKTIEN,
     _merge_row_snapshots_into,
     _oskar_category_from_row,
+    _parse_row_blob,
 )
+
+
+class TestParseRowBlob(unittest.TestCase):
+    def test_single_line_blob_from_oskar_dom(self) -> None:
+        isin = "IE00BF4RFH31"
+        blob = (
+            "iShares MSCI World Small Cap UCITS ETF IE00BF4RFH31 "
+            "31,12 % 1.973,22 €"
+        )
+        name, weight, value = _parse_row_blob(blob, isin)
+        self.assertEqual(name, "iShares MSCI World Small Cap UCITS ETF")
+        self.assertEqual(weight, 31.12)
+        self.assertEqual(value, 1973.22)
+
+    def test_multiline_blob_still_works(self) -> None:
+        isin = "IE00B4L5Y983"
+        blob = "iShares Core MSCI World UCITS ETF\nIE00B4L5Y983\n12,5 %\n1.234,56 €"
+        name, weight, value = _parse_row_blob(blob, isin)
+        self.assertEqual(name, "iShares Core MSCI World UCITS ETF")
+        self.assertEqual(weight, 12.5)
+        self.assertEqual(value, 1234.56)
 
 
 class TestOskarCategoryFromRow(unittest.TestCase):
