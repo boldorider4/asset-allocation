@@ -346,6 +346,24 @@ _OSKAR_ALLOCATION_BUCKETS = {
     _OSKAR_CATEGORY_TAGESGELD: (_OSKAR_CATEGORY_TAGESGELD,),
 }
 
+
+def _oskar_category_from_row(*, category: str = "", subcategory: str = "") -> str:
+    """
+    Level-1 category for portfolio mapping. ``subcategory`` (level-2 label) can
+    backfill when merge snapshots lose the level-1 row after another bucket opens.
+    """
+    category = category.strip()
+    if category:
+        return category
+    subcategory = subcategory.strip()
+    if not subcategory:
+        return ""
+    for top_label, sub_labels in _OSKAR_ALLOCATION_BUCKETS.items():
+        if subcategory in sub_labels:
+            return top_label
+    return ""
+
+
 _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
 ([topLabel, rowLabel]) => {
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
@@ -485,7 +503,7 @@ def _expand_collapsed_sections(
 def _collect_allocation_positions_js() -> str:
     """
     After buckets are expanded, walk ``.asset-allocation`` rows in screen order:
-    level1 → category, level3 leaf with an ISIN → one position
+    level1 → category, level2 → sub-bucket, level3 leaf with an ISIN → one position
     (ETF line as shown, including name / ISIN / % / € in ``raw`` for :func:`_parse_row_blob`).
     Open shadow roots are visited so a tree inside a component host is still found.
     """
@@ -522,6 +540,7 @@ def _collect_allocation_positions_js() -> str:
             );
 
             let category = "";
+            let subcategory = "";
 
             for (const r of rowEls) {
                 const asset = r.querySelector(".asset");
@@ -530,6 +549,11 @@ def _collect_allocation_positions_js() -> str:
 
                 if (r.classList.contains("level1")) {
                     category = label;
+                    subcategory = "";
+                    continue;
+                }
+                if (r.classList.contains("level2")) {
+                    subcategory = label;
                     continue;
                 }
                 if (!r.classList.contains("level3")) continue;
@@ -551,6 +575,7 @@ def _collect_allocation_positions_js() -> str:
                     isin,
                     raw: blob.slice(0, 5000),
                     category,
+                    subcategory,
                 });
             }
         }
@@ -567,7 +592,8 @@ def _merge_row_snapshots_into(
     """
     Merge a snapshot of DOM rows into *ordered* / *idx_by_isin* (same rules
     as :func:`_collect_raw_rows_from_page`): first ISIN wins list order;
-    later rows with longer ``raw`` replace that slot; missing category is backfilled.
+    later rows with longer ``raw`` replace that slot; missing category/subcategory
+    are backfilled.
     """
     for item in items:
         if not isinstance(item, dict):
@@ -577,11 +603,13 @@ def _merge_row_snapshots_into(
         if not isin:
             continue
         cat = str(item.get("category", "") or "").strip()
+        sub = str(item.get("subcategory", "") or "").strip()
         fr_url = str(item.get("frameUrl", "") or "").strip()
         row = {
             "isin": isin,
             "raw": raw,
             "category": cat,
+            "subcategory": sub,
             "frameUrl": fr_url,
         }
         prev_i = idx_by_isin.get(isin)
@@ -596,14 +624,16 @@ def _merge_row_snapshots_into(
         else:
             if not str(prev.get("category", "")).strip() and cat:
                 prev["category"] = cat
+            if not str(prev.get("subcategory", "")).strip() and sub:
+                prev["subcategory"] = sub
 
 
 def _collect_raw_rows_from_page(page: Any) -> list[dict[str, Any]]:
     """
     One dict per leaf position (ETF) under ``.asset-allocation``, in on-screen
     order for the **current** DOM. Each item includes ``isin``, ``raw`` (that row's
-    text, including name as shown), optional ``category``, and ``frameUrl``.
-    Evaluates each same-origin frame in order.
+    text, including name as shown), optional ``category`` / ``subcategory``, and
+    ``frameUrl``. Evaluates each same-origin frame in order.
 
     The cockpit often **collapses** previously expanded buckets when another is
     opened; callers that need the full list should merge snapshots over time via
@@ -632,11 +662,13 @@ def _collect_raw_rows_from_page(page: Any) -> list[dict[str, Any]]:
             if not isin:
                 continue
             cat = str(item.get("category", "") or "").strip()
+            sub = str(item.get("subcategory", "") or "").strip()
             flat.append(
                 {
                     "isin": isin,
                     "raw": raw,
                     "category": cat,
+                    "subcategory": sub,
                     "frameUrl": fr_url,
                 }
             )
@@ -768,7 +800,10 @@ def fetch_oskar_etfs(
                 if not _ISIN_STRICT.match(isin):
                     continue
                 name, weight_pct, value_eur = _parse_row_blob(raw_text, isin)
-                category = str(item.get("category", "") or "").strip()
+                category = _oskar_category_from_row(
+                    category=str(item.get("category", "") or ""),
+                    subcategory=str(item.get("subcategory", "") or ""),
+                )
                 logger.info("fetch_oskar_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
                 rows[isin] = (
                     OskarEtf(
