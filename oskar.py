@@ -51,15 +51,6 @@ class OskarEtf:
     category: str = ""
 
 
-_OSKAR_CATEGORY_TO_PORTFOLIO: dict[str, str] = {
-    "Aktien": "equity_portfolio",
-    "Anleihen": "bond_portfolio",
-    "Inflationsgeschützt": "commodity_portfolio",
-    "Tagesgeld": "cash_portfolio",
-}
-_DEFAULT_OSKAR_PORTFOLIO_BUCKET = "equity_portfolio"
-
-
 def _parse_de_number(num: str) -> float:
     """German number: thousands '.', decimal ','."""
     s = num.strip().replace(".", "").replace(",", ".")
@@ -324,21 +315,35 @@ def _wait_for_allocation_scope(page: Any, *, timeout_ms: int) -> Any:
     )
 
 
+_OSKAR_CATEGORY_AKTIEN = "Aktien"
+_OSKAR_CATEGORY_ANLEIHEN = "Anleihen"
+_OSKAR_CATEGORY_INFLATIONSGESCHUTZT = "Inflationsgeschützt"
+_OSKAR_CATEGORY_TAGESGELD = "Tagesgeld"
+
+_OSKAR_CATEGORY_TO_PORTFOLIO: dict[str, str] = {
+    _OSKAR_CATEGORY_AKTIEN: "equity_portfolio",
+    _OSKAR_CATEGORY_ANLEIHEN: "bond_portfolio",
+    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: "commodity_portfolio",
+    _OSKAR_CATEGORY_TAGESGELD: "cash_portfolio",
+}
+_DEFAULT_OSKAR_PORTFOLIO_BUCKET = "equity_portfolio"
+
+
 # Expand top levels and then discover each sub-bucket
 _OSKAR_ALLOCATION_BUCKETS = {
-    "Aktien": (
+    _OSKAR_CATEGORY_AKTIEN: (
         "Aktien Small Cap",
         "Aktien Europa", "Aktien Japan",
         "Aktien Schwellenländer",
         "Aktien Asien und pazifischer Raum",
         "Aktien USA"
         ),
-    "Anleihen": (
+    _OSKAR_CATEGORY_ANLEIHEN: (
         "Anleihen Global",
         "Anleihen Schwellenländer"
         ),
-    "Inflationsgeschützt": ("Gold", "Anleihen inflationsgeschützt"),
-    "Tagesgeld": ("Tagesgeld",),
+    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: ("Gold", "Anleihen inflationsgeschützt"),
+    _OSKAR_CATEGORY_TAGESGELD: (_OSKAR_CATEGORY_TAGESGELD,),
 }
 
 _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
