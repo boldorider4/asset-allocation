@@ -63,7 +63,6 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
                 value_eur=999.0,
                 raw_text="",
                 category="Anleihen",
-                subcategory="Anleihen Global",
             )
         }
         update_oskar_etfs_in_portfolio()
