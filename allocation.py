@@ -123,7 +123,7 @@ def cli() -> None:
         version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
-        "--no-cache",
+        "--fetch-prices",
         action="store_true",
         help="Fetch fresh prices without reading cache.json; write fetched prices to cache.json.",
     )
