@@ -838,6 +838,14 @@ def fetch_oskar_etfs(
 
 
 def update_oskar_etfs_in_portfolio():
+    def _is_oskar_position_tagesgeld(oskar_etf: OskarEtf) -> bool:
+        return oskar_etf.name == _OSKAR_CATEGORY_TAGESGELD
+
+    def _is_portfolio_position_oskar_tagesgeld(position: dict[str, Any]) -> bool:
+        pos_name = position.get("name") or position.get("Name") or ""
+        pos_broker = position.get("broker") or position.get("Broker")
+        return pos_name == _OSKAR_CATEGORY_TAGESGELD and pos_broker == _OSKAR
+
     global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
     # unique set of ISINs from OSKAR
@@ -868,7 +876,7 @@ def update_oskar_etfs_in_portfolio():
                     continue
                 # if oskar position is in global portfolio but not freshly fetched from OSKAR, it means OSKAR removed it
                 # make an exception for Tagesgeld or those oskar portoflio positions without an ISIN
-                if pos_isin not in fetched_oskar_isins and not (pos_isin is None or pos_name == _OSKAR_CATEGORY_TAGESGELD):
+                if pos_isin not in fetched_oskar_isins and not _is_portfolio_position_oskar_tagesgeld(position):
                     # add to the list of positions to remove from the portfolio
                     to_remove.append((bucket, position))
                     logger.info(
@@ -881,12 +889,15 @@ def update_oskar_etfs_in_portfolio():
                     continue
                 # this oskar position is in the global portfolio and in OSKAR, it matches the oskar etf at hand
                 # so update the position with the new value and shares in the portfolio
-                if pos_isin == oskar_etf.isin or (pos_name == oskar_etf.name or pos_name == _OSKAR_CATEGORY_TAGESGELD):
+                if pos_isin == oskar_etf.isin or \
+                    (_is_portfolio_position_oskar_tagesgeld(position) and _is_oskar_position_tagesgeld(oskar_etf)):
                     position["value"] = oskar_etf.value_eur
                     position["shares"] = None
                     matched = True
-                    scanned_oskar_isins.add(pos_isin)
-        if matched:
+                    if pos_isin is not None:
+                        scanned_oskar_isins.add(pos_isin)
+        # don't skip in case oskar position wasn't found in portfolio but is Tagesgeld
+        if matched and not _is_oskar_position_tagesgeld(oskar_etf):
             continue
         # this oskar position is not in the global portfolio, so add it
         bucket = _OSKAR_CATEGORY_TO_PORTFOLIO.get(oskar_etf.category, _DEFAULT_OSKAR_PORTFOLIO_BUCKET)
