@@ -87,8 +87,8 @@ def main():
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
     # print(equity_portfolio)
-    equity_portfolio.plot_dmem()
-    equity_portfolio.plot_usavn()
+    # equity_portfolio.plot_dmem()
+    # equity_portfolio.plot_usavn()
     equity_portfolio.plot()
 
     # print(bond_portfolio)
@@ -105,8 +105,8 @@ def main():
     # print(commodity_portfolio)
     # commodity_portfolio.plot()
 
-    total_growth_portfolio.plot(title="Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-    total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    total_growth_portfolio.plot(title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    total_portfolio.plot(title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     logger.info("Opening chart window (close window to exit)")
     plt.show()
 
