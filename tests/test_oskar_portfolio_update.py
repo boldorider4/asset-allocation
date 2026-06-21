@@ -54,6 +54,73 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(len(global_portfolio["equity_portfolio"]), 1)
 
     @patch("oskar.fetch_oskar_etfs")
+    def test_removes_stale_oskar_position(self, mock_fetch) -> None:
+        global_portfolio["equity_portfolio"].append(
+            {
+                "name": "Gone OSKAR ETF",
+                "ISIN": "IE000STALE00",
+                "shares": 5,
+                "value": 500.0,
+                "broker": "oskar",
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE000EXISTING": OskarEtf(
+                isin="IE000EXISTING",
+                name="Existing OSKAR ETF",
+                weight_pct=50.0,
+                value_eur=1234.5,
+                raw_text="",
+            )
+        }
+        update_oskar_etfs_in_portfolio()
+        isins = [p["ISIN"] for p in global_portfolio["equity_portfolio"]]
+        self.assertEqual(isins, ["IE000EXISTING"])
+
+    @patch("oskar.fetch_oskar_etfs")
+    def test_does_not_remove_non_oskar_position_with_missing_isin(self, mock_fetch) -> None:
+        global_portfolio["equity_portfolio"].append(
+            {
+                "name": "Scalable ETF",
+                "ISIN": "IE000STALE00",
+                "shares": 5,
+                "value": 500.0,
+                "broker": "scalable",
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE000EXISTING": OskarEtf(
+                isin="IE000EXISTING",
+                name="Existing OSKAR ETF",
+                weight_pct=50.0,
+                value_eur=1234.5,
+                raw_text="",
+            )
+        }
+        update_oskar_etfs_in_portfolio()
+        isins = [p["ISIN"] for p in global_portfolio["equity_portfolio"]]
+        self.assertIn("IE000STALE00", isins)
+        self.assertIn("IE000EXISTING", isins)
+
+    @patch("oskar.fetch_oskar_etfs")
+    def test_leaves_portfolio_unchanged_when_fetch_is_empty(self, mock_fetch) -> None:
+        mock_fetch.return_value = {}
+        with self.assertLogs("oskar", level="WARNING") as logs:
+            update_oskar_etfs_in_portfolio()
+        self.assertEqual(len(global_portfolio["equity_portfolio"]), 1)
+        self.assertEqual(global_portfolio["equity_portfolio"][0]["ISIN"], "IE000EXISTING")
+        self.assertTrue(
+            any("no OSKAR ETFs fetched" in msg for msg in logs.output),
+            logs.output,
+        )
+
+    @patch("oskar.fetch_oskar_etfs")
     def test_adds_missing_oskar_position_to_bucket(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "LU0123456789": OskarEtf(
