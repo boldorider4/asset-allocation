@@ -6,7 +6,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from oskar import OskarEtf, update_oskar_etfs_in_portfolio
+from oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
 from utils import portfolio as global_portfolio
 
 
@@ -169,6 +169,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         ]
         self.assertEqual(len(tagesgeld_without_isin), 1)
         self.assertEqual(tagesgeld_without_isin[0]["value"], 777.0)
+        self.assertEqual(len(global_portfolio["cash_portfolio"]), 1)
         equity_isins = [p["ISIN"] for p in global_portfolio["equity_portfolio"]]
         self.assertEqual(equity_isins, ["IE000EXISTING"])
 
@@ -185,14 +186,14 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
             }
         ]
         mock_fetch.return_value = {
-            "LU0999999999": OskarEtf(
-                isin="LU0999999999",
+            _OSKAR_TAGESGELD_FETCH_KEY: OskarEtf(
+                isin=_OSKAR_TAGESGELD_FETCH_KEY,
                 name="Tagesgeld",
                 weight_pct=5.0,
                 value_eur=777.0,
-                raw_text="",
+                raw_text="Tagesgeld 5,0 % 777,00 €",
                 category="Tagesgeld",
-            )
+            ),
         }
         update_oskar_etfs_in_portfolio()
         tagesgeld = next(
@@ -202,13 +203,14 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         )
         self.assertEqual(tagesgeld["value"], 777.0)
         self.assertIsNone(tagesgeld["shares"])
+        self.assertEqual(len(global_portfolio["cash_portfolio"]), 1)
 
     @patch("oskar.fetch_oskar_etfs")
     def test_adds_oskar_tagesgeld_when_missing_from_portfolio(self, mock_fetch) -> None:
         global_portfolio["cash_portfolio"] = []
         mock_fetch.return_value = {
-            "LU0999999999": OskarEtf(
-                isin="LU0999999999",
+            _OSKAR_TAGESGELD_FETCH_KEY: OskarEtf(
+                isin=_OSKAR_TAGESGELD_FETCH_KEY,
                 name="Tagesgeld",
                 weight_pct=5.0,
                 value_eur=777.0,
@@ -220,7 +222,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(len(global_portfolio["cash_portfolio"]), 1)
         pos = global_portfolio["cash_portfolio"][0]
         self.assertEqual(pos["name"], "Tagesgeld")
-        self.assertEqual(pos["ISIN"], "LU0999999999")
+        self.assertIsNone(pos["ISIN"])
         self.assertEqual(pos["value"], 777.0)
         self.assertEqual(pos["broker"], "oskar")
 

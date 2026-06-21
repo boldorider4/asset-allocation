@@ -10,6 +10,7 @@ from oskar import (
     _merge_row_snapshots_into,
     _oskar_category_from_row,
     _parse_row_blob,
+    _parse_tagesgeld_blob,
 )
 
 
@@ -32,6 +33,13 @@ class TestParseRowBlob(unittest.TestCase):
         self.assertEqual(name, "iShares Core MSCI World UCITS ETF")
         self.assertEqual(weight, 12.5)
         self.assertEqual(value, 1234.56)
+
+
+class TestParseTagesgeldBlob(unittest.TestCase):
+    def test_parses_percent_and_euro(self) -> None:
+        weight, value = _parse_tagesgeld_blob("Tagesgeld 2,5 % 999,33 €")
+        self.assertEqual(weight, 2.5)
+        self.assertEqual(value, 999.33)
 
 
 class TestOskarCategoryFromRow(unittest.TestCase):
