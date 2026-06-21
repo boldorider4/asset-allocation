@@ -150,7 +150,7 @@ def cli() -> None:
     )
     args = parser.parse_args()
     configure_cli_logging(getattr(logging, args.log_level))
-    if args.no_cache:
+    if args.fetch_prices:
         set_ignore_cache(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
