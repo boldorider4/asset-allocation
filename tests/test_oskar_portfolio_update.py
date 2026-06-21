@@ -121,6 +121,112 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         )
 
     @patch("oskar.fetch_oskar_etfs")
+    def test_does_not_remove_oskar_tagesgeld_without_isin(self, mock_fetch) -> None:
+        global_portfolio["cash_portfolio"] = [
+            {
+                "name": "Tagesgeld",
+                "value": 500.0,
+                "broker": "oskar",
+                "ISIN": None,
+                "dmem": None,
+                "usavn": None,
+            }
+        ]
+        global_portfolio["equity_portfolio"].append(
+            {
+                "name": "Gone OSKAR ETF",
+                "ISIN": "IE000STALE00",
+                "shares": 5,
+                "value": 500.0,
+                "broker": "oskar",
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE000EXISTING": OskarEtf(
+                isin="IE000EXISTING",
+                name="Existing OSKAR ETF",
+                weight_pct=50.0,
+                value_eur=1234.5,
+                raw_text="",
+            ),
+            "LU0999999999": OskarEtf(
+                isin="LU0999999999",
+                name="Tagesgeld",
+                weight_pct=5.0,
+                value_eur=777.0,
+                raw_text="",
+                category="Tagesgeld",
+            ),
+        }
+        update_oskar_etfs_in_portfolio()
+        tagesgeld_without_isin = [
+            p
+            for p in global_portfolio["cash_portfolio"]
+            if p["name"] == "Tagesgeld" and p.get("ISIN") is None
+        ]
+        self.assertEqual(len(tagesgeld_without_isin), 1)
+        equity_isins = [p["ISIN"] for p in global_portfolio["equity_portfolio"]]
+        self.assertEqual(equity_isins, ["IE000EXISTING"])
+
+    @patch("oskar.fetch_oskar_etfs")
+    def test_updates_oskar_tagesgeld_when_fetched(self, mock_fetch) -> None:
+        global_portfolio["cash_portfolio"] = [
+            {
+                "name": "Tagesgeld",
+                "value": 500.0,
+                "broker": "oskar",
+                "ISIN": None,
+                "dmem": None,
+                "usavn": None,
+            }
+        ]
+        mock_fetch.return_value = {
+            "LU0999999999": OskarEtf(
+                isin="LU0999999999",
+                name="Tagesgeld",
+                weight_pct=5.0,
+                value_eur=777.0,
+                raw_text="",
+                category="Tagesgeld",
+            )
+        }
+        update_oskar_etfs_in_portfolio()
+        tagesgeld = global_portfolio["cash_portfolio"][0]
+        self.assertEqual(tagesgeld["name"], "Tagesgeld")
+        self.assertEqual(tagesgeld["value"], 777.0)
+        self.assertIsNone(tagesgeld["shares"])
+
+    @patch("oskar.fetch_oskar_etfs")
+    def test_does_not_remove_oskar_position_without_isin(self, mock_fetch) -> None:
+        global_portfolio["equity_portfolio"].append(
+            {
+                "name": "Manual OSKAR Entry",
+                "value": 250.0,
+                "broker": "oskar",
+                "ISIN": None,
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE000EXISTING": OskarEtf(
+                isin="IE000EXISTING",
+                name="Existing OSKAR ETF",
+                weight_pct=50.0,
+                value_eur=1234.5,
+                raw_text="",
+            )
+        }
+        update_oskar_etfs_in_portfolio()
+        names = [p["name"] for p in global_portfolio["equity_portfolio"]]
+        self.assertIn("Manual OSKAR Entry", names)
+        self.assertIn("Existing OSKAR ETF", names)
+
+    @patch("oskar.fetch_oskar_etfs")
     def test_adds_missing_oskar_position_to_bucket(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "LU0123456789": OskarEtf(
