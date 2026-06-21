@@ -1,6 +1,8 @@
 import argparse
 import logging
 import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import matplotlib
 
@@ -11,9 +13,15 @@ if sys.platform == "darwin" and matplotlib.get_backend().lower() == "macosx":
 import numpy as np
 import matplotlib.pyplot as plt
 
-from pathlib import Path
-
 from logger import configure_cli_logging
+from common import (
+    BOND_PORTFOLIO,
+    CASH_PORTFOLIO,
+    COMMODITY_PORTFOLIO,
+    EQUITY_PORTFOLIO,
+    FIXED_MATURITY_BOND_PORTFOLIO,
+    PENSION_PORTFOLIO,
+)
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from utils import (
@@ -29,8 +37,22 @@ from utils import (
     get_incognito,
     apply_incognito_scaling,
 )
-from oskar import update_oskar_etfs_in_portfolio
 from logger import attach_color_stderr_handler_for_module
+from oskar import update_oskar_etfs_in_portfolio
+
+
+def _package_version() -> str:
+    try:
+        return version("asset-allocation")
+    except PackageNotFoundError:
+        print(
+            "error: asset-allocation is not installed; run `pip install -e .` from the project root",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+__version__ = _package_version()
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -54,19 +76,19 @@ def main():
         apply_incognito_scaling()
 
     # make portfolios
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio["equity_portfolio"])
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio["fixed_maturity_bond_portfolio"], consolidate=True)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio["cash_portfolio"], consolidate=True)
-    bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"])
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio["bond_portfolio"], consolidate=True)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio["commodity_portfolio"])
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio["pension_portfolio"])
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio[EQUITY_PORTFOLIO])
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio[CASH_PORTFOLIO], consolidate=True)
+    bond_portfolio = RegionalPortfolio(name="Bond Portfolio", positions=portfolio[BOND_PORTFOLIO])
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio[BOND_PORTFOLIO], consolidate=True)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
     # print(equity_portfolio)
-    equity_portfolio.plot_dmem()
-    equity_portfolio.plot_usavn()
+    # equity_portfolio.plot_dmem()
+    # equity_portfolio.plot_usavn()
     equity_portfolio.plot()
 
     # print(bond_portfolio)
@@ -83,14 +105,23 @@ def main():
     # print(commodity_portfolio)
     # commodity_portfolio.plot()
 
-    total_growth_portfolio.plot(title="Growth Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-    total_portfolio.plot(title="Total Portfolio: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    total_growth_portfolio.plot(title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    total_portfolio.plot(title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     logger.info("Opening chart window (close window to exit)")
     plt.show()
 
 
 def cli() -> None:
-    parser = argparse.ArgumentParser(description="Portfolio allocation report.")
+    parser = argparse.ArgumentParser(
+        description="Portfolio allocation report.",
+        epilog=f"version {__version__}",
+    )
+    parser.add_argument(
+        "--version",
+        "-v",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--no-cache",
         action="store_true",

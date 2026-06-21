@@ -16,6 +16,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from logger import attach_color_stderr_handler_for_module
+from common import (
+    BOND_PORTFOLIO,
+    CASH_PORTFOLIO,
+    COMMODITY_PORTFOLIO,
+    EQUITY_PORTFOLIO,
+)
 from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
@@ -48,6 +54,7 @@ class OskarEtf:
     weight_pct: float | None
     value_eur: float | None
     raw_text: str
+    category: str = ""
 
 
 def _parse_de_number(num: str) -> float:
@@ -62,8 +69,10 @@ def _parse_row_blob(blob: str, isin: str) -> tuple[str, float | None, float | No
     idx = next((i for i, ln in enumerate(lines) if ln == isin), -1)
     if idx > 0:
         name = lines[idx - 1]
-    elif idx == 0:
-        name = ""
+    elif idx < 0 and isin in blob:
+        pos = blob.find(isin)
+        if pos > 0:
+            name = blob[:pos].strip()
 
     weight: float | None = None
     value_eur: float | None = None
@@ -84,6 +93,36 @@ def _parse_row_blob(blob: str, isin: str) -> tuple[str, float | None, float | No
                 pass
 
     return name, weight, value_eur
+
+
+def _parse_tagesgeld_blob(blob: str) -> tuple[float | None, float | None]:
+    weight: float | None = None
+    value_eur: float | None = None
+    pm = _DE_PERCENT_RE.search(blob)
+    if pm:
+        try:
+            weight = _parse_de_number(pm.group(1))
+        except ValueError:
+            pass
+    em = _DE_EURO_RE.search(blob)
+    if em:
+        try:
+            value_eur = _parse_de_number(em.group(1))
+        except ValueError:
+            pass
+    return weight, value_eur
+
+
+def _is_oskar_tagesgeld_fetch_row(*, isin: str, category: str, subcategory: str, raw_text: str) -> bool:
+    if isin == _OSKAR_TAGESGELD_FETCH_KEY:
+        return True
+    if _ISIN_STRICT.match(isin):
+        return False
+    return (
+        category == _OSKAR_CATEGORY_TAGESGELD
+        or subcategory == _OSKAR_CATEGORY_TAGESGELD
+        or _OSKAR_CATEGORY_TAGESGELD in raw_text
+    )
 
 
 def _try_oskar_logout(page: Any, *, timeout_ms: int = 15_000) -> None:
@@ -314,22 +353,55 @@ def _wait_for_allocation_scope(page: Any, *, timeout_ms: int) -> Any:
     )
 
 
+_OSKAR_CATEGORY_AKTIEN = "Aktien"
+_OSKAR_CATEGORY_ANLEIHEN = "Anleihen"
+_OSKAR_CATEGORY_INFLATIONSGESCHUTZT = "Inflationsgeschützt"
+_OSKAR_CATEGORY_TAGESGELD = "Tagesgeld"
+_OSKAR_TAGESGELD_FETCH_KEY = "__OSKAR_TAGESGELD__"
+
+_OSKAR_CATEGORY_TO_PORTFOLIO: dict[str, str] = {
+    _OSKAR_CATEGORY_AKTIEN: EQUITY_PORTFOLIO,
+    _OSKAR_CATEGORY_ANLEIHEN: BOND_PORTFOLIO,
+    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: COMMODITY_PORTFOLIO,
+    _OSKAR_CATEGORY_TAGESGELD: CASH_PORTFOLIO,
+}
+_DEFAULT_OSKAR_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
+
+
 # Expand top levels and then discover each sub-bucket
 _OSKAR_ALLOCATION_BUCKETS = {
-    "Aktien": (
+    _OSKAR_CATEGORY_AKTIEN: (
         "Aktien Small Cap",
         "Aktien Europa", "Aktien Japan",
         "Aktien Schwellenländer",
         "Aktien Asien und pazifischer Raum",
         "Aktien USA"
         ),
-    "Anleihen": (
+    _OSKAR_CATEGORY_ANLEIHEN: (
         "Anleihen Global",
         "Anleihen Schwellenländer"
         ),
-    "Inflationsgeschützt": ("Gold", "Anleihen inflationsgeschützt"),
-    "Tagesgeld": ("Tagesgeld",),
+    _OSKAR_CATEGORY_INFLATIONSGESCHUTZT: ("Gold", "Anleihen inflationsgeschützt"),
+    _OSKAR_CATEGORY_TAGESGELD: (_OSKAR_CATEGORY_TAGESGELD,),
 }
+
+
+def _oskar_category_from_row(*, category: str = "", subcategory: str = "") -> str:
+    """
+    Level-1 category for portfolio mapping. ``subcategory`` (level-2 label) can
+    backfill when merge snapshots lose the level-1 row after another bucket opens.
+    """
+    category = category.strip()
+    if category:
+        return category
+    subcategory = subcategory.strip()
+    if not subcategory:
+        return ""
+    for top_label, sub_labels in _OSKAR_ALLOCATION_BUCKETS.items():
+        if subcategory in sub_labels:
+            return top_label
+    return ""
+
 
 _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
 ([topLabel, rowLabel]) => {
@@ -521,6 +593,14 @@ def _collect_allocation_positions_js() -> str:
                 }
                 if (r.classList.contains("level2")) {
                     subcategory = label;
+                    if (category === "Tagesgeld" && label === "Tagesgeld" && /€/.test(blob)) {
+                        out.push({
+                            isin: "__OSKAR_TAGESGELD__",
+                            raw: blob.slice(0, 5000),
+                            category,
+                            subcategory: label,
+                        });
+                    }
                     continue;
                 }
                 if (!r.classList.contains("level3")) continue;
@@ -536,7 +616,17 @@ def _collect_allocation_positions_js() -> str:
                     const m = blob.match(isinLoose);
                     if (m) isin = m[1];
                 }
-                if (!isin || !isinStrict.test(isin)) continue;
+                if (!isin || !isinStrict.test(isin)) {
+                    if ((category === "Tagesgeld" || subcategory === "Tagesgeld" || label === "Tagesgeld") && /€/.test(blob)) {
+                        out.push({
+                            isin: "__OSKAR_TAGESGELD__",
+                            raw: blob.slice(0, 5000),
+                            category,
+                            subcategory,
+                        });
+                    }
+                    continue;
+                }
 
                 out.push({
                     isin,
@@ -764,9 +854,37 @@ def fetch_oskar_etfs(
                     continue
                 isin = str(item.get("isin", "")).strip()
                 raw_text = str(item.get("raw", "")).strip()
+                category = str(item.get("category", "") or "")
+                subcategory = str(item.get("subcategory", "") or "")
+                if _is_oskar_tagesgeld_fetch_row(
+                    isin=isin,
+                    category=category,
+                    subcategory=subcategory,
+                    raw_text=raw_text,
+                ):
+                    weight_pct, value_eur = _parse_tagesgeld_blob(raw_text)
+                    logger.info(
+                        "fetch_oskar_etfs: appending Tagesgeld name=%s weight_pct=%s value_eur=%s",
+                        _OSKAR_CATEGORY_TAGESGELD,
+                        weight_pct,
+                        value_eur,
+                    )
+                    rows[_OSKAR_TAGESGELD_FETCH_KEY] = OskarEtf(
+                        isin=_OSKAR_TAGESGELD_FETCH_KEY,
+                        name=_OSKAR_CATEGORY_TAGESGELD,
+                        weight_pct=weight_pct,
+                        value_eur=value_eur,
+                        raw_text=raw_text,
+                        category=_OSKAR_CATEGORY_TAGESGELD,
+                    )
+                    continue
                 if not _ISIN_STRICT.match(isin):
                     continue
                 name, weight_pct, value_eur = _parse_row_blob(raw_text, isin)
+                category = _oskar_category_from_row(
+                    category=category,
+                    subcategory=subcategory,
+                )
                 logger.info("fetch_oskar_etfs: appending row isin=%s, name=%s, weight_pct=%s, value_eur=%s", isin, name, weight_pct, value_eur)
                 rows[isin] = (
                     OskarEtf(
@@ -775,6 +893,7 @@ def fetch_oskar_etfs(
                         weight_pct=weight_pct,
                         value_eur=value_eur,
                         raw_text=raw_text,
+                        category=category,
                     )
                 )
         finally:
@@ -792,14 +911,92 @@ def fetch_oskar_etfs(
 
 
 def update_oskar_etfs_in_portfolio():
+    def _is_oskar_position_tagesgeld(oskar_etf: OskarEtf) -> bool:
+        return oskar_etf.name == _OSKAR_CATEGORY_TAGESGELD
+
+    def _is_portfolio_position_oskar_tagesgeld(position: dict[str, Any]) -> bool:
+        pos_name = position.get("name") or position.get("Name") or ""
+        pos_broker = position.get("broker") or position.get("Broker")
+        return pos_name == _OSKAR_CATEGORY_TAGESGELD and pos_broker == _OSKAR
+
     global global_oskar_etfs
     global_oskar_etfs = fetch_oskar_etfs()
-    # update the assets file with the new oskar etfs
+    # unique set of ISINs from OSKAR
+    fetched_oskar_isins = set(global_oskar_etfs)
+    # unique set of ISINs that have been scanned, including those in the portfolio that are not freshly fetched from OSKAR
+    scanned_oskar_isins: set[str | None] = set()
+    # list of positions to remove from the portfolio because missing from OSKAR
+    to_remove: list[tuple[str, dict[str, Any]]] = []
+
+    if not fetched_oskar_isins:
+        logger.warning(
+            "update_oskar_etfs_in_portfolio: no OSKAR ETFs fetched; leaving portfolio unchanged",
+        )
+        return
+
     for oskar_etf in global_oskar_etfs.values():
-        for positions in global_portfolio.values():
+        matched = False
+        for bucket, positions in global_portfolio.items():
             for position in positions:
                 pos_isin = position.get("ISIN") or position.get("isin")
                 pos_broker = position.get("broker") or position.get("Broker")
-                if pos_isin == oskar_etf.isin and pos_broker == _OSKAR:
+                # it doesn't make to process non-OSKAR positions
+                if pos_broker != _OSKAR:
+                    continue
+                # it doesn't make to process positions that have already been scanned (removed or updated)
+                if pos_isin in scanned_oskar_isins:
+                    continue
+                # if oskar position is in global portfolio but not freshly fetched from OSKAR, it means OSKAR removed it
+                # make an exception for Tagesgeld or those oskar portoflio positions without an ISIN
+                if pos_isin not in fetched_oskar_isins and not _is_portfolio_position_oskar_tagesgeld(position):
+                    # add to the list of positions to remove from the portfolio
+                    to_remove.append((bucket, position))
+                    logger.info(
+                        "update_oskar_etfs_in_portfolio: removing stale OSKAR ISIN %s from %r",
+                        pos_isin,
+                        bucket,
+                    )
+                    # this position doesn't need to be addressed anymore
+                    scanned_oskar_isins.add(pos_isin)
+                    continue
+                # this oskar position is in the global portfolio and in OSKAR, it matches the oskar etf at hand
+                # so update the position with the new value and shares in the portfolio
+                isin_match = pos_isin == oskar_etf.isin
+                tagesgeld_match = (
+                    _is_portfolio_position_oskar_tagesgeld(position)
+                    and _is_oskar_position_tagesgeld(oskar_etf)
+                )
+                if isin_match or tagesgeld_match:
                     position["value"] = oskar_etf.value_eur
                     position["shares"] = None
+                    matched = True
+                    if pos_isin is not None:
+                        scanned_oskar_isins.add(pos_isin)
+        if matched:
+            continue
+        # this oskar position is not in the global portfolio, so add it
+        bucket = _OSKAR_CATEGORY_TO_PORTFOLIO.get(oskar_etf.category, _DEFAULT_OSKAR_PORTFOLIO_BUCKET)
+        global_portfolio.setdefault(bucket, []).append(
+            {
+                "name": oskar_etf.name,
+                "ISIN": None if _is_oskar_position_tagesgeld(oskar_etf) else oskar_etf.isin,
+                "shares": None,
+                "value": oskar_etf.value_eur,
+                "broker": _OSKAR,
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0,
+            }
+        )
+        # this oskar position has been added to the portfolio, so it doesn't need to be addressed anymore
+        scanned_oskar_isins.add(oskar_etf.isin)
+        logger.info(
+            "update_oskar_etfs_in_portfolio: added missing ISIN %s to %r (value=%s)",
+            oskar_etf.isin,
+            bucket,
+            oskar_etf.value_eur,
+        )
+
+    # remove the positions that have been marked for removal
+    for bucket, position in to_remove:
+        global_portfolio[bucket].remove(position)

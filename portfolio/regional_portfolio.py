@@ -38,19 +38,19 @@ class RegionalPortfolio(Portfolio):
 
         self._usavn_visualizer = PieChart(data={
             "US": us_within_developed,
-            "Non-US": 1.0 - us_within_developed,
-        }, title="{}: US vs. Non-US (within developed markets)".format(self._name))
+            "Ex-US": 1.0 - us_within_developed,
+        }, title="{}: US vs. Ex-US (within developed markets)".format(self._name))
 
-        # now let's look at regional split: us vs. non-us vs. emerging markets
+        # now let's look at regional split: us vs. ex-us vs. emerging markets
         # Scale us_within_developed by the developed_share so that US is proportional to the total_value
         self._regional_split_data = {
             "US": us_within_developed * developed_share,
-            "Non-US": (1.0 - us_within_developed) * developed_share,
+            "Ex-US": (1.0 - us_within_developed) * developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }
         self._visualizer = PieChart(
             data=self._regional_split_data,
-            title="{}: Regional Split (US vs. Non-US vs. EM): {:.2f} Euro".format(self._name, self._value),
+            title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
 
