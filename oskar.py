@@ -235,6 +235,27 @@ def _wait_for_oskar_nav_after_dashboard_goto(page: Any, *, timeout_ms: int) -> N
         page.wait_for_timeout(400)
 
 
+def _wait_for_cockpit_tabs(page: Any, *, timeout_ms: int) -> None:
+    """
+    Poll until cockpit tab labels («Wertentwicklung» / «Gewichtung») appear in the DOM.
+    Slow networks and post-login ``goto`` reloads often need several seconds before tabs
+    are present even though the URL is already ``mein.oskar.de/cockpit/...``.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        try:
+            if _cockpit_ready(page):
+                return
+        except Exception:
+            pass
+        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=5_000)
+        page.wait_for_timeout(450)
+    raise RuntimeError(
+        "OSKAR: timed out waiting for cockpit tabs (expected «Wertentwicklung» or "
+        "«Gewichtung» / «Aktuelle Gewichtung» on mein.oskar.de)."
+    )
+
+
 def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
     """
     Block until a human has finished Auth0 in the **headed** browser: the cockpit
@@ -247,20 +268,8 @@ def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
         "Anmelden). Waiting up to %.0f s until cockpit tabs appear…",
         timeout_ms / 1000,
     )
-    deadline = time.monotonic() + timeout_ms / 1000.0
-    while time.monotonic() < deadline:
-        try:
-            if _cockpit_ready(page):
-                logger.info("OSKAR manual login: cockpit detected url=%s", page.url)
-                return
-        except Exception:
-            pass
-        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=5_000)
-        page.wait_for_timeout(450)
-    raise RuntimeError(
-        "OSKAR manual login: timed out waiting for cockpit (expected «Wertentwicklung» or "
-        "«Gewichtung» / «Aktuelle Gewichtung» on mein.oskar.de after Auth0)."
-    )
+    _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
+    logger.info("OSKAR manual login: cockpit detected url=%s", page.url)
 
 
 def _page_needs_login(page: Any) -> bool:
@@ -287,9 +296,9 @@ def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
     """
     Open the cockpit asset-allocation view (German UI: «Gewichtung» / «Aktuelle Gewichtung»).
     Cockpit may host tabs in a child ``frame`` or shadow root; Playwright's role/text
-    locators are evaluated per frame.
+    locators are evaluated per frame. Polls until ``timeout_ms`` because tabs often load
+    after the cockpit shell on slow connections.
     """
-    t = min(timeout_ms, 60_000)
     attempts = [
         ("tab-regex-gewichtung", lambda s: s.get_by_role("tab", name=re.compile(r"gewichtung", re.I))),
         ("link-regex-gewichtung", lambda s: s.get_by_role("link", name=re.compile(r"gewichtung", re.I))),
@@ -297,28 +306,42 @@ def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
         ("text-exact-aktuelle-gewichtung", lambda s: s.get_by_text("Aktuelle Gewichtung", exact=True)),
         ("text-regex-gewichtung-word", lambda s: s.get_by_text(re.compile(r"\bGewichtung\b", re.I))),
     ]
-    for fr in page.frames:
-        try:
-            fr_url = getattr(fr, "url", "") or ""
-        except Exception:
-            fr_url = ""
-        for label, factory in attempts:
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            break
+        per_attempt = min(remaining_ms, 60_000)
+        for fr in page.frames:
             try:
-                loc = factory(fr)
-            except Exception as exc:
-                logger.debug("OSKAR: allocation tab scope %s factory %s: %s", fr_url, label, exc)
-                continue
-            if loc.count() == 0:
-                continue
-            try:
-                first = loc.first
-                first.wait_for(state="visible", timeout=t)
-                first.click(timeout=t)
-                logger.info("OSKAR: opened allocation view via %s (frame=%s)", label, fr_url[:120])
-                page.wait_for_timeout(800)
-                return
-            except Exception as exc:
-                logger.debug("OSKAR: allocation tab attempt %s frame=%s: %s", label, fr_url[:80], exc)
+                fr_url = getattr(fr, "url", "") or ""
+            except Exception:
+                fr_url = ""
+            for label, factory in attempts:
+                try:
+                    loc = factory(fr)
+                except Exception as exc:
+                    logger.debug(
+                        "OSKAR: allocation tab scope %s factory %s: %s", fr_url, label, exc
+                    )
+                    continue
+                if loc.count() == 0:
+                    continue
+                try:
+                    first = loc.first
+                    first.wait_for(state="visible", timeout=per_attempt)
+                    first.click(timeout=per_attempt)
+                    logger.info(
+                        "OSKAR: opened allocation view via %s (frame=%s)", label, fr_url[:120]
+                    )
+                    page.wait_for_timeout(800)
+                    return
+                except Exception as exc:
+                    logger.debug(
+                        "OSKAR: allocation tab attempt %s frame=%s: %s", label, fr_url[:80], exc
+                    )
+        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=2_000)
+        page.wait_for_timeout(500)
     raise RuntimeError(
         "OSKAR: could not activate Gewichtung tab."
     )
@@ -818,9 +841,10 @@ def fetch_oskar_etfs(
 
                 manual_timeout = max(timeout_ms, 300_000)
                 _wait_for_manual_oskar_login(page, timeout_ms=manual_timeout)
-                # Avoid ``networkidle``: cockpit SPAs keep analytics / long-poll traffic
-                # open so ``networkidle`` often never fires (looks like a hang).
-                page.goto(dashboard_url, wait_until="load", timeout=timeout_ms)
+                # Only reload when the cockpit shell is not already visible; a redundant
+                # ``goto`` after Auth0 resets the SPA and races tab rendering on slow links.
+                if not _cockpit_ready(page):
+                    page.goto(dashboard_url, wait_until="load", timeout=timeout_ms)
             else:
                 try:
                     page.wait_for_load_state("load", timeout=timeout_ms)
@@ -828,7 +852,9 @@ def fetch_oskar_etfs(
                     pass
 
             _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
-            page.wait_for_timeout(1_200)
+            logger.info("fetch_oskar_etfs: waiting for cockpit tabs")
+            _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
+            page.wait_for_timeout(500)
 
             logger.info("fetch_oskar_etfs: clicking allocation tab")
             _click_allocation_tab(page, timeout_ms=timeout_ms)
