@@ -28,17 +28,21 @@ from utils import (
     portfolio,
     load_portfolio,
     write_portfolio_to_file,
-    set_ignore_cache,
+    set_fetch_prices,
+    set_fetch_geosplit,
     set_fetch_oskar,
     set_assets_file,
     set_incognito,
     get_assets_file,
     get_fetch_oskar,
+    get_fetch_scalable,
     get_incognito,
     apply_incognito_scaling,
+    set_fetch_scalable,
 )
 from logger import attach_color_stderr_handler_for_module
 from oskar import update_oskar_etfs_in_portfolio
+from scalable import update_scalable_etfs_in_portfolio
 
 
 def _package_version() -> str:
@@ -68,6 +72,12 @@ def main():
     if get_fetch_oskar():
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio()
+        write_portfolio_to_file(assets_path)
+        logger.info("Wrote updated portfolio to %s", assets_path)
+
+    if get_fetch_scalable():
+        logger.info("Fetching Scalable holdings from sc CLI")
+        update_scalable_etfs_in_portfolio()
         write_portfolio_to_file(assets_path)
         logger.info("Wrote updated portfolio to %s", assets_path)
 
@@ -125,7 +135,19 @@ def cli() -> None:
     parser.add_argument(
         "--fetch-prices",
         action="store_true",
-        help="Fetch fresh prices without reading cache.json; write fetched prices to cache.json.",
+        help=(
+            "Scrape JustETF/Yahoo quotes and write last_price to cache.json. "
+            "Scalable-broker rows from the assets file are included unless "
+            "--fetch-scalable is also set."
+        ),
+    )
+    parser.add_argument(
+        "--fetch-geosplit",
+        action="store_true",
+        help=(
+            "Scrape country allocations (JustETF) and write them to cache.json. "
+            "Without this flag, country weights are read from cache."
+        ),
     )
     parser.add_argument(
         "--assets-file",
@@ -136,6 +158,11 @@ def cli() -> None:
         "--fetch-oskar",
         action="store_true",
         help="Log into Oskar and scrape ETF positions.",
+    )
+    parser.add_argument(
+        "--fetch-scalable",
+        action="store_true",
+        help="Log into Scalable via sc and scrape broker holdings.",
     )
     parser.add_argument(
         "--incognito",
@@ -151,9 +178,13 @@ def cli() -> None:
     args = parser.parse_args()
     configure_cli_logging(getattr(logging, args.log_level))
     if args.fetch_prices:
-        set_ignore_cache(True)
+        set_fetch_prices(True)
+    if args.fetch_geosplit:
+        set_fetch_geosplit(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
+    if args.fetch_scalable:
+        set_fetch_scalable(True)
     if args.assets_file:
         set_assets_file(args.assets_file)
     if args.incognito:

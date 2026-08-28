@@ -17,6 +17,7 @@ SHARES = "shares"
 VALUE = "value"
 BROKER = "broker"
 ISIN = "ISIN"
+PRICE = "price"
 
 # developed markets vs. emerging markets breakdown
 # 1 => 100% developed markets
@@ -47,6 +48,7 @@ class Portfolio:
                 dmem=position.get(DMEM),
                 usavn=position.get(USAVN),
                 dmem_other=position.get(DMEM_OTHER),
+                price=position.get(PRICE),
             ))
         self._value = self._calculate_value()
         logger.info("Portfolio %r: built total value %.2f from %d position(s)", name, self._value, len(self._positions))

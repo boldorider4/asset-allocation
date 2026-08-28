@@ -2,10 +2,16 @@ import json
 import logging
 from typing import Any
 
-from utils import get_fetch_oskar, get_ignore_cache, get_incognito_value_factor
+from utils import (
+    get_fetch_geosplit,
+    get_fetch_prices,
+    get_fetch_scalable,
+    get_incognito_value_factor,
+)
 from position.justetf_position import JustETFPosition
+from position.scalable_position import ScalablePosition
 from position.yfinance_position import YFinancePosition
-from oskar import _OSKAR as OSKAR
+from scalable import _SCALABLE as SCALABLE
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -61,13 +67,24 @@ def _countries_to_cache_fractions(
 def _save_position_in_cache(
     cache: dict[str, Any],
     isin: str,
-    last_price: float,
-    countries: list[dict[str, float | str]] | None,
+    *,
+    last_price: float | None = None,
+    countries: list[dict[str, float | str]] | None = None,
+    update_price: bool = False,
+    update_countries: bool = False,
 ) -> None:
-    cache[isin] = {
-        _CACHE_LAST_PRICE: last_price,
-        _CACHE_COUNTRIES: _countries_to_cache_fractions(countries),
-    }
+    if not update_price and not update_countries:
+        return
+    row = cache.get(isin)
+    if not isinstance(row, dict):
+        row = {}
+    else:
+        row = dict(row)
+    if update_price and last_price is not None:
+        row[_CACHE_LAST_PRICE] = last_price
+    if update_countries:
+        row[_CACHE_COUNTRIES] = _countries_to_cache_fractions(countries)
+    cache[isin] = row
     with open(CACHE_FILENAME, "w") as f:
         json.dump(cache, f, indent=2)
 
@@ -84,22 +101,48 @@ def factory(
     dmem_other: float | None = None,
     *,
     value_scale: float | None = None,
-) -> JustETFPosition | YFinancePosition:
+    price: float | None = None,
+) -> JustETFPosition | YFinancePosition | ScalablePosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
-    # Always load the on-disk map so ``--no-cache`` writes merge all ISINs.
     cache = _load_cache()
-    # do not cache if cache is specifically ignored or if the broker is OSKAR and fetch oskar is enabled
-    if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR):
-        logger.info("Factory: ignoring cache")
-        last_price = None
-        cached_countries: dict[str, float] | None = None
-    else:
-        logger.info("Factory: parsing cache entry for ISIN %s", isin)
-        last_price, cached_countries = _parse_cache_entry(cache.get(isin))
+    cached_last_price, cached_countries = _parse_cache_entry(cache.get(isin))
+    fetch_prices = get_fetch_prices()
+    fetch_geosplit = get_fetch_geosplit()
+    use_scalable = get_fetch_scalable() and broker == SCALABLE
 
-    if POSITION_SOURCE == YFINANCE:
+    if use_scalable:
+        ctor_price = price
+    elif fetch_prices:
+        ctor_price = None
+    else:
+        ctor_price = cached_last_price if cached_last_price is not None else price
+
+    scrape_geosplit = fetch_geosplit and not (
+        POSITION_SOURCE == YFINANCE and not use_scalable
+    )
+    if scrape_geosplit:
+        countries_arg: dict[str, float] | None = None
+    else:
+        countries_arg = cached_countries if cached_countries is not None else {}
+
+    if use_scalable:
+        position = ScalablePosition(
+            isin,
+            name,
+            short_name,
+            shares,
+            value,
+            broker,
+            dmem,
+            usavn,
+            dmem_other,
+            cached_countries=countries_arg,
+            value_scale=value_scale,
+            price=ctor_price,
+        )
+    elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(
             isin,
             name,
@@ -110,9 +153,9 @@ def factory(
             dmem,
             usavn,
             dmem_other,
-            last_price,
-            cached_countries=cached_countries,
+            cached_countries=countries_arg,
             value_scale=value_scale,
+            price=ctor_price,
         )
     elif POSITION_SOURCE == JUSTETF:
         position = JustETFPosition(
@@ -125,15 +168,29 @@ def factory(
             dmem,
             usavn,
             dmem_other,
-            last_price,
-            cached_countries=cached_countries,
+            cached_countries=countries_arg,
             value_scale=value_scale,
+            price=ctor_price,
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
-    if isin is not None and position.last_price is not None:
-        countries = (
-            position.countries() if isinstance(position, JustETFPosition) else None
+
+    update_price = fetch_prices and isin is not None and position.price is not None
+    update_countries = (
+        scrape_geosplit
+        and isin is not None
+        and isinstance(position, JustETFPosition)
+    )
+    if update_price or update_countries:
+        countries_rows = (
+            position.countries() if update_countries else None
         )
-        _save_position_in_cache(cache, isin, position.last_price, countries)
+        _save_position_in_cache(
+            cache,
+            isin,
+            last_price=position.price,
+            countries=countries_rows,
+            update_price=update_price,
+            update_countries=update_countries,
+        )
     return position

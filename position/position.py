@@ -128,9 +128,9 @@ class Position(ABC):
         dmem: float | None = None,
         usavn: float | None = None,
         dmem_other: float | None = None,
-        last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
+        price: float | None = None,
     ) -> None:
         self._name = name
         self._short_name = short_name
@@ -143,6 +143,7 @@ class Position(ABC):
         self._dmem_other = dmem_other
         self._usavn = usavn
         self._countries: list[dict[str, float | str]] | None = None
+        self._price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
             isin,
             name,
@@ -153,6 +154,7 @@ class Position(ABC):
         )
         logger.info("Position: shares: %s, value: %s", shares, value)
         logger.info("Position: short_name: %s", short_name)
+
         # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
         if cached_countries is not None:
             logger.info("Position: cached countries: %s", cached_countries)
@@ -160,32 +162,35 @@ class Position(ABC):
                 {"name": name, "weight_pct": float(w) * 100.0}
                 for name, w in cached_countries.items()
             ]
-        # If last_price is provided, it was loaded from cache or supplied by the caller.
-        if last_price is not None:
-            logger.info("Position: last price: %s", last_price)
-            self._last_price = last_price
-        # if not, let's try and determine it from the ISIN
         elif self._isin is not None:
-            logger.info("Position: fetching last price from ISIN %s", self._isin)
-            self._last_price = self._fast_info_price()
-            # if the fetch was unsuccessful
-            if self._last_price is None:
-                logger.error("Position: no fast/quote price for ISIN %s", self._isin)
-                raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
-            logger.info("Position: last price: %s", self._last_price)
-        # otherwise, no price is cached or determined if only the value of the position is provided
+            logger.info("Position: fetching countries from ISIN %s", self._isin)
+            try:
+                self._countries = self.countries()
+            except NotImplementedError:
+                self._countries = None
+
+        logger.info("Position: countries: %s", self._countries)
+        logger.info("Position: computing DMEM and USAVN")
+        self._dmem = self._compute_dev_vs_em_market()
+        logger.info("Position: computed DMEM: %s", self._dmem)
+        self._usavn = self._compute_us_vs_exus_market()
+        logger.info("Position: computed USAVN: %s", self._usavn)
+
+        if price is not None:
+            logger.info("Position: using supplied price: %s", price)
+            self._price = price
+        elif self._isin is not None:
+            logger.info("Position: fetching price from ISIN %s", self._isin)
+            self._price = self._fast_info_price()
+            if self._price is None:
+                logger.error("Position: no price for ISIN %s", self._isin)
+                raise RuntimeError(f"No price for ISIN {self._isin}")
+            logger.info("Position: price: %s", self._price)
         elif self._value is None:
-            logger.error("Position: No last price, neither value nor ISIN was provided")
+            logger.error("Position: No price, neither value nor ISIN was provided")
             raise RuntimeError(
-                "No last price for position because neither value nor ISIN was provided"
+                "No price for position because neither value nor ISIN was provided"
             )
-        if self.countries():
-            logger.info("Position: countries: %s", self.countries())
-            logger.info("Position: computing DMEM and USAVN")
-            self._dmem = self._compute_dev_vs_em_market()
-            logger.info("Position: computed DMEM: %s", self._dmem)
-            self._usavn = self._compute_us_vs_exus_market()
-            logger.info("Position: computed USAVN: %s", self._usavn)
 
     @property
     def isin(self) -> str:
@@ -196,8 +201,8 @@ class Position(ABC):
         base: float | None
         if self._value is not None:
             base = self._value
-        elif self._shares is not None and self._last_price is not None:
-            base = self._shares * self._last_price
+        elif self._shares is not None and self._price is not None:
+            base = self._shares * self._price
         else:
             base = None
         if base is None:
@@ -213,8 +218,8 @@ class Position(ABC):
         return self._usavn
 
     @property
-    def last_price(self) -> float | None:
-        return self._last_price
+    def price(self) -> float | None:
+        return self._price
 
     def price_history(self) -> float:
         p = self._history_last_close()
@@ -227,7 +232,7 @@ class Position(ABC):
         return self._countries
 
     def __str__(self) -> str:
-        countries_list = self.countries()
+        countries_list = self._countries
         countries_str = ""
         if countries_list:
             countries_str = (
@@ -252,7 +257,7 @@ class Position(ABC):
         """Compute developed markets vs. emerging markets allocation."""
         developed_markets = 0
         emerging_markets = 0
-        for _row in self.countries():
+        for _row in self._countries or []:
             if _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 developed_markets += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
@@ -279,7 +284,7 @@ class Position(ABC):
         """Compute US vs. ex-US allocation within developed markets."""
         us = 0
         non_us = 0
-        for _row in self.countries():
+        for _row in self._countries or []:
             if _row["name"] == _US_MARKET_NAME:
                 us += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
