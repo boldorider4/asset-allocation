@@ -34,11 +34,14 @@ from utils import (
     set_incognito,
     get_assets_file,
     get_fetch_oskar,
+    get_fetch_scalable,
     get_incognito,
     apply_incognito_scaling,
+    set_fetch_scalable,
 )
 from logger import attach_color_stderr_handler_for_module
 from oskar import update_oskar_etfs_in_portfolio
+from scalable import update_scalable_etfs_in_portfolio
 
 
 def _package_version() -> str:
@@ -68,6 +71,12 @@ def main():
     if get_fetch_oskar():
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio()
+        write_portfolio_to_file(assets_path)
+        logger.info("Wrote updated portfolio to %s", assets_path)
+
+    if get_fetch_scalable():
+        logger.info("Fetching Scalable holdings from sc CLI")
+        update_scalable_etfs_in_portfolio()
         write_portfolio_to_file(assets_path)
         logger.info("Wrote updated portfolio to %s", assets_path)
 
@@ -138,6 +147,11 @@ def cli() -> None:
         help="Log into Oskar and scrape ETF positions.",
     )
     parser.add_argument(
+        "--fetch-scalable",
+        action="store_true",
+        help="Log into Scalable via sc and scrape broker holdings.",
+    )
+    parser.add_argument(
         "--incognito",
         action="store_true",
         help="Show fake values for asset allocation.",
@@ -154,6 +168,8 @@ def cli() -> None:
         set_ignore_cache(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
+    if args.fetch_scalable:
+        set_fetch_scalable(True)
     if args.assets_file:
         set_assets_file(args.assets_file)
     if args.incognito:

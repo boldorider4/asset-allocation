@@ -2,10 +2,17 @@ import json
 import logging
 from typing import Any
 
-from utils import get_fetch_oskar, get_ignore_cache, get_incognito_value_factor
+from utils import (
+    get_fetch_oskar,
+    get_fetch_scalable,
+    get_ignore_cache,
+    get_incognito_value_factor,
+)
 from position.justetf_position import JustETFPosition
+from position.scalable_position import ScalablePosition
 from position.yfinance_position import YFinancePosition
 from oskar import _OSKAR as OSKAR
+from scalable import _SCALABLE as SCALABLE
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -84,22 +91,43 @@ def factory(
     dmem_other: float | None = None,
     *,
     value_scale: float | None = None,
-) -> JustETFPosition | YFinancePosition:
+    price: float | None = None,
+) -> JustETFPosition | YFinancePosition | ScalablePosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
     # Always load the on-disk map so ``--no-cache`` writes merge all ISINs.
     cache = _load_cache()
-    # do not cache if cache is specifically ignored or if the broker is OSKAR and fetch oskar is enabled
-    if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR):
+    live_scalable = get_fetch_scalable() and broker == SCALABLE
+    # do not read cache if ignored, OSKAR live fetch, or Scalable live fetch
+    if get_ignore_cache() or (get_fetch_oskar() and broker == OSKAR) or live_scalable:
         logger.info("Factory: ignoring cache")
         last_price = None
         cached_countries: dict[str, float] | None = None
+        ctor_price = price
     else:
         logger.info("Factory: parsing cache entry for ISIN %s", isin)
         last_price, cached_countries = _parse_cache_entry(cache.get(isin))
+        ctor_price = None if last_price is not None else price
 
-    if POSITION_SOURCE == YFINANCE:
+    use_scalable = broker == SCALABLE and price is not None
+    if use_scalable:
+        position = ScalablePosition(
+            isin,
+            name,
+            short_name,
+            shares,
+            value,
+            broker,
+            dmem,
+            usavn,
+            dmem_other,
+            last_price,
+            cached_countries=cached_countries,
+            value_scale=value_scale,
+            price=ctor_price,
+        )
+    elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(
             isin,
             name,
@@ -113,6 +141,7 @@ def factory(
             last_price,
             cached_countries=cached_countries,
             value_scale=value_scale,
+            price=ctor_price,
         )
     elif POSITION_SOURCE == JUSTETF:
         position = JustETFPosition(
@@ -128,6 +157,7 @@ def factory(
             last_price,
             cached_countries=cached_countries,
             value_scale=value_scale,
+            price=ctor_price,
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")

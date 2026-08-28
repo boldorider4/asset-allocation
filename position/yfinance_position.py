@@ -31,6 +31,7 @@ class YFinancePosition(Position):
         last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
+        price: float | None = None,
     ) -> None:
         #print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         self._ticker: yf.Ticker | None = None
@@ -49,6 +50,7 @@ class YFinancePosition(Position):
             last_price=last_price,
             cached_countries=cached_countries,
             value_scale=value_scale,
+            price=price,
         )
 
     def _read_listing_currency(self) -> str | None:

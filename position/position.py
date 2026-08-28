@@ -131,6 +131,7 @@ class Position(ABC):
         last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
+        price: float | None = None,
     ) -> None:
         self._name = name
         self._short_name = short_name
@@ -143,6 +144,7 @@ class Position(ABC):
         self._dmem_other = dmem_other
         self._usavn = usavn
         self._countries: list[dict[str, float | str]] | None = None
+        self._last_price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
             isin,
             name,
@@ -160,8 +162,12 @@ class Position(ABC):
                 {"name": name, "weight_pct": float(w) * 100.0}
                 for name, w in cached_countries.items()
             ]
+        # Explicit ``price`` (e.g. Scalable scan) skips quote lookup for every subclass.
+        if price is not None:
+            logger.info("Position: using supplied price: %s", price)
+            self._last_price = price
         # If last_price is provided, it was loaded from cache or supplied by the caller.
-        if last_price is not None:
+        elif last_price is not None:
             logger.info("Position: last price: %s", last_price)
             self._last_price = last_price
         # if not, let's try and determine it from the ISIN

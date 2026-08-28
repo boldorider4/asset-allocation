@@ -8,6 +8,7 @@ portfolio: dict[str, list[dict]] = {}
 # Set True (e.g. via ``--no-cache``) to skip reading cache.json for prices; fresh data is then written back.
 IGNORE_CACHE = False
 FETCH_OSKAR = False
+FETCH_SCALABLE = False
 INCOGNITO = False
 # Applied by ``apply_incognito_scaling``; ``Position`` / ``factory`` multiply monetary amounts by this.
 INCOGNITO_VALUE_FACTOR: float = 1.0
@@ -33,6 +34,16 @@ def get_fetch_oskar() -> bool:
 def set_fetch_oskar(fetch_oskar: bool) -> None:
     global FETCH_OSKAR
     FETCH_OSKAR = fetch_oskar
+
+
+def get_fetch_scalable() -> bool:
+    global FETCH_SCALABLE
+    return FETCH_SCALABLE
+
+
+def set_fetch_scalable(fetch_scalable: bool) -> None:
+    global FETCH_SCALABLE
+    FETCH_SCALABLE = fetch_scalable
 
 
 def get_assets_file() -> Path | None:
