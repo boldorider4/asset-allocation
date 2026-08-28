@@ -28,12 +28,10 @@ class YFinancePosition(Position):
         dmem: float | None = None,
         usavn: float | None = None,
         dmem_other: float | None = None,
-        last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
     ) -> None:
-        #print(f"YFinancePosition __init__: isin={isin}, last_price={last_price}")
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
         self._eur_usd_rate: float | None = None
@@ -47,7 +45,6 @@ class YFinancePosition(Position):
             dmem=dmem,
             usavn=usavn,
             dmem_other=dmem_other,
-            last_price=last_price,
             cached_countries=cached_countries,
             value_scale=value_scale,
             price=price,
@@ -78,7 +75,7 @@ class YFinancePosition(Position):
         from position.factory import factory as _factory
 
         fx = _factory(self._EURUSD_SYMBOL, value_scale=1.0)
-        return fx.last_price
+        return fx.price
 
     def _init_eur_scaling(self) -> None:
         self._listing_currency = self._read_listing_currency()
@@ -161,7 +158,7 @@ if __name__ == "__main__":
     _y = YFinancePosition(_sample)
     try:
         print(
-            f"YFinance {_sample} last={_y.last_price():.4f} "
+            f"YFinance {_sample} last={_y.price:.4f} "
         )
     except Exception as ex:
         print(f"YFinance {_sample} (optional): {ex!r}")

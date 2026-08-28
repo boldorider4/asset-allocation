@@ -128,7 +128,6 @@ class Position(ABC):
         dmem: float | None = None,
         usavn: float | None = None,
         dmem_other: float | None = None,
-        last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
@@ -144,7 +143,7 @@ class Position(ABC):
         self._dmem_other = dmem_other
         self._usavn = usavn
         self._countries: list[dict[str, float | str]] | None = None
-        self._last_price: float | None = None
+        self._price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
             isin,
             name,
@@ -162,28 +161,20 @@ class Position(ABC):
                 {"name": name, "weight_pct": float(w) * 100.0}
                 for name, w in cached_countries.items()
             ]
-        # Explicit ``price`` (e.g. Scalable scan) skips quote lookup for every subclass.
         if price is not None:
             logger.info("Position: using supplied price: %s", price)
-            self._last_price = price
-        # If last_price is provided, it was loaded from cache or supplied by the caller.
-        elif last_price is not None:
-            logger.info("Position: last price: %s", last_price)
-            self._last_price = last_price
-        # if not, let's try and determine it from the ISIN
+            self._price = price
         elif self._isin is not None:
-            logger.info("Position: fetching last price from ISIN %s", self._isin)
-            self._last_price = self._fast_info_price()
-            # if the fetch was unsuccessful
-            if self._last_price is None:
-                logger.error("Position: no fast/quote price for ISIN %s", self._isin)
-                raise RuntimeError(f"No fast/quote price for ISIN {self._isin}")
-            logger.info("Position: last price: %s", self._last_price)
-        # otherwise, no price is cached or determined if only the value of the position is provided
+            logger.info("Position: fetching price from ISIN %s", self._isin)
+            self._price = self._fast_info_price()
+            if self._price is None:
+                logger.error("Position: no price for ISIN %s", self._isin)
+                raise RuntimeError(f"No price for ISIN {self._isin}")
+            logger.info("Position: price: %s", self._price)
         elif self._value is None:
-            logger.error("Position: No last price, neither value nor ISIN was provided")
+            logger.error("Position: No price, neither value nor ISIN was provided")
             raise RuntimeError(
-                "No last price for position because neither value nor ISIN was provided"
+                "No price for position because neither value nor ISIN was provided"
             )
         try:
             country_rows = self.countries()
@@ -206,8 +197,8 @@ class Position(ABC):
         base: float | None
         if self._value is not None:
             base = self._value
-        elif self._shares is not None and self._last_price is not None:
-            base = self._shares * self._last_price
+        elif self._shares is not None and self._price is not None:
+            base = self._shares * self._price
         else:
             base = None
         if base is None:
@@ -223,8 +214,8 @@ class Position(ABC):
         return self._usavn
 
     @property
-    def last_price(self) -> float | None:
-        return self._last_price
+    def price(self) -> float | None:
+        return self._price
 
     def price_history(self) -> float:
         p = self._history_last_close()

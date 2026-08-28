@@ -34,7 +34,7 @@ class TestScalablePosition(unittest.TestCase):
                 price=40.315,
                 cached_countries={"United States": 0.6, "Germany": 0.4},
             )
-        self.assertEqual(pos.last_price, 40.315)
+        self.assertEqual(pos.price, 40.315)
         self.assertEqual(pos.value, 140.0)
 
     def test_countries_uses_justetf_parent(self) -> None:
@@ -88,7 +88,7 @@ class TestScalableFactoryCache(unittest.TestCase):
                     broker="scalable",
                     price=40.315,
                 )
-        self.assertEqual(pos.last_price, 40.315)
+        self.assertEqual(pos.price, 40.315)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["last_price"], 40.315)
 

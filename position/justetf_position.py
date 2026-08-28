@@ -69,7 +69,6 @@ class JustETFPosition(Position):
         dmem: float | None = None,
         usavn: float | None = None,
         dmem_other: float | None = None,
-        last_price: float | None = None,
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
@@ -85,7 +84,6 @@ class JustETFPosition(Position):
             dmem=dmem,
             usavn=usavn,
             dmem_other=dmem_other,
-            last_price=last_price,
             cached_countries=cached_countries,
             value_scale=value_scale,
             price=price,
@@ -292,7 +290,7 @@ if __name__ == "__main__":
     # print("*************** Amundi Equity World UCITS ETF (Acc) ***************")
     # _sample = "IE000BI8OT95"
     # _j = JustETFPosition(_sample, dmem_other=1)
-    # print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    # print(f"JustETF {_sample} last={_j.price:.4f}")
 
     # countries = _j.countries()
     # for _row in countries:
@@ -304,7 +302,7 @@ if __name__ == "__main__":
     # print("*************** Scalable AC World Xtrackers UCITS ETF (Acc) ***************")
     # _sample = "LU2903252349"
     # _j = JustETFPosition(_sample, dmem_other=.5)
-    # print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    # print(f"JustETF {_sample} last={_j.price:.4f}")
 
     # countries = _j.countries()
     # for _row in countries:
@@ -316,7 +314,7 @@ if __name__ == "__main__":
     print("*************** iShares MSCI EM CTB Enhanced ESG UCITS ETF ***************")
     _sample = "IE00BHZPJ239"
     _j = JustETFPosition(_sample, dmem_other=0)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    print(f"JustETF {_sample} last={_j.price:.4f}")
 
     countries = _j.countries()
     for _row in countries:
@@ -328,7 +326,7 @@ if __name__ == "__main__":
     print("*************** Xtrackers MSCI World ex-USA UCITS ETF ***************")
     _sample = "IE0006WW1TQ4"
     _j = JustETFPosition(_sample, dmem_other=1)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    print(f"JustETF {_sample} last={_j.price:.4f}")
 
     countries = _j.countries()
     for _row in countries:
@@ -340,7 +338,7 @@ if __name__ == "__main__":
     print("*************** EUWAX Gold II ***************")
     _sample = "DE000EWG2LD7"
     _j = JustETFPosition(_sample, dmem_other=0)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    print(f"JustETF {_sample} last={_j.price:.4f}")
 
     countries = _j.countries()
     for _row in countries:
@@ -352,7 +350,7 @@ if __name__ == "__main__":
     print("*************** State Street SPDR S&P 400 U.S. Mid Cap UCITS ETF ***************")
     _sample = "IE00B4YBJ215"
     _j = JustETFPosition(_sample, dmem_other=1)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    print(f"JustETF {_sample} last={_j.price:.4f}")
 
     countries = _j.countries()
     for _row in countries:
@@ -364,7 +362,7 @@ if __name__ == "__main__":
     print("*************** Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc) ***************")
     _sample = "LU0290358497"
     _j = JustETFPosition(_sample, dmem_other=1)
-    print(f"JustETF {_sample} last={_j.last_price:.4f}")
+    print(f"JustETF {_sample} last={_j.price:.4f}")
 
     countries = _j.countries()
     for _row in countries:

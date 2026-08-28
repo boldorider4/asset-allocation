@@ -113,14 +113,11 @@ def factory(
     use_scalable = get_fetch_scalable() and broker == SCALABLE
 
     if use_scalable:
-        last_price = None if fetch_prices else cached_last_price
         ctor_price = price
     elif fetch_prices:
-        last_price = None
         ctor_price = None
     else:
-        last_price = cached_last_price
-        ctor_price = None if last_price is not None else price
+        ctor_price = cached_last_price if cached_last_price is not None else price
 
     scrape_geosplit = fetch_geosplit and not (
         POSITION_SOURCE == YFINANCE and not use_scalable
@@ -141,7 +138,6 @@ def factory(
             dmem,
             usavn,
             dmem_other,
-            last_price,
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
@@ -157,7 +153,6 @@ def factory(
             dmem,
             usavn,
             dmem_other,
-            last_price,
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
@@ -173,7 +168,6 @@ def factory(
             dmem,
             usavn,
             dmem_other,
-            last_price,
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
@@ -181,7 +175,7 @@ def factory(
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
 
-    update_price = fetch_prices and isin is not None and position.last_price is not None
+    update_price = fetch_prices and isin is not None and position.price is not None
     update_countries = (
         scrape_geosplit
         and isin is not None
@@ -194,7 +188,7 @@ def factory(
         _save_position_in_cache(
             cache,
             isin,
-            last_price=position.last_price,
+            last_price=position.price,
             countries=countries_rows,
             update_price=update_price,
             update_countries=update_countries,

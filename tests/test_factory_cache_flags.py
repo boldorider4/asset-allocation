@@ -76,7 +76,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, ScalablePosition)
         fast.assert_called()
-        self.assertEqual(pos.last_price, 99.5)
+        self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["last_price"], 99.5)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
@@ -90,13 +90,13 @@ class TestFactoryCacheFlags(unittest.TestCase):
         ):
             pos = self._factory()
         self.assertIsInstance(pos, ScalablePosition)
-        self.assertEqual(pos.last_price, 40.315)
+        self.assertEqual(pos.price, 40.315)
 
     def test_explicit_value_preferred_over_shares_times_price(self) -> None:
         set_fetch_prices(True)
         with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
             pos = self._factory(value=140.0, shares=4)
-        self.assertEqual(pos.last_price, 99.5)
+        self.assertEqual(pos.price, 99.5)
         self.assertEqual(pos.value, 140.0)
 
     def test_without_fetch_prices_uses_cache_and_skips_fast_info(self) -> None:
@@ -108,7 +108,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             side_effect=AssertionError("_fast_info_price should not be called"),
         ):
             pos = self._factory(price=None)
-        self.assertEqual(pos.last_price, 10.0)
+        self.assertEqual(pos.price, 10.0)
 
     def test_fetch_geosplit_scrapes_and_writes_countries(self) -> None:
         set_fetch_geosplit(True)
