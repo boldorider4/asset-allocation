@@ -154,6 +154,7 @@ class Position(ABC):
         )
         logger.info("Position: shares: %s, value: %s", shares, value)
         logger.info("Position: short_name: %s", short_name)
+
         # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
         if cached_countries is not None:
             logger.info("Position: cached countries: %s", cached_countries)
@@ -161,6 +162,20 @@ class Position(ABC):
                 {"name": name, "weight_pct": float(w) * 100.0}
                 for name, w in cached_countries.items()
             ]
+        elif self._isin is not None:
+            logger.info("Position: fetching countries from ISIN %s", self._isin)
+            try:
+                self._countries = self.countries()
+            except NotImplementedError:
+                self._countries = None
+
+        logger.info("Position: countries: %s", self._countries)
+        logger.info("Position: computing DMEM and USAVN")
+        self._dmem = self._compute_dev_vs_em_market()
+        logger.info("Position: computed DMEM: %s", self._dmem)
+        self._usavn = self._compute_us_vs_exus_market()
+        logger.info("Position: computed USAVN: %s", self._usavn)
+
         if price is not None:
             logger.info("Position: using supplied price: %s", price)
             self._price = price
@@ -176,17 +191,6 @@ class Position(ABC):
             raise RuntimeError(
                 "No price for position because neither value nor ISIN was provided"
             )
-        try:
-            country_rows = self.countries()
-        except NotImplementedError:
-            country_rows = self._countries
-        if country_rows:
-            logger.info("Position: countries: %s", country_rows)
-            logger.info("Position: computing DMEM and USAVN")
-            self._dmem = self._compute_dev_vs_em_market()
-            logger.info("Position: computed DMEM: %s", self._dmem)
-            self._usavn = self._compute_us_vs_exus_market()
-            logger.info("Position: computed USAVN: %s", self._usavn)
 
     @property
     def isin(self) -> str:
