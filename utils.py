@@ -5,8 +5,10 @@ from pathlib import Path
 global portfolio
 portfolio: dict[str, list[dict]] = {}
 
-# Set True (e.g. via ``--no-cache``) to skip reading cache.json for prices; fresh data is then written back.
+# Set True (e.g. via ``--fetch-prices``) to skip reading cache.json for quotes; fresh last_price is then written back.
 IGNORE_CACHE = False
+FETCH_PRICES = False
+FETCH_GEOSPLIT = False
 FETCH_OSKAR = False
 FETCH_SCALABLE = False
 INCOGNITO = False
@@ -17,13 +19,32 @@ ASSETS_FILE: Path | None = None
 
 
 def get_ignore_cache() -> bool:
-    global IGNORE_CACHE
-    return IGNORE_CACHE
+    return get_fetch_prices()
 
 
 def set_ignore_cache(ignore_cache: bool) -> None:
-    global IGNORE_CACHE
-    IGNORE_CACHE = ignore_cache
+    set_fetch_prices(ignore_cache)
+
+
+def get_fetch_prices() -> bool:
+    global FETCH_PRICES
+    return FETCH_PRICES
+
+
+def set_fetch_prices(fetch_prices: bool) -> None:
+    global FETCH_PRICES, IGNORE_CACHE
+    FETCH_PRICES = fetch_prices
+    IGNORE_CACHE = fetch_prices
+
+
+def get_fetch_geosplit() -> bool:
+    global FETCH_GEOSPLIT
+    return FETCH_GEOSPLIT
+
+
+def set_fetch_geosplit(fetch_geosplit: bool) -> None:
+    global FETCH_GEOSPLIT
+    FETCH_GEOSPLIT = fetch_geosplit
 
 
 def get_fetch_oskar() -> bool:

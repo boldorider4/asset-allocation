@@ -53,6 +53,11 @@ class YFinancePosition(Position):
             price=price,
         )
 
+    def countries(self) -> list[dict[str, float | str]]:
+        raise NotImplementedError(
+            "YFinancePosition does not scrape country allocations"
+        )
+
     def _read_listing_currency(self) -> str | None:
             fast = getattr(self._ticker, "fast_info", None)
             if fast is not None:

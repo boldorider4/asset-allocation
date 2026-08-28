@@ -28,7 +28,8 @@ from utils import (
     portfolio,
     load_portfolio,
     write_portfolio_to_file,
-    set_ignore_cache,
+    set_fetch_prices,
+    set_fetch_geosplit,
     set_fetch_oskar,
     set_assets_file,
     set_incognito,
@@ -134,7 +135,19 @@ def cli() -> None:
     parser.add_argument(
         "--fetch-prices",
         action="store_true",
-        help="Fetch fresh prices without reading cache.json; write fetched prices to cache.json.",
+        help=(
+            "Scrape JustETF/Yahoo quotes and write last_price to cache.json. "
+            "Scalable-broker rows from the assets file are included unless "
+            "--fetch-scalable is also set."
+        ),
+    )
+    parser.add_argument(
+        "--fetch-geosplit",
+        action="store_true",
+        help=(
+            "Scrape country allocations (JustETF) and write them to cache.json. "
+            "Without this flag, country weights are read from cache."
+        ),
     )
     parser.add_argument(
         "--assets-file",
@@ -165,7 +178,9 @@ def cli() -> None:
     args = parser.parse_args()
     configure_cli_logging(getattr(logging, args.log_level))
     if args.fetch_prices:
-        set_ignore_cache(True)
+        set_fetch_prices(True)
+    if args.fetch_geosplit:
+        set_fetch_geosplit(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
     if args.fetch_scalable:

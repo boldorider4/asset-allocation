@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 from position.factory import factory
 from position.scalable_position import ScalablePosition
-from utils import set_fetch_scalable, get_fetch_scalable
+from utils import (
+    get_fetch_prices,
+    get_fetch_scalable,
+    set_fetch_prices,
+    set_fetch_scalable,
+)
 
 
 class TestScalablePosition(unittest.TestCase):
@@ -56,16 +61,19 @@ class TestScalablePosition(unittest.TestCase):
 class TestScalableFactoryCache(unittest.TestCase):
     def setUp(self) -> None:
         self._fetch = get_fetch_scalable()
+        self._prices = get_fetch_prices()
         self._tmpdir = tempfile.TemporaryDirectory()
         self._cache = Path(self._tmpdir.name) / "cache.json"
         self._cache.write_text("{}", encoding="utf-8")
 
     def tearDown(self) -> None:
         set_fetch_scalable(self._fetch)
+        set_fetch_prices(self._prices)
         self._tmpdir.cleanup()
 
     def test_live_scan_writes_scanned_price_to_cache(self) -> None:
         set_fetch_scalable(True)
+        set_fetch_prices(True)
         with patch("position.factory.CACHE_FILENAME", str(self._cache)):
             with patch.object(
                 ScalablePosition,

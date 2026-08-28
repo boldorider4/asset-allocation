@@ -185,8 +185,12 @@ class Position(ABC):
             raise RuntimeError(
                 "No last price for position because neither value nor ISIN was provided"
             )
-        if self.countries():
-            logger.info("Position: countries: %s", self.countries())
+        try:
+            country_rows = self.countries()
+        except NotImplementedError:
+            country_rows = self._countries
+        if country_rows:
+            logger.info("Position: countries: %s", country_rows)
             logger.info("Position: computing DMEM and USAVN")
             self._dmem = self._compute_dev_vs_em_market()
             logger.info("Position: computed DMEM: %s", self._dmem)
@@ -233,7 +237,7 @@ class Position(ABC):
         return self._countries
 
     def __str__(self) -> str:
-        countries_list = self.countries()
+        countries_list = self._countries
         countries_str = ""
         if countries_list:
             countries_str = (
@@ -258,7 +262,7 @@ class Position(ABC):
         """Compute developed markets vs. emerging markets allocation."""
         developed_markets = 0
         emerging_markets = 0
-        for _row in self.countries():
+        for _row in self._countries or []:
             if _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 developed_markets += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
@@ -285,7 +289,7 @@ class Position(ABC):
         """Compute US vs. ex-US allocation within developed markets."""
         us = 0
         non_us = 0
-        for _row in self.countries():
+        for _row in self._countries or []:
             if _row["name"] == _US_MARKET_NAME:
                 us += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
