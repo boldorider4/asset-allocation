@@ -156,22 +156,36 @@ class Scalable:
         return out
 
 
+def _holdings_items(payload: Any) -> list[Any]:
+    """
+    Locate the holdings array. ``--json`` prints the inner payload with ``items``
+    at the top level, while the context-wrapped form nests it under ``result``.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        if "items" in payload:
+            items = payload["items"]
+            if items is None:
+                return []
+            if not isinstance(items, list):
+                raise ValueError("sc broker holdings items must be an array")
+            return items
+        if "result" in payload:
+            return _holdings_items(payload["result"])
+        if payload.get("count") == 0:
+            return []
+    keys = sorted(payload) if isinstance(payload, dict) else type(payload).__name__
+    raise ValueError(f"sc broker holdings JSON has no items array (got {keys})")
+
+
 def parse_holdings_json(raw: str) -> list[dict[str, Any]]:
     """Parse ``sc broker holdings --json`` into raw holding dicts."""
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"sc broker holdings output is not JSON: {e}") from e
-    if not isinstance(payload, dict):
-        raise ValueError("sc broker holdings JSON root must be an object")
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise ValueError("sc broker holdings JSON missing result object")
-    items = result.get("items")
-    if items is None:
-        return []
-    if not isinstance(items, list):
-        raise ValueError("sc broker holdings result.items must be an array")
+    items = _holdings_items(payload)
     rows: list[dict[str, Any]] = []
     for i, item in enumerate(items):
         if not isinstance(item, dict):

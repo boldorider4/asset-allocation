@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from scalable import (
@@ -87,6 +88,25 @@ class TestParseHoldingsJson(unittest.TestCase):
         self.assertEqual(world["shares"], 4.0)
         self.assertEqual(world["value"], 140.0)
         self.assertEqual(world["price"], 40.315)
+
+    def test_parses_unwrapped_items_payload(self) -> None:
+        inner = json.dumps(json.loads(HOLDINGS_JSON)["result"])
+        rows = parse_holdings_json(inner)
+        self.assertEqual([r["isin"] for r in rows], ["DE000EWG2LD7", "IE0006WW1TQ4"])
+
+    def test_parses_bare_items_array(self) -> None:
+        items = json.dumps(json.loads(HOLDINGS_JSON)["result"]["items"])
+        rows = parse_holdings_json(items)
+        self.assertEqual(len(rows), 2)
+
+    def test_empty_holdings(self) -> None:
+        self.assertEqual(parse_holdings_json('{"count": 0, "items": []}'), [])
+        self.assertEqual(parse_holdings_json('{"result": {"count": 0}}'), [])
+
+    def test_error_lists_top_level_keys(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_holdings_json('{"account_id": "a", "portfolio_id": "b"}')
+        self.assertIn("account_id", str(ctx.exception))
 
     def test_rejects_non_eur_quote(self) -> None:
         raw = HOLDINGS_JSON.replace('"quote_currency": "EUR"', '"quote_currency": "USD"', 1)
