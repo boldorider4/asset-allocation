@@ -156,27 +156,45 @@ class Scalable:
         return out
 
 
+def _find_items(node: Any) -> list[Any] | None:
+    """Depth-first search for the holdings array inside an ``sc`` JSON payload."""
+    if isinstance(node, list):
+        return node if any(isinstance(x, dict) and "isin" in x for x in node) else None
+    if not isinstance(node, dict):
+        return None
+    if "items" in node:
+        items = node["items"]
+        if items is None:
+            return []
+        if not isinstance(items, list):
+            raise ValueError("sc broker holdings items must be an array")
+        return items
+    if node.get("count") == 0:
+        return []
+    for value in node.values():
+        found = _find_items(value)
+        if found is not None:
+            return found
+    return None
+
+
 def _holdings_items(payload: Any) -> list[Any]:
     """
-    Locate the holdings array. ``--json`` prints the inner payload with ``items``
-    at the top level, while the context-wrapped form nests it under ``result``.
+    Locate the holdings array. ``sc`` wraps payloads in an ``ok``/``command``/``data``
+    envelope and a broker-context ``result`` object, so search instead of assuming
+    one nesting.
     """
     if isinstance(payload, list):
         return payload
-    if isinstance(payload, dict):
-        if "items" in payload:
-            items = payload["items"]
-            if items is None:
-                return []
-            if not isinstance(items, list):
-                raise ValueError("sc broker holdings items must be an array")
-            return items
-        if "result" in payload:
-            return _holdings_items(payload["result"])
-        if payload.get("count") == 0:
-            return []
-    keys = sorted(payload) if isinstance(payload, dict) else type(payload).__name__
-    raise ValueError(f"sc broker holdings JSON has no items array (got {keys})")
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        raise ValueError(
+            f"sc broker holdings reported failure: {json.dumps(payload)[:300]}"
+        )
+    items = _find_items(payload)
+    if items is None:
+        keys = sorted(payload) if isinstance(payload, dict) else type(payload).__name__
+        raise ValueError(f"sc broker holdings JSON has no items array (got {keys})")
+    return items
 
 
 def parse_holdings_json(raw: str) -> list[dict[str, Any]]:
@@ -223,10 +241,42 @@ def parse_holdings_json(raw: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _find_balance_object(node: Any) -> dict[str, Any] | None:
+    """Depth-first search for the savings-account object in a JSON payload."""
+    if isinstance(node, dict):
+        if "balance" in node:
+            return node
+        for value in node.values():
+            found = _find_balance_object(value)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _find_balance_object(value)
+            if found is not None:
+                return found
+    return None
+
+
 def parse_overnight_text(raw: str) -> dict[str, str]:
-    """Parse ``sc overnight`` key: value lines."""
+    """
+    Parse ``sc overnight`` output into flat string fields.
+
+    Plain output is ``key: value`` lines; JSON output nests the savings account
+    inside an ``ok``/``command``/``data`` envelope.
+    """
+    text = raw.strip()
+    if text.startswith(("{", "[")):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"sc overnight output is not JSON: {e}") from e
+        account = _find_balance_object(payload)
+        if account is None:
+            return {}
+        return {str(k): str(v) for k, v in account.items() if v is not None}
     data: dict[str, str] = {}
-    for line in raw.splitlines():
+    for line in text.splitlines():
         if ":" not in line:
             continue
         key, value = line.split(":", 1)

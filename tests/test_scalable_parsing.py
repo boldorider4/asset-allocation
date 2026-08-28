@@ -89,6 +89,22 @@ class TestParseHoldingsJson(unittest.TestCase):
         self.assertEqual(world["value"], 140.0)
         self.assertEqual(world["price"], 40.315)
 
+    def test_parses_ok_command_data_envelope(self) -> None:
+        envelope = json.dumps(
+            {
+                "ok": True,
+                "command": "broker holdings",
+                "data": json.loads(HOLDINGS_JSON),
+            }
+        )
+        rows = parse_holdings_json(envelope)
+        self.assertEqual([r["isin"] for r in rows], ["DE000EWG2LD7", "IE0006WW1TQ4"])
+
+    def test_reports_failed_envelope(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_holdings_json('{"ok": false, "command": "broker holdings", "error": "nope"}')
+        self.assertIn("reported failure", str(ctx.exception))
+
     def test_parses_unwrapped_items_payload(self) -> None:
         inner = json.dumps(json.loads(HOLDINGS_JSON)["result"])
         rows = parse_holdings_json(inner)
@@ -134,6 +150,25 @@ class TestParseOvernight(unittest.TestCase):
         self.assertIsNone(row["shares"])
         self.assertIsNone(row["price"])
         self.assertTrue(row["is_tagesgeld"])
+
+    def test_parses_json_envelope_overnight(self) -> None:
+        envelope = json.dumps(
+            {
+                "ok": True,
+                "command": "overnight",
+                "data": {
+                    "result": {
+                        "account_name": "Tagesgeld",
+                        "balance": 40.32,
+                        "interest_rate": 0.025,
+                    }
+                },
+            }
+        )
+        row = overnight_tagesgeld_row(envelope)
+        assert row is not None
+        self.assertEqual(row["value"], 40.32)
+        self.assertEqual(row["name"], "Tagesgeld")
 
     def test_empty_overnight_is_absent(self) -> None:
         self.assertIsNone(overnight_tagesgeld_row(""))
