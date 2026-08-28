@@ -221,7 +221,15 @@ class JustETFPosition(Position):
     def countries(self) -> list[dict[str, float | str]]:
         """Country allocation (name + weight_pct) from the Holdings section."""
         if self._countries is None and self._isin is not None:
-            self._countries = self._fetch_countries_with_retries()
+            try:
+                self._countries = self._fetch_countries_with_retries()
+            except (RuntimeError, urllib.error.URLError) as e:
+                self._countries = []
+                logger.warning(
+                    "JustETF: country fetch failed for %s (%s); using empty country list",
+                    self._isin,
+                    e,
+                )
         return self._countries
 
     def _fetch_chart_with_retries(self) -> dict:
