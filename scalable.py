@@ -229,10 +229,19 @@ def parse_holdings_json(raw: str) -> list[dict[str, Any]]:
             raise ValueError(
                 f"sc broker holdings item {i} missing or invalid quantity/valuation/quote_mid_price"
             ) from e
+        name = str(item.get("name") or isin)
+        logger.info(
+            "scalable scrape: ISIN=%s name=%s quote_mid_price=%s valuation=%s quantity=%s",
+            isin,
+            name,
+            price,
+            value,
+            shares,
+        )
         rows.append(
             {
                 "isin": isin,
-                "name": str(item.get("name") or isin),
+                "name": name,
                 "shares": shares,
                 "value": value,
                 "price": price,
@@ -304,6 +313,14 @@ def overnight_tagesgeld_row(raw: str) -> dict[str, Any] | None:
         balance = float(balance_s)
     except ValueError as e:
         raise ValueError(f"sc overnight balance is not a number: {balance_s!r}") from e
+    logger.info(
+        "scalable scrape: ISIN=%s name=%s quote_mid_price=%s valuation=%s quantity=%s",
+        None,
+        _TAGESGELD_NAME,
+        None,
+        balance,
+        None,
+    )
     return {
         "isin": None,
         "name": _TAGESGELD_NAME,

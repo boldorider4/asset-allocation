@@ -89,6 +89,16 @@ class TestParseHoldingsJson(unittest.TestCase):
         self.assertEqual(world["value"], 140.0)
         self.assertEqual(world["price"], 40.315)
 
+    def test_logs_scraped_security_figures(self) -> None:
+        with self.assertLogs("scalable", level="INFO") as logs:
+            parse_holdings_json(HOLDINGS_JSON)
+        joined = "\n".join(logs.output)
+        self.assertIn("ISIN=DE000EWG2LD7", joined)
+        self.assertIn("quote_mid_price=129.6555", joined)
+        self.assertIn("valuation=270.0", joined)
+        self.assertIn("quantity=1.0", joined)
+        self.assertIn("ISIN=IE0006WW1TQ4", joined)
+
     def test_parses_ok_command_data_envelope(self) -> None:
         envelope = json.dumps(
             {
@@ -141,7 +151,8 @@ class TestParseOvernight(unittest.TestCase):
         self.assertEqual(data["balance"], "40.32")
 
     def test_tagesgeld_row_from_overnight(self) -> None:
-        row = overnight_tagesgeld_row(OVERNIGHT_TEXT)
+        with self.assertLogs("scalable", level="INFO") as logs:
+            row = overnight_tagesgeld_row(OVERNIGHT_TEXT)
         self.assertIsNotNone(row)
         assert row is not None
         self.assertEqual(row["name"], "Tagesgeld")
@@ -150,6 +161,8 @@ class TestParseOvernight(unittest.TestCase):
         self.assertIsNone(row["shares"])
         self.assertIsNone(row["price"])
         self.assertTrue(row["is_tagesgeld"])
+        self.assertIn("name=Tagesgeld", "\n".join(logs.output))
+        self.assertIn("valuation=40.32", "\n".join(logs.output))
 
     def test_parses_json_envelope_overnight(self) -> None:
         envelope = json.dumps(
