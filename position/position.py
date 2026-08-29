@@ -177,19 +177,16 @@ class Position(ABC):
 
         # countries are set either from cache.json or from ISIN
         if self._countries is not None:
-            logger.info("Position: computing DMEM and USAVN")
-            self._dmem = self._compute_dev_vs_em_market()
-            logger.info("Position: computed DMEM: %s", self._dmem)
-            self._usavn = self._compute_us_vs_exus_market()
-            logger.info("Position: computed USAVN: %s", self._usavn)
-        # countries are not set, so we hope dmem and usavn are set from asset file
+            logger.info("Position: countries are set, using them to compute DMEM and USAVN")
+        elif self._isin is not None:
+            logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from asset file", self._isin)
         else:
-            if self._isin is not None:
-                logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from asset file", self._isin)
-            else:
-                logger.warning("Position: no countries found for asset %s, using dmem and usavn from asset file", self._name)
-            logger.info("Position: DMEM: %s", self._dmem)
-            logger.info("Position: USAVN: %s", self._usavn)
+            logger.warning("Position: no countries found for asset %s, using dmem and usavn from asset file", self._name)
+
+        self._dmem = self._compute_dev_vs_em_market()
+        logger.info("Position: DMEM: %s", self._dmem)
+        self._usavn = self._compute_us_vs_exus_market()
+        logger.info("Position: USAVN: %s", self._usavn)
 
         # price is set from asset file in some cases, like scalable
         if price is not None:
@@ -272,8 +269,10 @@ class Position(ABC):
 
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""
-        developed_markets = 0
-        emerging_markets = 0
+        # default to what is set in dmem property
+        developed_markets = self._dmem if self._dmem is not None else 0
+        emerging_markets = 1 - self._dmem if self._dmem is not None else 1
+        # if countries are set, use them to compute dmem
         for _row in self._countries or []:
             if _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 developed_markets += _row["weight_pct"]
@@ -299,8 +298,10 @@ class Position(ABC):
 
     def _compute_us_vs_exus_market(self) -> float:
         """Compute US vs. ex-US allocation within developed markets."""
-        us = 0
-        non_us = 0
+        # default to what is set in usavn property
+        us = self._usavn if self._usavn is not None else 0
+        non_us = 1 - self._usavn if self._usavn is not None else 1
+        # if countries are set, use them to compute usavn
         for _row in self._countries or []:
             if _row["name"] == _US_MARKET_NAME:
                 us += _row["weight_pct"]
