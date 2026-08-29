@@ -8,6 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from logger import attach_color_stderr_handler_for_module
+from oskar import _OSKAR
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -195,7 +196,7 @@ class Position(ABC):
             logger.info("Position: using supplied price: %s", price)
             self._price = price
         # price is not set so must be fetched from web if position is not from OSKAR
-        elif self._isin is not None:
+        elif self._isin is not None and self._broker is not _OSKAR:
             logger.info("Position: fetching price from ISIN %s", self._isin)
             self._price = self._fast_info_price()
             if self._price is None:
