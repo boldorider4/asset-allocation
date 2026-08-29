@@ -104,8 +104,8 @@ def _incognito_cached_last_price(isin: str | None) -> float | None:
     Uses ``position.factory``'s ``_load_cache`` / ``_parse_cache_entry`` so parsing matches
     the rest of the app. Lazy-imported to avoid cycles at ``utils`` import time.
 
-    Returns ``None`` when there is no cache row; otherwise ``float(lp)`` (including ``0.0``
-    when ``last_price`` is absent in the row).
+    Returns ``None`` when there is no cache row or the row has no ``last_price``;
+    otherwise ``float(lp)``.
     """
     if not isin:
         return None

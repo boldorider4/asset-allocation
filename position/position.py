@@ -188,7 +188,7 @@ class Position(ABC):
         self._usavn = self._compute_us_vs_exus_market()
         logger.info("Position: USAVN: %s", self._usavn)
 
-        # price is set from asset file in some cases, like scalable
+        # price is set from asset file, e.g. scalable, or from cache
         if price is not None:
             logger.info("Position: using supplied price: %s", price)
             self._price = price

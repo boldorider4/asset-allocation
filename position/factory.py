@@ -30,18 +30,18 @@ _CACHE_COUNTRIES = "countries"
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
     """
     Returns ``(last_price, cached_countries)``.
-    ``cached_countries`` is ``None`` if there are no stored weights (fetch at use).
+    Each element is ``None`` if the row has no stored value for it (fetch at use);
+    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``last_price``.
     Country values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
     """
     if not isinstance(entry, dict):
         return None, None
     lp = entry.get(_CACHE_LAST_PRICE)
-    if lp is None:
-        lp = 0
+    last_price = None if lp is None else float(lp)
     co = entry.get(_CACHE_COUNTRIES)
     if co is None:
-        return float(lp), None
-    return float(lp), {str(k): float(v) for k, v in co.items()}
+        return last_price, None
+    return last_price, {str(k): float(v) for k, v in co.items()}
 
 
 def _load_cache() -> dict[str, Any]:
@@ -112,12 +112,19 @@ def factory(
     fetch_geosplit = get_fetch_geosplit()
     use_scalable = get_fetch_scalable() and broker == SCALABLE
 
+    # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
+    # means "use this", ``None`` lets the Position fetch it from its own source.
     if use_scalable:
         ctor_price = price
     elif fetch_prices:
         ctor_price = None
     else:
         ctor_price = cached_last_price if cached_last_price is not None else price
+    if ctor_price is None and not fetch_prices:
+        logger.warning(
+            "Factory: no cached price for %s; Position will fetch it (not cached without --fetch-prices)",
+            isin,
+        )
 
     scrape_geosplit = fetch_geosplit and not (
         POSITION_SOURCE == YFINANCE and not use_scalable

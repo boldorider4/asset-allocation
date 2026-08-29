@@ -156,6 +156,22 @@ class TestFactoryCacheFlags(unittest.TestCase):
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
+    def test_countries_only_cache_row_fetches_price_without_caching_it(self) -> None:
+        """A ``--fetch-geosplit`` row has no ``last_price``: fetch it, never store 0.0."""
+        self._cache.write_text(
+            json.dumps({"IE0006WW1TQ4": {"countries": {"France": 1.0}}}),
+            encoding="utf-8",
+        )
+        before = self._cache.read_text(encoding="utf-8")
+        set_fetch_prices(False)
+        set_fetch_geosplit(False)
+        set_fetch_scalable(False)
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=8.65) as fast:
+            pos = self._factory(price=None)
+        fast.assert_called()
+        self.assertEqual(pos.price, 8.65)
+        self.assertEqual(self._cache.read_text(encoding="utf-8"), before)
+
     def test_neither_flag_does_not_rewrite_cache(self) -> None:
         before = self._cache.read_text(encoding="utf-8")
         set_fetch_prices(False)
