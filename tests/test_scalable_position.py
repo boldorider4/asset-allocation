@@ -90,7 +90,7 @@ class TestScalableFactoryCache(unittest.TestCase):
                 )
         self.assertEqual(pos.price, 40.315)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["last_price"], 40.315)
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
 
 if __name__ == "__main__":

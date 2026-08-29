@@ -23,25 +23,25 @@ JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
 CACHE_FILENAME = "cache.json"
 # Per-ISIN value in ``cache.json`` (written by ``_save_position_in_cache``).
-_CACHE_LAST_PRICE = "last_price"
+_CACHE_PRICE = "price"
 _CACHE_COUNTRIES = "countries"
 
 
 def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
     """
-    Returns ``(last_price, cached_countries)``.
+    Returns ``(price, cached_countries)``.
     Each element is ``None`` if the row has no stored value for it (fetch at use);
-    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``last_price``.
+    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``price``.
     Country values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
     """
     if not isinstance(entry, dict):
         return None, None
-    lp = entry.get(_CACHE_LAST_PRICE)
-    last_price = None if lp is None else float(lp)
+    raw_price = entry.get(_CACHE_PRICE)
+    price = None if raw_price is None else float(raw_price)
     co = entry.get(_CACHE_COUNTRIES)
     if co is None:
-        return last_price, None
-    return last_price, {str(k): float(v) for k, v in co.items()}
+        return price, None
+    return price, {str(k): float(v) for k, v in co.items()}
 
 
 def _load_cache() -> dict[str, Any]:
@@ -68,7 +68,7 @@ def _save_position_in_cache(
     cache: dict[str, Any],
     isin: str,
     *,
-    last_price: float | None = None,
+    price: float | None = None,
     countries: list[dict[str, float | str]] | None = None,
     update_price: bool = False,
     update_countries: bool = False,
@@ -80,8 +80,8 @@ def _save_position_in_cache(
         row = {}
     else:
         row = dict(row)
-    if update_price and last_price is not None:
-        row[_CACHE_LAST_PRICE] = last_price
+    if update_price and price is not None:
+        row[_CACHE_PRICE] = price
     if update_countries:
         row[_CACHE_COUNTRIES] = _countries_to_cache_fractions(countries)
     cache[isin] = row
@@ -107,7 +107,7 @@ def factory(
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
     cache = _load_cache()
-    cached_last_price, cached_countries = _parse_cache_entry(cache.get(isin))
+    cached_price, cached_countries = _parse_cache_entry(cache.get(isin))
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
     use_scalable = get_fetch_scalable() and broker == SCALABLE
@@ -119,7 +119,7 @@ def factory(
     elif fetch_prices:
         ctor_price = None
     else:
-        ctor_price = cached_last_price if cached_last_price is not None else price
+        ctor_price = cached_price if cached_price is not None else price
     if ctor_price is None and not fetch_prices:
         logger.warning(
             "Factory: no cached price for %s; Position will fetch it (not cached without --fetch-prices)",
@@ -195,7 +195,7 @@ def factory(
         _save_position_in_cache(
             cache,
             isin,
-            last_price=position.price,
+            price=position.price,
             countries=countries_rows,
             update_price=update_price,
             update_countries=update_countries,

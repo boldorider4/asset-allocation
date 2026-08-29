@@ -5,7 +5,7 @@ from pathlib import Path
 global portfolio
 portfolio: dict[str, list[dict]] = {}
 
-# Set True (e.g. via ``--fetch-prices``) to skip reading cache.json for quotes; fresh last_price is then written back.
+# Set True (e.g. via ``--fetch-prices``) to skip reading cache.json for quotes; fresh price is then written back.
 IGNORE_CACHE = False
 FETCH_PRICES = False
 FETCH_GEOSPLIT = False
@@ -97,22 +97,22 @@ def set_incognito_value_factor(factor: float) -> None:
     INCOGNITO_VALUE_FACTOR = factor
 
 
-def _incognito_cached_last_price(isin: str | None) -> float | None:
+def _incognito_cached_price(isin: str | None) -> float | None:
     """
-    ``last_price`` from ``cache.json`` for incognito totals only.
+    ``price`` from ``cache.json`` for incognito totals only.
 
     Uses ``position.factory``'s ``_load_cache`` / ``_parse_cache_entry`` so parsing matches
     the rest of the app. Lazy-imported to avoid cycles at ``utils`` import time.
 
-    Returns ``None`` when there is no cache row or the row has no ``last_price``;
-    otherwise ``float(lp)``.
+    Returns ``None`` when there is no cache row or the row has no ``price``;
+    otherwise ``float(cached)``.
     """
     if not isin:
         return None
     from position.factory import _load_cache, _parse_cache_entry
 
-    lp, _ = _parse_cache_entry(_load_cache().get(isin))
-    return None if lp is None else float(lp)
+    cached, _ = _parse_cache_entry(_load_cache().get(isin))
+    return None if cached is None else float(cached)
 
 
 def apply_incognito_scaling() -> None:
@@ -123,7 +123,7 @@ def apply_incognito_scaling() -> None:
     ``Position`` instances via ``factory`` (see ``get_incognito_value_factor``).
 
     Totals use explicit JSON ``value`` when set. Otherwise uses **cache.json only**
-    (``shares`` × cached ``last_price``); missing cache entry or missing price → **0**
+    (``shares`` × cached ``price``); missing cache entry or missing price → **0**
     for that line (no network / no ``factory``).
 
     Lazy-imports factory helpers to avoid import cycles with ``utils``.
@@ -142,10 +142,10 @@ def apply_incognito_scaling() -> None:
             if raw is not None:
                 total += float(raw)
             else:
-                lp = _incognito_cached_last_price(pos.get(ISIN))
+                cached_price = _incognito_cached_price(pos.get(ISIN))
                 sh = pos.get(SHARES)
-                if lp is not None and sh is not None:
-                    total += float(sh) * float(lp)
+                if cached_price is not None and sh is not None:
+                    total += float(sh) * float(cached_price)
 
     if total <= 0:
         return

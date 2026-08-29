@@ -35,7 +35,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             json.dumps(
                 {
                     "IE0006WW1TQ4": {
-                        "last_price": 10.0,
+                        "price": 10.0,
                         "countries": {"Germany": 0.4, "United States": 0.6},
                     }
                 }
@@ -78,7 +78,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         fast.assert_called()
         self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["last_price"], 99.5)
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
     def test_fetch_scalable_uses_scalable_position_not_fast_info(self) -> None:
@@ -127,11 +127,11 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.countries(), sample)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"], {"France": 1.0})
-        self.assertEqual(saved["IE0006WW1TQ4"]["last_price"], 10.0)
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 10.0)
 
     def test_without_geosplit_missing_countries_does_not_scrape(self) -> None:
         self._cache.write_text(
-            json.dumps({"IE0006WW1TQ4": {"last_price": 10.0}}),
+            json.dumps({"IE0006WW1TQ4": {"price": 10.0}}),
             encoding="utf-8",
         )
         set_fetch_geosplit(False)
@@ -157,7 +157,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
     def test_countries_only_cache_row_fetches_price_without_caching_it(self) -> None:
-        """A ``--fetch-geosplit`` row has no ``last_price``: fetch it, never store 0.0."""
+        """A ``--fetch-geosplit`` row has no ``price``: fetch it, never store 0.0."""
         self._cache.write_text(
             json.dumps({"IE0006WW1TQ4": {"countries": {"France": 1.0}}}),
             encoding="utf-8",

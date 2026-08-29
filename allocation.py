@@ -136,7 +136,7 @@ def cli() -> None:
         "--fetch-prices",
         action="store_true",
         help=(
-            "Scrape JustETF/Yahoo quotes and write last_price to cache.json. "
+            "Scrape JustETF/Yahoo quotes and write price to cache.json. "
             "Scalable-broker rows from the assets file are included unless "
             "--fetch-scalable is also set."
         ),
