@@ -157,7 +157,10 @@ class Position(ABC):
 
         # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
         if cached_countries is not None:
-            logger.info("Position: cached countries: %s", cached_countries)
+            if self._isin is not None:
+                logger.warning("Position: cached countries for ISIN %s: %s", self._isin, cached_countries)
+            else:
+                logger.warning("Position: cached countries for asset %s: %s", self._name, cached_countries)
             self._countries = [
                 {"name": name, "weight_pct": float(w) * 100.0}
                 for name, w in cached_countries.items()
@@ -167,18 +170,31 @@ class Position(ABC):
             try:
                 self._countries = self.countries()
             except NotImplementedError:
+                logger.warning("Position: could not fetch countries for ISIN %s", self._isin)
                 self._countries = None
-
         logger.info("Position: countries: %s", self._countries)
-        logger.info("Position: computing DMEM and USAVN")
-        self._dmem = self._compute_dev_vs_em_market()
-        logger.info("Position: computed DMEM: %s", self._dmem)
-        self._usavn = self._compute_us_vs_exus_market()
-        logger.info("Position: computed USAVN: %s", self._usavn)
 
+        # countries are set either from cache.json or from ISIN
+        if self._countries is not None:
+            logger.info("Position: computing DMEM and USAVN")
+            self._dmem = self._compute_dev_vs_em_market()
+            logger.info("Position: computed DMEM: %s", self._dmem)
+            self._usavn = self._compute_us_vs_exus_market()
+            logger.info("Position: computed USAVN: %s", self._usavn)
+        # countries are not set, so we hope dmem and usavn are set from asset file
+        else:
+            if self._isin is not None:
+                logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from asset file", self._isin)
+            else:
+                logger.warning("Position: no countries found for asset %s, using dmem and usavn from asset file", self._name)
+            logger.info("Position: DMEM: %s", self._dmem)
+            logger.info("Position: USAVN: %s", self._usavn)
+
+        # price is set from asset file in some cases, like scalable
         if price is not None:
             logger.info("Position: using supplied price: %s", price)
             self._price = price
+        # price is not set so must be fetched from web if position is not from OSKAR
         elif self._isin is not None:
             logger.info("Position: fetching price from ISIN %s", self._isin)
             self._price = self._fast_info_price()
