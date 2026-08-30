@@ -147,37 +147,48 @@ if __name__ == "__main__":
     years = 10
     n_months = 12 * years
 
-    def monthly_gross_returns(n, annual_mean, annual_vol, seed):
+    def monthly_gross_returns(n, annual_cagr, annual_vol, seed):
+        """Noisy monthly factors rescaled so the realized CAGR is annual_cagr.
+
+        Without the rescale a single 120-month draw can land far from its mean, so
+        the sample would show a loss for an asset that is meant to compound upward.
+        """
         rng = np.random.default_rng(seed)
-        monthly_mean = (1.0 + annual_mean) ** (1.0 / 12.0) - 1.0
-        monthly_vol = annual_vol / np.sqrt(12.0)
-        return 1.0 + rng.normal(monthly_mean, monthly_vol, n)
+        noise = 1.0 + rng.normal(0.0, annual_vol / np.sqrt(12.0), n)
+        target_growth = (1.0 + annual_cagr) ** (n / 12.0)
+        return noise * (target_growth / noise.prod()) ** (1.0 / n)
 
     def sample_euribor_3m(n):
         knots_x = np.array([0, 12, 18, 36, 60, 72, 96, 119], dtype=float)
-        knots_y = np.array([0.007, 0.010, 0.014, 0.002, -0.0003, -0.003, -0.0033, -0.0045])
+        knots_y = np.array([0.027, 0.02, 0.024, 0.032, 0.0197, 0.017, 0.0167, 0.0155])
         return np.interp(np.arange(n), knots_x, knots_y)
 
-    equity = monthly_gross_returns(n_months, 0.08, 0.16, seed=10)
-    commodities = monthly_gross_returns(n_months, 0.02, 0.15, seed=20)
-    gold = monthly_gross_returns(n_months, 0.05, 0.25, seed=30)
-    bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=40)
+    import time
+
+    seed_base = time.time_ns()
+    equity = monthly_gross_returns(n_months, 0.07, 0.16, seed=seed_base)
+    commodities = monthly_gross_returns(n_months, 0.022, 0.15, seed=seed_base + 1)
+    gold = monthly_gross_returns(n_months, 0.05, 0.25, seed=seed_base + 2)
+    bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=seed_base + 3)
+    reit = monthly_gross_returns(n_months, 0.04, 0.08, seed=seed_base + 4)
 
     sample_unleveraged = {
-        "equity": (equity, 0.8),
-        "commodities": (commodities, 0.1),
-        "gold": (gold, 0.1),
+        "equity": (equity, 0.9),
+        "commodities": (commodities, 0.05),
+        "gold": (gold, 0.05),
     }
     sample_leveraged = {
-        "equity": (equity, 0.7),
-        "bonds": (bonds, 0.1),
+        "equity": (equity, 0.55),
+        "bonds": (bonds, 0.2),
         "gold": (gold, 0.1),
         "commodities": (commodities, 0.1),
+        "reit": (reit, 0.05)
     }
     sample_euribor = sample_euribor_3m(n_months)
 
+    initial_equity = 100000.0
     result = compare_portfolios(
-        sample_unleveraged, sample_leveraged, sample_euribor, years=years
+        sample_unleveraged, sample_leveraged, sample_euribor, years=years, initial_equity=initial_equity
     )
 
     assert len(sample_euribor) == n_months
