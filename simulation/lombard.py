@@ -92,6 +92,8 @@ def compare_portfolios(
     
     lev_capital = [lev_initial_portfolio]
     cumulative_liability = [loan_principal] # Track loan being paid off
+    margin_call_times = []
+    margin_call_ltv = 0.60
 
     for m in range(total_months):
         # Apply monthly portfolio return
@@ -106,6 +108,11 @@ def compare_portfolios(
         # Let's plot cumulative liability flow or monthly spend, which will then be subtracted from the portfolio value
         # to get the net value of the portfolio.
         cumulative_liability.append(cumulative_liability[-1] + monthly_interest)
+
+        # LTV = outstanding principal / portfolio market value. Interest is paid in cash
+        # so it does not increase the loan. A rise above 60% would trigger a margin call.
+        if port_val <= 0 or (loan_principal / port_val) > margin_call_ltv:
+            margin_call_times.append(m)
 
     # ROI of unleveraged vs. leveraged
     final_unlev_roi = (unlev_capital[-1] - initial_equity) / initial_equity
@@ -146,6 +153,7 @@ def compare_portfolios(
         "lev_std": lev_std,
         "unlev_portfolio": unlev_capital,
         "lev_portfolio": net_lev_capital.tolist(),
+        "margin_calls": margin_call_times,
     }
 
 
@@ -174,7 +182,7 @@ if __name__ == "__main__":
 
     import time
 
-    n_sims = 1000
+    n_sims = 3000
     initial_equity = 100000.0
     sample_euribor = sample_euribor_3m(n_months)
     seed_base = time.time_ns()
@@ -183,6 +191,7 @@ if __name__ == "__main__":
     lev_rois = np.empty(n_sims)
     unlev_stds = np.empty(n_sims)
     lev_stds = np.empty(n_sims)
+    margin_calls = []
 
     for i in range(n_sims):
         s = seed_base + i * 5
@@ -198,11 +207,11 @@ if __name__ == "__main__":
             "gold": (gold, 0.05),
         }
         sample_leveraged = {
-            "equity": (equity, 0.53),
-            "bonds": (bonds, 0.29),
-            "gold": (gold, 0.08),
-            "commodities": (commodities, 0.06),
-            "reit": (reit, 0.06),
+            "equity": (equity, 0.44),
+            "bonds": (bonds, 0.34),
+            "gold": (gold, 0.1),
+            "commodities": (commodities, 0.1),
+            "reit": (reit, 0.02),
         }
         result = compare_portfolios(
             sample_unleveraged,
@@ -211,13 +220,14 @@ if __name__ == "__main__":
             years=years,
             initial_equity=initial_equity,
             rebalance_months=18,
-            ltv=0.4,
+            ltv=0.50,
             spread=0.01,
         )
         unlev_rois[i] = result["unlev_roi"]
         lev_rois[i] = result["lev_roi"]
         unlev_stds[i] = result["unlev_std"]
         lev_stds[i] = result["lev_std"]
+        margin_calls.append(result["margin_calls"])
 
     print(
         f"Unlevered avg ROI {unlev_rois.mean() * 100:.2f}%, "
@@ -228,4 +238,10 @@ if __name__ == "__main__":
         f"Leveraged avg ROI {lev_rois.mean() * 100:.2f}%, "
         f"total STD {lev_rois.std() * 100:.2f}% "
         f"(avg path STD {lev_stds.mean() * 100:.2f}%)"
+    )
+    calls_per_run = np.array([len(months) for months in margin_calls])
+    n_hit = int(np.count_nonzero(calls_per_run))
+    print(
+        f"Margin calls (LTV > 60%): avg {calls_per_run.mean():.2f} per run "
+        f"({n_hit}/{n_sims} runs had at least one)"
     )
