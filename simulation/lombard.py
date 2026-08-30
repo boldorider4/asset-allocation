@@ -153,16 +153,19 @@ if __name__ == "__main__":
     years = 10
     n_months = 12 * years
 
-    def monthly_gross_returns(n, annual_cagr, annual_vol, seed):
-        """Noisy monthly factors rescaled so the realized CAGR is annual_cagr.
+    def monthly_gross_returns(n, annual_mean, annual_vol, seed):
+        """Independent monthly gross factors for one asset class.
 
-        Without the rescale a single 120-month draw can land far from its mean, so
-        the sample would show a loss for an asset that is meant to compound upward.
+        Calibrated so that compounding any 12 of them gives an annual gross return
+        with mean ``1 + annual_mean`` and standard deviation ``annual_vol`` relative
+        to that mean. With annual_mean=0.08 and annual_vol=0.16, a typical year lands
+        in 1.08 +/- 1.08*0.16 (roughly -9% to +25%), while tail years reach -20% or
+        +40%. Months are genuinely independent, so a decade can still end down.
         """
         rng = np.random.default_rng(seed)
-        noise = 1.0 + rng.normal(0.0, annual_vol / np.sqrt(12.0), n)
-        target_growth = (1.0 + annual_cagr) ** (n / 12.0)
-        return noise * (target_growth / noise.prod()) ** (1.0 / n)
+        monthly_mean = (1.0 + annual_mean) ** (1.0 / 12.0)
+        monthly_sd = monthly_mean * annual_vol / np.sqrt(12.0)
+        return rng.normal(monthly_mean, monthly_sd, n)
 
     def sample_euribor_3m(n):
         knots_x = np.array([0, 12, 18, 36, 60, 72, 96, 119], dtype=float)
