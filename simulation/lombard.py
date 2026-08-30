@@ -107,9 +107,13 @@ def compare_portfolios(
         # to get the net value of the portfolio.
         cumulative_liability.append(cumulative_liability[-1] + monthly_interest)
 
+    # ROI of unleveraged vs. leveraged
     final_unlev_roi = (unlev_capital[-1] - initial_equity) / initial_equity
     net_lev_capital = np.asarray(lev_capital) - np.asarray(cumulative_liability)
     final_lev_roi = (net_lev_capital[-1] - initial_equity) / initial_equity
+    # STD of unleveraged vs. leveraged
+    unlev_std = np.std(unlev_capital) / initial_equity
+    lev_std = np.std(net_lev_capital) / initial_equity
 
     # 3. Draw Charts
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -138,6 +142,8 @@ def compare_portfolios(
     return {
         "unlev_roi": f"{final_unlev_roi * 100:.2f}%",
         "lev_roi": f"{final_lev_roi * 100:.2f}%",
+        "unlev_std": f"{unlev_std * 100:.2f}%",
+        "lev_std": f"{lev_std * 100:.2f}%",
         "unlev_portfolio": unlev_capital,
         "lev_portfolio": net_lev_capital.tolist(),
     }
@@ -198,7 +204,10 @@ if __name__ == "__main__":
 
     print(
         f"Unlevered ROI {result['unlev_roi']}, "
-        f"Leveraged ROI {result['lev_roi']}"
+        f"Unlevered STD {result['unlev_std']}, "
+        f"Leveraged ROI {result['lev_roi']}, "
+        f"Leveraged STD {result['lev_std']}"
+
     )
     print("Unleveraged capital", round(result["unlev_portfolio"][-1], 2))
     print("Leveraged capital", round(result["lev_portfolio"][-1], 2))
