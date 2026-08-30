@@ -23,31 +23,57 @@ import numpy as np
 # sample_euribor = [0.0245, 0.0245, 0.0246, ...] # size 24 months
 # ==========================================
 
-def _weighted_monthly_returns(portfolio_dict):
+def _weighted_monthly_returns(portfolio_dict, rebalance_months=12):
     """Blend per-asset monthly gross return series into a single portfolio series.
 
     Each dict value is a ``(returns, weight)`` pair where ``weight`` is the asset's
-    share of the portfolio (0.5 -> 50%). Weights are normalized so a portfolio that
-    does not sum to exactly 1.0 still produces a valid weighted average.
+    target share of the portfolio (0.5 -> 50%). Targets are normalized so a portfolio
+    that does not sum to exactly 1.0 still produces a valid weighted average.
+
+    Between rebalance dates the actual weights drift with performance: outperformers
+    become overweight and compound on a larger base. Every ``rebalance_months`` the
+    overweight assets are sold and the underweight ones bought to restore the target
+    allocation. ``rebalance_months=1`` rebalances every month; ``None`` or ``0`` lets
+    the portfolio drift for the whole horizon (buy and hold).
     """
     series = []
-    weights = []
+    targets = []
     for returns, weight in portfolio_dict.values():
         series.append(np.asarray(returns, dtype=float))
-        weights.append(float(weight))
+        targets.append(float(weight))
 
-    return np.average(np.vstack(series), axis=0, weights=weights)
+    returns_matrix = np.vstack(series)
+    targets = np.asarray(targets, dtype=float)
+    targets = targets / targets.sum()
+
+    weights = targets.copy()
+    portfolio_returns = np.empty(returns_matrix.shape[1], dtype=float)
+
+    for month in range(returns_matrix.shape[1]):
+        month_returns = returns_matrix[:, month]
+        # Value-weighted blend of this month's asset returns.
+        growth = float(weights @ month_returns)
+        portfolio_returns[month] = growth
+
+        # Each asset's share of the (now larger or smaller) portfolio after the month.
+        weights = weights * month_returns / growth
+
+        if rebalance_months and (month + 1) % rebalance_months == 0:
+            weights = targets.copy()
+
+    return portfolio_returns
 
 
 def compare_portfolios(
-    unleveraged_dict, leveraged_dict, euribor_array, years, ltv=0.5, spread=0.0125, initial_equity=100000.0
+    unleveraged_dict, leveraged_dict, euribor_array, years, ltv=0.5, spread=0.0125, initial_equity=100000.0,
+    rebalance_months=12,
 ):
     total_months = 12 * years
     if len(euribor_array) != total_months:
         raise ValueError(f"Euribor array length {len(euribor_array)} != {total_months}")
 
     # 1. Calculate Unleveraged Portfolio Path
-    unlev_monthly_returns = _weighted_monthly_returns(unleveraged_dict)
+    unlev_monthly_returns = _weighted_monthly_returns(unleveraged_dict, rebalance_months)
     if len(unlev_monthly_returns) != total_months:
         raise ValueError(f"Unleveraged returns length {len(unlev_monthly_returns)} != {total_months}")
 
@@ -60,7 +86,7 @@ def compare_portfolios(
     loan_principal = initial_equity * ltv / (1 - ltv)
     lev_initial_portfolio = initial_equity + loan_principal
 
-    lev_monthly_returns = _weighted_monthly_returns(leveraged_dict)
+    lev_monthly_returns = _weighted_monthly_returns(leveraged_dict, rebalance_months)
     if len(lev_monthly_returns) != total_months:
         raise ValueError(f"Leveraged returns length {len(lev_monthly_returns)} != {total_months}")
     
