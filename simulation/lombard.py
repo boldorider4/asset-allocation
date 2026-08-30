@@ -136,10 +136,10 @@ def compare_portfolios(
     plt.show()
 
     return {
-        "Unleveraged Final ROI": f"{final_unlev_roi * 100:.2f}%",
-        "Leveraged Final Net ROI": f"{final_lev_roi * 100:.2f}%",
-        "Unleveraged Portfolio": unlev_capital,
-        "Leveraged Portfolio": net_lev_capital.tolist(),
+        "unlev_roi": f"{final_unlev_roi * 100:.2f}%",
+        "lev_roi": f"{final_lev_roi * 100:.2f}%",
+        "unlev_portfolio": unlev_capital,
+        "lev_portfolio": net_lev_capital.tolist(),
     }
 
 
@@ -181,10 +181,13 @@ if __name__ == "__main__":
     )
 
     assert len(sample_euribor) == n_months
-    assert len(result["Unleveraged Portfolio"]) == n_months + 1
-    assert len(result["Leveraged Portfolio"]) == n_months + 1
-    assert result["Unleveraged Portfolio"][0] == 100000.0
+    assert len(result["unlev_portfolio"]) == n_months + 1
+    assert len(result["lev_portfolio"]) == n_months + 1
+    assert result["unlev_portfolio"][0] == 100000.0
 
-    print('unlev ROI %d, lev ROI %d'.format(result["Unleveraged Final ROI"], result["Leveraged Final Net ROI"]))
-    print("unlev terminal", round(result["Unleveraged Portfolio"][-1], 2))
-    print("lev net terminal", round(result["Leveraged Portfolio"][-1], 2))
+    print(
+        f"Unlevered ROI {result['unlev_roi']}, "
+        f"Leveraged ROI {result['lev_roi']}"
+    )
+    print("Unleveraged capital", round(result["unlev_portfolio"][-1], 2))
+    print("Leveraged capital", round(result["lev_portfolio"][-1], 2))
