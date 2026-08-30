@@ -150,7 +150,7 @@ def compare_portfolios(
 
 
 if __name__ == "__main__":
-    years = 10
+    years = 15
     n_months = 12 * years
 
     def monthly_gross_returns(n, annual_mean, annual_vol, seed):
@@ -186,11 +186,11 @@ if __name__ == "__main__":
 
     for i in range(n_sims):
         s = seed_base + i * 5
-        equity = monthly_gross_returns(n_months, 0.07, 0.15, seed=s)
-        commodities = monthly_gross_returns(n_months, 0.03, 0.05, seed=s + 1)
-        gold = monthly_gross_returns(n_months, 0.05, 0.08, seed=s + 2)
-        bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=s + 3)
-        reit = monthly_gross_returns(n_months, 0.04, 0.08, seed=s + 4)
+        equity = monthly_gross_returns(n_months, 0.08, 0.1, seed=s)
+        commodities = monthly_gross_returns(n_months, 0.01, 0.05, seed=s + 1)
+        gold = monthly_gross_returns(n_months, 0.05, 0.01, seed=s + 2)
+        bonds = monthly_gross_returns(n_months, 0.035, 0.008, seed=s + 3)
+        reit = monthly_gross_returns(n_months, 0.04, 0.008, seed=s + 4)
 
         sample_unleveraged = {
             "equity": (equity, 0.9),
@@ -198,8 +198,8 @@ if __name__ == "__main__":
             "gold": (gold, 0.05),
         }
         sample_leveraged = {
-            "equity": (equity, 0.5),
-            "bonds": (bonds, 0.3),
+            "equity": (equity, 0.53),
+            "bonds": (bonds, 0.29),
             "gold": (gold, 0.08),
             "commodities": (commodities, 0.06),
             "reit": (reit, 0.06),
@@ -210,6 +210,9 @@ if __name__ == "__main__":
             sample_euribor,
             years=years,
             initial_equity=initial_equity,
+            rebalance_months=18,
+            ltv=0.4,
+            spread=0.01,
         )
         unlev_rois[i] = result["unlev_roi"]
         lev_rois[i] = result["lev_roi"]
