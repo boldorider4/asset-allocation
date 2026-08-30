@@ -172,9 +172,9 @@ if __name__ == "__main__":
     import time
 
     seed_base = time.time_ns()
-    equity = monthly_gross_returns(n_months, 0.07, 0.16, seed=seed_base)
+    equity = monthly_gross_returns(n_months, 0.07, 0.12, seed=seed_base)
     commodities = monthly_gross_returns(n_months, 0.022, 0.15, seed=seed_base + 1)
-    gold = monthly_gross_returns(n_months, 0.05, 0.25, seed=seed_base + 2)
+    gold = monthly_gross_returns(n_months, 0.05, 0.08, seed=seed_base + 2)
     bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=seed_base + 3)
     reit = monthly_gross_returns(n_months, 0.04, 0.08, seed=seed_base + 4)
 
