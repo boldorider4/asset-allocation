@@ -82,8 +82,8 @@ def compare_portfolios(
         cumulative_liability.append(cumulative_liability[-1] + monthly_interest)
 
     final_unlev_roi = (unlev_capital[-1] - initial_equity) / initial_equity
-    final_lev_net_val = np.asarray(lev_capital) - np.asarray(cumulative_liability)
-    final_lev_roi = (final_lev_net_val[-1] - initial_equity) / initial_equity
+    net_lev_capital = np.asarray(lev_capital) - np.asarray(cumulative_liability)
+    final_lev_roi = (net_lev_capital[-1] - initial_equity) / initial_equity
 
     # 3. Draw Charts
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -113,6 +113,6 @@ def compare_portfolios(
         "Unleveraged Final ROI": f"{final_unlev_roi * 100:.2f}%",
         "Leveraged Final Net ROI": f"{final_lev_roi * 100:.2f}%",
         "Unleveraged Portfolio": unlev_capital,
-        "Leveraged Portfolio": final_lev_net_val.tolist(),
+        "Leveraged Portfolio": net_lev_capital.tolist(),
     }
     
