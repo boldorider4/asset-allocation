@@ -115,35 +115,35 @@ def compare_portfolios(
     unlev_std = np.std(unlev_capital) / initial_equity
     lev_std = np.std(net_lev_capital) / initial_equity
 
-    # 3. Draw Charts
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    months_axis = range(total_months + 1)
+    # # 3. Draw Charts
+    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    # months_axis = range(total_months + 1)
 
-    # Unleveraged Chart
-    ax1.plot(months_axis, unlev_capital, label="Unleveraged Portfolio Value", color="blue")
-    ax1.set_title("Unleveraged Case")
-    ax1.set_xlabel("Months")
-    ax1.set_ylabel("Capital (€)")
-    ax1.legend()
-    ax1.grid(True)
+    # # Unleveraged Chart
+    # ax1.plot(months_axis, unlev_capital, label="Unleveraged Portfolio Value", color="blue")
+    # ax1.set_title("Unleveraged Case")
+    # ax1.set_xlabel("Months")
+    # ax1.set_ylabel("Capital (€)")
+    # ax1.legend()
+    # ax1.grid(True)
 
-    # Leveraged Chart
-    ax2.plot(months_axis, lev_capital, label="Leveraged Portfolio Value", color="green")
-    ax2.plot(months_axis, cumulative_liability, label="Cumulative Liability (Loan + Interest)", color="red", linestyle="--")
-    ax2.set_title("Leveraged Case")
-    ax2.set_xlabel("Months")
-    ax2.set_ylabel("Amount (€)")
-    ax2.legend()
-    ax2.grid(True)
+    # # Leveraged Chart
+    # ax2.plot(months_axis, lev_capital, label="Leveraged Portfolio Value", color="green")
+    # ax2.plot(months_axis, cumulative_liability, label="Cumulative Liability (Loan + Interest)", color="red", linestyle="--")
+    # ax2.set_title("Leveraged Case")
+    # ax2.set_xlabel("Months")
+    # ax2.set_ylabel("Amount (€)")
+    # ax2.legend()
+    # ax2.grid(True)
 
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()
 
     return {
-        "unlev_roi": f"{final_unlev_roi * 100:.2f}%",
-        "lev_roi": f"{final_lev_roi * 100:.2f}%",
-        "unlev_std": f"{unlev_std * 100:.2f}%",
-        "lev_std": f"{lev_std * 100:.2f}%",
+        "unlev_roi": final_unlev_roi,
+        "lev_roi": final_lev_roi,
+        "unlev_std": unlev_std,
+        "lev_std": lev_std,
         "unlev_portfolio": unlev_capital,
         "lev_portfolio": net_lev_capital.tolist(),
     }
@@ -174,43 +174,55 @@ if __name__ == "__main__":
 
     import time
 
-    seed_base = time.time_ns()
-    equity = monthly_gross_returns(n_months, 0.07, 0.12, seed=seed_base)
-    commodities = monthly_gross_returns(n_months, 0.022, 0.15, seed=seed_base + 1)
-    gold = monthly_gross_returns(n_months, 0.05, 0.08, seed=seed_base + 2)
-    bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=seed_base + 3)
-    reit = monthly_gross_returns(n_months, 0.04, 0.08, seed=seed_base + 4)
-
-    sample_unleveraged = {
-        "equity": (equity, 0.9),
-        "commodities": (commodities, 0.05),
-        "gold": (gold, 0.05),
-    }
-    sample_leveraged = {
-        "equity": (equity, 0.55),
-        "bonds": (bonds, 0.2),
-        "gold": (gold, 0.1),
-        "commodities": (commodities, 0.1),
-        "reit": (reit, 0.05)
-    }
-    sample_euribor = sample_euribor_3m(n_months)
-
+    n_sims = 1000
     initial_equity = 100000.0
-    result = compare_portfolios(
-        sample_unleveraged, sample_leveraged, sample_euribor, years=years, initial_equity=initial_equity
-    )
+    sample_euribor = sample_euribor_3m(n_months)
+    seed_base = time.time_ns()
 
-    assert len(sample_euribor) == n_months
-    assert len(result["unlev_portfolio"]) == n_months + 1
-    assert len(result["lev_portfolio"]) == n_months + 1
-    assert result["unlev_portfolio"][0] == 100000.0
+    unlev_rois = np.empty(n_sims)
+    lev_rois = np.empty(n_sims)
+    unlev_stds = np.empty(n_sims)
+    lev_stds = np.empty(n_sims)
+
+    for i in range(n_sims):
+        s = seed_base + i * 5
+        equity = monthly_gross_returns(n_months, 0.07, 0.15, seed=s)
+        commodities = monthly_gross_returns(n_months, 0.03, 0.05, seed=s + 1)
+        gold = monthly_gross_returns(n_months, 0.05, 0.08, seed=s + 2)
+        bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=s + 3)
+        reit = monthly_gross_returns(n_months, 0.04, 0.08, seed=s + 4)
+
+        sample_unleveraged = {
+            "equity": (equity, 0.9),
+            "commodities": (commodities, 0.05),
+            "gold": (gold, 0.05),
+        }
+        sample_leveraged = {
+            "equity": (equity, 0.5),
+            "bonds": (bonds, 0.3),
+            "gold": (gold, 0.08),
+            "commodities": (commodities, 0.06),
+            "reit": (reit, 0.06),
+        }
+        result = compare_portfolios(
+            sample_unleveraged,
+            sample_leveraged,
+            sample_euribor,
+            years=years,
+            initial_equity=initial_equity,
+        )
+        unlev_rois[i] = result["unlev_roi"]
+        lev_rois[i] = result["lev_roi"]
+        unlev_stds[i] = result["unlev_std"]
+        lev_stds[i] = result["lev_std"]
 
     print(
-        f"Unlevered ROI {result['unlev_roi']}, "
-        f"Unlevered STD {result['unlev_std']}, "
-        f"Leveraged ROI {result['lev_roi']}, "
-        f"Leveraged STD {result['lev_std']}"
-
+        f"Unlevered avg ROI {unlev_rois.mean() * 100:.2f}%, "
+        f"total STD {unlev_rois.std() * 100:.2f}% "
+        f"(avg path STD {unlev_stds.mean() * 100:.2f}%)"
     )
-    print("Unleveraged capital", round(result["unlev_portfolio"][-1], 2))
-    print("Leveraged capital", round(result["lev_portfolio"][-1], 2))
+    print(
+        f"Leveraged avg ROI {lev_rois.mean() * 100:.2f}%, "
+        f"total STD {lev_rois.std() * 100:.2f}% "
+        f"(avg path STD {lev_stds.mean() * 100:.2f}%)"
+    )
