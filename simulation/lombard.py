@@ -141,4 +141,50 @@ def compare_portfolios(
         "Unleveraged Portfolio": unlev_capital,
         "Leveraged Portfolio": net_lev_capital.tolist(),
     }
-    
+
+
+if __name__ == "__main__":
+    years = 10
+    n_months = 12 * years
+
+    def monthly_gross_returns(n, annual_mean, annual_vol, seed):
+        rng = np.random.default_rng(seed)
+        monthly_mean = (1.0 + annual_mean) ** (1.0 / 12.0) - 1.0
+        monthly_vol = annual_vol / np.sqrt(12.0)
+        return 1.0 + rng.normal(monthly_mean, monthly_vol, n)
+
+    def sample_euribor_3m(n):
+        knots_x = np.array([0, 12, 18, 36, 60, 72, 96, 119], dtype=float)
+        knots_y = np.array([0.007, 0.010, 0.014, 0.002, -0.0003, -0.003, -0.0033, -0.0045])
+        return np.interp(np.arange(n), knots_x, knots_y)
+
+    equity = monthly_gross_returns(n_months, 0.08, 0.16, seed=10)
+    commodities = monthly_gross_returns(n_months, 0.02, 0.15, seed=20)
+    gold = monthly_gross_returns(n_months, 0.05, 0.25, seed=30)
+    bonds = monthly_gross_returns(n_months, 0.035, 0.08, seed=40)
+
+    sample_unleveraged = {
+        "equity": (equity, 0.8),
+        "commodities": (commodities, 0.1),
+        "gold": (gold, 0.1),
+    }
+    sample_leveraged = {
+        "equity": (equity, 0.7),
+        "bonds": (bonds, 0.1),
+        "gold": (gold, 0.1),
+        "commodities": (commodities, 0.1),
+    }
+    sample_euribor = sample_euribor_3m(n_months)
+
+    result = compare_portfolios(
+        sample_unleveraged, sample_leveraged, sample_euribor, years=years
+    )
+
+    assert len(sample_euribor) == n_months
+    assert len(result["Unleveraged Portfolio"]) == n_months + 1
+    assert len(result["Leveraged Portfolio"]) == n_months + 1
+    assert result["Unleveraged Portfolio"][0] == 100000.0
+
+    print('unlev ROI %d, lev ROI %d'.format(result["Unleveraged Final ROI"], result["Leveraged Final Net ROI"]))
+    print("unlev terminal", round(result["Unleveraged Portfolio"][-1], 2))
+    print("lev net terminal", round(result["Leveraged Portfolio"][-1], 2))
