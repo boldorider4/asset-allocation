@@ -174,7 +174,7 @@ def cli() -> None:
         help="Log into Scalable via sc and scrape broker holdings.",
     )
     parser.add_argument(
-        "--fetch-traderepublic",
+        "--fetch-tr",
         action="store_true",
         help="Log into Trade Republic via pytr and scrape broker holdings.",
     )
@@ -199,7 +199,7 @@ def cli() -> None:
         set_fetch_oskar(True)
     if args.fetch_scalable:
         set_fetch_scalable(True)
-    if args.fetch_traderepublic:
+    if args.fetch_tr:
         set_fetch_traderepublic(True)
     if args.assets_file:
         set_assets_file(args.assets_file)
