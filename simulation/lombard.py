@@ -66,7 +66,7 @@ def _weighted_monthly_returns(portfolio_dict, rebalance_months=12):
 
 def compare_portfolios(
     unleveraged_dict, leveraged_dict, euribor_array, years, ltv=0.5, spread=0.0125, initial_equity=100000.0,
-    rebalance_months=12,
+    rebalance_months=12, max_ltv=0.75,
 ):
     total_months = 12 * years
     if len(euribor_array) != total_months:
@@ -91,28 +91,44 @@ def compare_portfolios(
         raise ValueError(f"Leveraged returns length {len(lev_monthly_returns)} != {total_months}")
     
     lev_capital = [lev_initial_portfolio]
-    cumulative_liability = [loan_principal] # Track loan being paid off
-    margin_call_times = []
-    margin_call_ltv = 0.60
+    total_interest_paid = 0.0
+    cumulative_liability = [loan_principal]
+    margin_call_count = []
+    loan_buyback = 0.0
+    threshold_ltv = max_ltv - .05
 
     for m in range(total_months):
-        # Apply monthly portfolio return
-        port_val = lev_capital[-1] * lev_monthly_returns[m]
-        lev_capital.append(port_val)
+        portfolio_value = lev_capital[-1] * lev_monthly_returns[m]
 
-        # Calculate monthly interest rate (Euribor + spread annualized / 12)
         annual_rate = euribor_array[m] + spread
-        monthly_interest = loan_principal * (annual_rate / 12.0)
-
-        # Let's assume interest is paid monthly (cash outflow) and principal remains constant until final payback
-        # Let's plot cumulative liability flow or monthly spend, which will then be subtracted from the portfolio value
-        # to get the net value of the portfolio.
-        cumulative_liability.append(cumulative_liability[-1] + monthly_interest)
+        total_interest_paid += loan_principal * (annual_rate / 12.0)
 
         # LTV = outstanding principal / portfolio market value. Interest is paid in cash
-        # so it does not increase the loan. A rise above 60% would trigger a margin call.
-        if port_val <= 0 or (loan_principal / port_val) > margin_call_ltv:
-            margin_call_times.append(m)
+        # so it does not increase the loan. Crossing margin_call_ltv forces a sale that
+        # pays the loan down to restore_ltv. The cut amount sits in loan_renounced until
+        # restoring it would bring LTV back to the original ltv (hysteresis).
+        if portfolio_value <= 0:
+            loan_buyback += loan_principal
+            loan_principal = 0.0
+            portfolio_value = 0.0
+            margin_call_count.append(m)
+        elif (loan_principal / portfolio_value) > max_ltv:
+            paydown = (loan_principal - threshold_ltv * portfolio_value) / (1.0 - threshold_ltv)
+            paydown = min(max(paydown, 0.0), loan_principal, portfolio_value)
+            portfolio_value -= paydown
+            loan_principal -= paydown
+            loan_buyback += paydown
+            margin_call_count.append(m)
+        # if loan was bought back, restore it to the original LTV once market recoups
+        elif loan_buyback > 0:
+            restored_ltv = (loan_principal + loan_buyback) / (portfolio_value + loan_buyback)
+            if restored_ltv < ltv:
+                portfolio_value += loan_buyback
+                loan_principal += loan_buyback
+                loan_buyback = 0.0
+
+        lev_capital.append(portfolio_value)
+        cumulative_liability.append(loan_principal + total_interest_paid)
 
     # ROI of unleveraged vs. leveraged
     final_unlev_roi = (unlev_capital[-1] - initial_equity) / initial_equity
@@ -153,7 +169,7 @@ def compare_portfolios(
         "lev_std": lev_std,
         "unlev_portfolio": unlev_capital,
         "lev_portfolio": net_lev_capital.tolist(),
-        "margin_calls": margin_call_times,
+        "margin_calls": margin_call_count,
     }
 
 
@@ -195,9 +211,9 @@ if __name__ == "__main__":
 
     for i in range(n_sims):
         s = seed_base + i * 5
-        equity = monthly_gross_returns(n_months, 0.08, 0.1, seed=s)
-        commodities = monthly_gross_returns(n_months, 0.01, 0.05, seed=s + 1)
-        gold = monthly_gross_returns(n_months, 0.05, 0.01, seed=s + 2)
+        equity = monthly_gross_returns(n_months, 0.08, 0.18, seed=s)
+        commodities = monthly_gross_returns(n_months, 0.02, 0.15, seed=s + 1)
+        gold = monthly_gross_returns(n_months, 0.05, 0.05, seed=s + 2)
         bonds = monthly_gross_returns(n_months, 0.035, 0.008, seed=s + 3)
         reit = monthly_gross_returns(n_months, 0.04, 0.008, seed=s + 4)
 
@@ -207,11 +223,11 @@ if __name__ == "__main__":
             "gold": (gold, 0.05),
         }
         sample_leveraged = {
-            "equity": (equity, 0.44),
-            "bonds": (bonds, 0.34),
+            "equity": (equity, 0.33),
+            "bonds": (bonds, 0.4),
             "gold": (gold, 0.1),
-            "commodities": (commodities, 0.1),
-            "reit": (reit, 0.02),
+            "commodities": (commodities, 0.13),
+            "reit": (reit, 0.04),
         }
         result = compare_portfolios(
             sample_unleveraged,
@@ -220,8 +236,8 @@ if __name__ == "__main__":
             years=years,
             initial_equity=initial_equity,
             rebalance_months=18,
-            ltv=0.50,
-            spread=0.01,
+            ltv=.6,
+            spread=.0125,
         )
         unlev_rois[i] = result["unlev_roi"]
         lev_rois[i] = result["lev_roi"]
@@ -242,6 +258,6 @@ if __name__ == "__main__":
     calls_per_run = np.array([len(months) for months in margin_calls])
     n_hit = int(np.count_nonzero(calls_per_run))
     print(
-        f"Margin calls (LTV > 60%): avg {calls_per_run.mean():.2f} per run "
+        f"Margin calls (LTV > 75%): avg {calls_per_run.mean():.2f} per run "
         f"({n_hit}/{n_sims} runs had at least one)"
     )
