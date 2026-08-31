@@ -8,6 +8,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from common import CASH_PORTFOLIO
@@ -20,6 +21,30 @@ attach_color_stderr_handler_for_module(logger)
 _TRADEREPUBLIC = "traderepublic"
 _CASH_NAME = "Cash"
 _CASH_FETCH_KEY = "__TRADEREPUBLIC_CASH__"
+_PYTR_CREDENTIALS = Path.home() / ".pytr" / "credentials"
+
+
+def _load_pytr_credentials() -> tuple[str | None, str | None]:
+    """Read phone + pin from ``~/.pytr/credentials`` (two lines), or ``(None, None)``."""
+    if not _PYTR_CREDENTIALS.is_file():
+        return None, None
+    try:
+        lines = _PYTR_CREDENTIALS.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("traderepublic: could not read %s: %s", _PYTR_CREDENTIALS, exc)
+        return None, None
+    if len(lines) < 2:
+        logger.warning(
+            "traderepublic: %s must have phone (line 1) and pin (line 2)",
+            _PYTR_CREDENTIALS,
+        )
+        return None, None
+    phone_no = lines[0].strip()
+    pin = lines[1].strip()
+    if not phone_no or not pin:
+        logger.warning("traderepublic: %s has empty phone or pin", _PYTR_CREDENTIALS)
+        return None, None
+    return phone_no, pin
 
 
 @dataclass(frozen=True)
@@ -64,6 +89,10 @@ class TradeRepublic:
         v2: bool = True,
         store_credentials: bool = False,
     ) -> None:
+        if phone_no is None and pin is None:
+            phone_no, pin = _load_pytr_credentials()
+            if phone_no is not None:
+                logger.info("traderepublic: loaded credentials from %s", _PYTR_CREDENTIALS)
         self._phone_no = phone_no
         self._pin = pin
         self._v2 = v2
