@@ -6,12 +6,15 @@ from utils import (
     get_fetch_geosplit,
     get_fetch_prices,
     get_fetch_scalable,
+    get_fetch_traderepublic,
     get_incognito_value_factor,
 )
 from position.justetf_position import JustETFPosition
 from position.scalable_position import ScalablePosition
+from position.traderepublic_position import TradeRepublicPosition
 from position.yfinance_position import YFinancePosition
 from scalable import _SCALABLE as SCALABLE
+from traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -102,7 +105,7 @@ def factory(
     *,
     value_scale: float | None = None,
     price: float | None = None,
-) -> JustETFPosition | YFinancePosition | ScalablePosition:
+) -> JustETFPosition | YFinancePosition | ScalablePosition | TradeRepublicPosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
@@ -111,10 +114,12 @@ def factory(
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
     use_scalable = get_fetch_scalable() and broker == SCALABLE
+    use_traderepublic = get_fetch_traderepublic() and broker == TRADEREPUBLIC
+    use_broker_quote = use_scalable or use_traderepublic
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
-    if use_scalable:
+    if use_broker_quote:
         ctor_price = price
     elif fetch_prices:
         ctor_price = None
@@ -127,14 +132,29 @@ def factory(
         )
 
     scrape_geosplit = fetch_geosplit and not (
-        POSITION_SOURCE == YFINANCE and not use_scalable
+        POSITION_SOURCE == YFINANCE and not use_broker_quote
     )
     if scrape_geosplit:
         countries_arg: dict[str, float] | None = None
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if use_scalable:
+    if use_traderepublic:
+        position = TradeRepublicPosition(
+            isin,
+            name,
+            short_name,
+            shares,
+            value,
+            broker,
+            dmem,
+            usavn,
+            dmem_other,
+            cached_countries=countries_arg,
+            value_scale=value_scale,
+            price=ctor_price,
+        )
+    elif use_scalable:
         position = ScalablePosition(
             isin,
             name,

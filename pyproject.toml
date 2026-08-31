@@ -11,6 +11,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "playwright>=1.40",
+    "pytr",
     "yfinance",
 ]
 
@@ -29,5 +30,5 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
 log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
-py-modules = ["allocation", "common", "logger", "utils", "oskar", "scalable"]
+py-modules = ["allocation", "common", "logger", "utils", "oskar", "scalable", "traderepublic"]
 packages = ["position", "visual", "portfolio"]

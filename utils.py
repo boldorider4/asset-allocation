@@ -18,6 +18,7 @@ FETCH_PRICES = False
 FETCH_GEOSPLIT = False
 FETCH_OSKAR = False
 FETCH_SCALABLE = False
+FETCH_TRADEREPUBLIC = False
 INCOGNITO = False
 # Applied by ``apply_incognito_scaling``; ``Position`` / ``factory`` multiply monetary amounts by this.
 INCOGNITO_VALUE_FACTOR: float = 1.0
@@ -72,6 +73,16 @@ def get_fetch_scalable() -> bool:
 def set_fetch_scalable(fetch_scalable: bool) -> None:
     global FETCH_SCALABLE
     FETCH_SCALABLE = fetch_scalable
+
+
+def get_fetch_traderepublic() -> bool:
+    global FETCH_TRADEREPUBLIC
+    return FETCH_TRADEREPUBLIC
+
+
+def set_fetch_traderepublic(fetch_traderepublic: bool) -> None:
+    global FETCH_TRADEREPUBLIC
+    FETCH_TRADEREPUBLIC = fetch_traderepublic
 
 
 def get_assets_file() -> Path | None:
