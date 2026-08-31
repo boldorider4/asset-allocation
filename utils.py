@@ -1,5 +1,12 @@
 import json
+import logging
 from pathlib import Path
+
+from common import DEFAULT_ISIN_PORTFOLIO_BUCKET, ISIN_TO_PORTFOLIO
+from logger import attach_color_stderr_handler_for_module
+
+logger = logging.getLogger(__name__)
+attach_color_stderr_handler_for_module(logger)
 
 
 global portfolio
@@ -181,3 +188,17 @@ def write_portfolio_to_file(path: Path | None = None) -> None:
     with assets_path.open("w", encoding="utf-8") as f:
         json.dump(portfolio, f, indent=2, ensure_ascii=False)
         f.write("\n")
+
+
+def bucket_for_isin(isin: str) -> str:
+    """Map an ISIN to a portfolio bucket; unknown ISINs fall back to equity."""
+    bucket = ISIN_TO_PORTFOLIO.get(isin)
+    if bucket is None:
+        logger.warning(
+            "unknown ISIN %s; using %r",
+            isin,
+            DEFAULT_ISIN_PORTFOLIO_BUCKET,
+        )
+        return DEFAULT_ISIN_PORTFOLIO_BUCKET
+    return bucket
+

@@ -11,14 +11,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from common import (
-    CASH_PORTFOLIO,
-    COMMODITY_PORTFOLIO,
-    EQUITY_PORTFOLIO,
-    FIXED_MATURITY_BOND_PORTFOLIO,
-)
+from common import CASH_PORTFOLIO
 from logger import attach_color_stderr_handler_for_module
-from utils import portfolio as global_portfolio
+from utils import bucket_for_isin, portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -30,22 +25,6 @@ _CMD_TIMEOUT_S = 60
 
 _TAGESGELD_NAME = "Tagesgeld"
 _TAGESGELD_FETCH_KEY = "__SCALABLE_TAGESGELD__"
-
-_ISIN_TO_PORTFOLIO: dict[str, str] = {
-    "IE000BI8OT95": EQUITY_PORTFOLIO,
-    "IE00BKM4GZ66": EQUITY_PORTFOLIO,
-    "LU2903252349": EQUITY_PORTFOLIO,
-    "IE00B4YBJ215": EQUITY_PORTFOLIO,
-    "IE00BD4TXV59": EQUITY_PORTFOLIO,
-    "IE00BTJRMP35": EQUITY_PORTFOLIO,
-    "IE0006WW1TQ4": EQUITY_PORTFOLIO,
-    "IE00BLNMYC90": EQUITY_PORTFOLIO,
-    "IE00BD1F4M44": EQUITY_PORTFOLIO,
-    "DE000EWG2LD7": COMMODITY_PORTFOLIO,
-    "LU2300294316": FIXED_MATURITY_BOND_PORTFOLIO,
-    "LU2233156582": FIXED_MATURITY_BOND_PORTFOLIO,
-}
-_DEFAULT_SCALABLE_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 
 
 @dataclass(frozen=True)
@@ -381,18 +360,6 @@ def _is_portfolio_position_scalable_tagesgeld(position: dict[str, Any]) -> bool:
     return pos_name == _TAGESGELD_NAME and pos_broker == _SCALABLE
 
 
-def _bucket_for_isin(isin: str) -> str:
-    bucket = _ISIN_TO_PORTFOLIO.get(isin)
-    if bucket is None:
-        logger.warning(
-            "update_scalable_etfs_in_portfolio: unknown ISIN %s; using %r",
-            isin,
-            _DEFAULT_SCALABLE_PORTFOLIO_BUCKET,
-        )
-        return _DEFAULT_SCALABLE_PORTFOLIO_BUCKET
-    return bucket
-
-
 def update_scalable_etfs_in_portfolio() -> None:
     global global_scalable_holdings
     global_scalable_holdings = fetch_scalable_etfs()
@@ -470,7 +437,7 @@ def update_scalable_etfs_in_portfolio() -> None:
     for holding in fetched_by_isin.values():
         if holding.isin in matched_isins:
             continue
-        bucket = _bucket_for_isin(holding.isin)
+        bucket = bucket_for_isin(holding.isin)
         global_portfolio.setdefault(bucket, []).append(
             {
                 "name": holding.name,

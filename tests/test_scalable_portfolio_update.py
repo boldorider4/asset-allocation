@@ -143,7 +143,7 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=10.0,
             ),
         }
-        with self.assertLogs("scalable", level="WARNING"):
+        with self.assertLogs("utils", level="WARNING"):
             update_scalable_etfs_in_portfolio()
         self.assertEqual(global_portfolio[EQUITY_PORTFOLIO][0]["ISIN"], "XX000UNKNOWN1")
 
