@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from position.factory import factory
+from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
-from position.scalable_position import ScalablePosition
 from position.yfinance_position import YFinancePosition
 import position.factory as factory_mod
 from utils import (
@@ -74,22 +74,22 @@ class TestFactoryCacheFlags(unittest.TestCase):
             ):
                 pos = self._factory()
         self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, ScalablePosition)
+        self.assertNotIsInstance(pos, CLIQueryPosition)
         fast.assert_called()
         self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
-    def test_fetch_scalable_uses_scalable_position_not_fast_info(self) -> None:
+    def test_fetch_scalable_uses_cli_query_position_not_fast_info(self) -> None:
         set_fetch_scalable(True)
         with patch.object(
-            ScalablePosition,
+            CLIQueryPosition,
             "_fast_info_price",
             side_effect=AssertionError("_fast_info_price should not be called"),
         ):
             pos = self._factory()
-        self.assertIsInstance(pos, ScalablePosition)
+        self.assertIsInstance(pos, CLIQueryPosition)
         self.assertEqual(pos.price, 40.315)
 
     def test_explicit_value_preferred_over_shares_times_price(self) -> None:

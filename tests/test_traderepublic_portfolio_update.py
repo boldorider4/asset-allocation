@@ -15,7 +15,7 @@ from common import (
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
 )
-from traderepublic import (
+from scrape.traderepublic import (
     TradeRepublicHolding,
     _CASH_FETCH_KEY,
     update_traderepublic_etfs_in_portfolio,

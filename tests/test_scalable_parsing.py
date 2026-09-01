@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from scalable import (
+from scrape.scalable import (
     overnight_tagesgeld_row,
     parse_holdings_json,
     parse_overnight_text,

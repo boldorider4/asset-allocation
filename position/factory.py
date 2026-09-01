@@ -9,12 +9,11 @@ from utils import (
     get_fetch_traderepublic,
     get_incognito_value_factor,
 )
+from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
-from position.scalable_position import ScalablePosition
-from position.traderepublic_position import TradeRepublicPosition
 from position.yfinance_position import YFinancePosition
-from scalable import _SCALABLE as SCALABLE
-from traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
+from scrape.scalable import _SCALABLE as SCALABLE
+from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -105,7 +104,7 @@ def factory(
     *,
     value_scale: float | None = None,
     price: float | None = None,
-) -> JustETFPosition | YFinancePosition | ScalablePosition | TradeRepublicPosition:
+) -> JustETFPosition | YFinancePosition | CLIQueryPosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
@@ -113,9 +112,7 @@ def factory(
     cached_price, cached_countries = _parse_cache_entry(cache.get(isin))
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
-    use_scalable = get_fetch_scalable() and broker == SCALABLE
-    use_traderepublic = get_fetch_traderepublic() and broker == TRADEREPUBLIC
-    use_broker_quote = use_scalable or use_traderepublic
+    use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
@@ -139,23 +136,8 @@ def factory(
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if use_traderepublic:
-        position = TradeRepublicPosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-        )
-    elif use_scalable:
-        position = ScalablePosition(
+    if use_broker_quote:
+        position = CLIQueryPosition(
             isin,
             name,
             short_name,

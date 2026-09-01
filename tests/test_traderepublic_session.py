@@ -6,7 +6,7 @@ import unittest
 from decimal import Decimal
 from unittest.mock import patch
 
-from traderepublic import (
+from scrape.traderepublic import (
     TradeRepublic,
     _CASH_FETCH_KEY,
     cash_row,

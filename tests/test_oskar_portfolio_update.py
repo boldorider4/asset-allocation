@@ -6,7 +6,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
+from scrape.oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
 from utils import portfolio as global_portfolio
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from oskar import _click_allocation_tab, _wait_for_cockpit_tabs
+from scrape.oskar import _click_allocation_tab, _wait_for_cockpit_tabs
 
 
 class TestWaitForCockpitTabs(unittest.TestCase):

@@ -43,9 +43,9 @@ from utils import (
     set_fetch_traderepublic,
 )
 from logger import attach_color_stderr_handler_for_module
-from oskar import update_oskar_etfs_in_portfolio
-from scalable import update_scalable_etfs_in_portfolio
-from traderepublic import update_traderepublic_etfs_in_portfolio
+from scrape.oskar import update_oskar_etfs_in_portfolio
+from scrape.scalable import update_scalable_etfs_in_portfolio
+from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 
 
 def _package_version() -> str:

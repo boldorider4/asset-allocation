@@ -15,7 +15,7 @@ from common import (
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
 )
-from scalable import (
+from scrape.scalable import (
     ScalableHolding,
     _TAGESGELD_FETCH_KEY,
     update_scalable_etfs_in_portfolio,

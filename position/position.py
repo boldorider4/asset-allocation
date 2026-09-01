@@ -8,7 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from logger import attach_color_stderr_handler_for_module
-from oskar import _OSKAR
+from scrape.oskar import _OSKAR
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

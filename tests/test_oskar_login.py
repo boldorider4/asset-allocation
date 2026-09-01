@@ -35,7 +35,7 @@ class TestOskarLogin(unittest.TestCase):
             )
 
     def test_login_and_oskar_etfs(self) -> None:
-        from oskar import fetch_oskar_etfs
+        from scrape.oskar import fetch_oskar_etfs
 
         logger.info("OSKAR login test: start (manual Auth0, headed browser)")
 
