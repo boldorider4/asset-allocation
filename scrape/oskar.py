@@ -256,6 +256,27 @@ def _wait_for_cockpit_tabs(page: Any, *, timeout_ms: int) -> None:
     )
 
 
+def _hide_headed_browser_window(page: Any) -> None:
+    """
+    Minimize the Chromium window after manual login so scrape clicks stay on the
+    same session (cookies + SPA) without leaving the window on screen.
+
+    Playwright cannot switch a live browser from headed to headless; a relaunch
+    would drop the Auth0 session. CDP ``Browser.setWindowBounds`` keeps the
+    process running. Best-effort: headless or unsupported hosts just log.
+    """
+    try:
+        cdp = page.context.new_cdp_session(page)
+        window_id = cdp.send("Browser.getWindowForTarget")["windowId"]
+        cdp.send(
+            "Browser.setWindowBounds",
+            {"windowId": window_id, "bounds": {"windowState": "minimized"}},
+        )
+        logger.info("OSKAR: minimized headed browser; scrape continues in the same session")
+    except Exception as exc:
+        logger.debug("OSKAR: could not minimize headed browser: %s", exc)
+
+
 def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
     """
     Block until a human has finished Auth0 in the **headed** browser: the cockpit
@@ -758,18 +779,118 @@ def _collect_raw_rows_from_page(page: Any) -> list[dict[str, Any]]:
     return ordered
 
 
+def _open_oskar_page(
+    p: Any,
+    *,
+    headless: bool,
+    dashboard_url: str,
+    timeout_ms: int,
+    storage_state: Any | None = None,
+) -> tuple[Any, Any, Any]:
+    """
+    Launch Chromium (TLS verification on), optionally restoring *storage_state*
+    (cookies + localStorage of an already logged-in session), and land on the
+    dashboard. Returns ``(browser, context, page)``.
+    """
+    browser = p.chromium.launch(headless=headless)
+    context_kwargs: dict[str, Any] = {
+        "user_agent": _USER_AGENT,
+        "ignore_https_errors": False,
+        "locale": "de-DE",
+    }
+    if storage_state is not None:
+        context_kwargs["storage_state"] = storage_state
+    context = browser.new_context(**context_kwargs)
+    context.set_default_navigation_timeout(timeout_ms)
+    context.set_default_timeout(timeout_ms)
+    page = context.new_page()
+    page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
+    try:
+        page.wait_for_load_state("load", timeout=min(60_000, timeout_ms))
+    except Exception:
+        pass
+    _wait_for_oskar_nav_after_dashboard_goto(page, timeout_ms=min(45_000, timeout_ms))
+    return browser, context, page
+
+
+def _switch_to_headless_after_login(
+    p: Any,
+    browser: Any,
+    context: Any,
+    *,
+    dashboard_url: str,
+    timeout_ms: int,
+) -> tuple[Any, Any, Any, bool]:
+    """
+    Carry the logged-in cookies/localStorage of *context* into a fresh **headless**
+    browser so the rest of the scrape runs with no window on screen. Returns the
+    ``(browser, context, page)`` to keep using plus whether a headed window is still
+    visible.
+
+    ``mein.oskar.de`` has been seen to blank-redirect headless Chromium, so if the
+    cockpit does not render we relaunch headed from the same storage state (no second
+    manual login in the common case) and minimize that window instead.
+    """
+    storage_state = context.storage_state()
+    browser.close()
+
+    logger.info("OSKAR: handing the logged-in session to a headless browser")
+    browser, context, page = _open_oskar_page(
+        p,
+        headless=True,
+        dashboard_url=dashboard_url,
+        timeout_ms=timeout_ms,
+        storage_state=storage_state,
+    )
+    try:
+        if _page_needs_login(page):
+            raise RuntimeError("headless browser was bounced back to the Auth0 login gate")
+        _wait_for_cockpit_tabs(page, timeout_ms=min(45_000, timeout_ms))
+        logger.info("OSKAR: headless session accepted, cockpit ready url=%s", page.url)
+        return browser, context, page, False
+    except Exception as exc:
+        logger.warning(
+            "OSKAR: headless handover failed (%s); falling back to a minimized headed browser",
+            exc,
+        )
+        browser.close()
+
+    browser, context, page = _open_oskar_page(
+        p,
+        headless=False,
+        dashboard_url=dashboard_url,
+        timeout_ms=timeout_ms,
+        storage_state=storage_state,
+    )
+    if _page_needs_login(page):
+        _wait_for_manual_oskar_login(page, timeout_ms=max(timeout_ms, 300_000))
+    else:
+        _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
+    _hide_headed_browser_window(page)
+    return browser, context, page, True
+
+
 def fetch_oskar_etfs(
     *,
     dashboard_url: str = _DASHBOARD_URL,
     headless: bool = True,
+    headless_after_login: bool = False,
     timeout_ms: int = 120_000,
 ) -> dict[str, OskarEtf]:
     """
     Launch Chromium (TLS verification on). If login is required, sign in **manually**
     in the browser; the run continues once cockpit tabs («Aktuelle Gewichtung» /
     «Wertentwicklung» / «Gewichtung») appear. With ``headless=True`` and a login gate,
-    the browser is restarted **headed** once so you can complete Auth0. Then the
-    allocation tab is opened and ETF rows are parsed.
+    the browser is restarted **headed** once so you can complete Auth0.
+
+    Once the cockpit is ready the headed window is taken off screen before the
+    allocation tab is opened and ETF rows are parsed:
+
+    * default — the window is **minimized**, keeping the very same browser process,
+      page and SPA state;
+    * ``headless_after_login=True`` — the session (cookies + localStorage) is moved
+      into a fresh **headless** browser, which reloads the dashboard. Falls back to
+      the minimized headed window if the headless cockpit does not render.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -783,28 +904,17 @@ def fetch_oskar_etfs(
 
     with sync_playwright() as p:
         logger.info("fetch_oskar_etfs: launching browser")
-        browser = p.chromium.launch(headless=headless)
+        browser: Any | None = None
+        headed_visible = not headless
         page: Any | None = None
         try:
-            logger.info("fetch_oskar_etfs: creating context")
-            context = browser.new_context(
-                user_agent=_USER_AGENT,
-                ignore_https_errors=False,
-                locale="de-DE",
+            browser, context, page = _open_oskar_page(
+                p,
+                headless=headless,
+                dashboard_url=dashboard_url,
+                timeout_ms=timeout_ms,
             )
-            context.set_default_navigation_timeout(timeout_ms)
-            context.set_default_timeout(timeout_ms)
-            page = context.new_page()
-            logger.info("fetch_oskar_etfs: page created")
-            logger.info("fetch_oskar_etfs: navigating to dashboard")
-            page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            try:
-                page.wait_for_load_state("load", timeout=min(60_000, timeout_ms))
-            except Exception:
-                pass
-            _wait_for_oskar_nav_after_dashboard_goto(
-                page, timeout_ms=min(45_000, timeout_ms)
-            )
+            logger.info("fetch_oskar_etfs: dashboard loaded url=%s", page.url)
 
             needs_login = _page_needs_login(page)
             cockpit_ok = _cockpit_ready(page)
@@ -821,23 +931,13 @@ def fetch_oskar_etfs(
                         "fetch_oskar_etfs: restarting as headed browser for manual Auth0"
                     )
                     browser.close()
-                    browser = p.chromium.launch(headless=False)
-                    context = browser.new_context(
-                        user_agent=_USER_AGENT,
-                        ignore_https_errors=False,
-                        locale="de-DE",
+                    browser, context, page = _open_oskar_page(
+                        p,
+                        headless=False,
+                        dashboard_url=dashboard_url,
+                        timeout_ms=timeout_ms,
                     )
-                    context.set_default_navigation_timeout(timeout_ms)
-                    context.set_default_timeout(timeout_ms)
-                    page = context.new_page()
-                    page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
-                    try:
-                        page.wait_for_load_state("load", timeout=min(60_000, timeout_ms))
-                    except Exception:
-                        pass
-                    _wait_for_oskar_nav_after_dashboard_goto(
-                        page, timeout_ms=min(45_000, timeout_ms)
-                    )
+                    headed_visible = True
 
                 manual_timeout = max(timeout_ms, 300_000)
                 _wait_for_manual_oskar_login(page, timeout_ms=manual_timeout)
@@ -854,6 +954,17 @@ def fetch_oskar_etfs(
             _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
             logger.info("fetch_oskar_etfs: waiting for cockpit tabs")
             _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
+            if headed_visible and headless_after_login:
+                browser, context, page, headed_visible = _switch_to_headless_after_login(
+                    p,
+                    browser,
+                    context,
+                    dashboard_url=dashboard_url,
+                    timeout_ms=timeout_ms,
+                )
+                _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
+            elif headed_visible:
+                _hide_headed_browser_window(page)
             page.wait_for_timeout(500)
 
             logger.info("fetch_oskar_etfs: clicking allocation tab")
@@ -929,14 +1040,15 @@ def fetch_oskar_etfs(
             except Exception as exc:
                 logger.warning("OSKAR logout: error before browser close: %s", exc)
             try:
-                browser.close()
+                if browser is not None:
+                    browser.close()
             except Exception:
                 pass
 
     return rows
 
 
-def update_oskar_etfs_in_portfolio():
+def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
     def _is_oskar_position_tagesgeld(oskar_etf: OskarEtf) -> bool:
         return oskar_etf.name == _OSKAR_CATEGORY_TAGESGELD
 
@@ -946,7 +1058,7 @@ def update_oskar_etfs_in_portfolio():
         return pos_name == _OSKAR_CATEGORY_TAGESGELD and pos_broker == _OSKAR
 
     global global_oskar_etfs
-    global_oskar_etfs = fetch_oskar_etfs()
+    global_oskar_etfs = fetch_oskar_etfs(headless_after_login=headless_after_login)
     # unique set of ISINs from OSKAR
     fetched_oskar_isins = set(global_oskar_etfs)
     # unique set of ISINs that have been scanned, including those in the portfolio that are not freshly fetched from OSKAR
