@@ -33,11 +33,20 @@ global_oskar_etfs: dict[str, OskarEtf] = {}
 _OSKAR = "oskar"
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
+_DASHBOARD_PATH = urlparse(_DASHBOARD_URL).path.rstrip("/")
 
 # mein.oskar.de rejects HeadlessChrome with a blank-page redirect; use a normal Chrome UA.
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+# A minimized / occluded window is throttled by default, which stalls the consent
+# iframe and the cockpit SPA while the scrape keeps clicking.
+_CHROMIUM_LAUNCH_ARGS = (
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
 )
 
 _ISIN_STRICT = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
@@ -175,84 +184,142 @@ def _try_oskar_logout(page: Any, *, timeout_ms: int = 15_000) -> None:
     logger.warning("OSKAR logout: no Ausloggen control found (session may stay active)")
 
 
-def _try_dismiss_sourcepoint_cookie_banner(page: Any, *, timeout_ms: int = 20_000) -> None:
+_SOURCEPOINT_HOST = "privacy-mgmt.com"
+_SOURCEPOINT_BUTTONS = (
+    ("alle ablehnen", re.compile(r"alle\s*ablehnen", re.I)),
+    ("Weiter", re.compile(r"^Weiter$", re.I)),
+    ("Alle akzeptieren", re.compile(r"alle\s*akzeptieren", re.I)),
+)
+
+
+def _sourcepoint_frames(page: Any) -> list[Any]:
+    frames = []
+    for fr in getattr(page, "frames", None) or ():
+        if _SOURCEPOINT_HOST in (getattr(fr, "url", "") or ""):
+            frames.append(fr)
+    return frames
+
+
+def _sourcepoint_cookie_banner_present(page: Any) -> bool:
+    """True while a Sourcepoint consent button is still visible in any consent iframe."""
+    for fr in _sourcepoint_frames(page):
+        for _label, pat in _SOURCEPOINT_BUTTONS:
+            try:
+                loc = fr.get_by_role("button", name=pat)
+                if loc.count() > 0 and loc.first.is_visible():
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _click_sourcepoint_button(el: Any, *, timeout_ms: int) -> bool:
+    """
+    Click a consent button, degrading gracefully: a **minimized** window throttles
+    rendering, so Playwright's hit-testing can fail even though the element exists.
+    ``force`` skips those checks and a DOM ``click()`` skips the input pipeline.
+    """
+    try:
+        el.click(timeout=timeout_ms)
+        return True
+    except Exception as exc:
+        logger.debug("OSKAR: cookie banner normal click failed: %s", exc)
+    try:
+        el.click(timeout=timeout_ms, force=True)
+        return True
+    except Exception as exc:
+        logger.debug("OSKAR: cookie banner force click failed: %s", exc)
+    try:
+        el.evaluate("el => el.click()")
+        return True
+    except Exception as exc:
+        logger.debug("OSKAR: cookie banner DOM click failed: %s", exc)
+    return False
+
+
+def _try_dismiss_sourcepoint_cookie_banner(page: Any, *, timeout_ms: int = 20_000) -> bool:
     """
     Sourcepoint (``cdn.privacy-mgmt.com``) consent iframe often sits above the cockpit;
-    dismiss it so tabs / «Ausloggen» in the main shell respond to clicks.
+    dismiss it so tabs / «Ausloggen» in the main shell respond to clicks. One pass;
+    returns whether a button was clicked (see
+    :func:`_ensure_sourcepoint_cookie_banner_dismissed` for the retrying variant).
     """
     per = min(8_000, timeout_ms)
-    for label, pat in (
-        ("alle ablehnen", re.compile(r"alle\s*ablehnen", re.I)),
-        ("Weiter", re.compile(r"^Weiter$", re.I)),
-        ("Alle akzeptieren", re.compile(r"alle\s*akzeptieren", re.I)),
-    ):
-        for fr in page.frames:
-            u = getattr(fr, "url", "") or ""
-            if "privacy-mgmt.com" not in u:
-                continue
+    for label, pat in _SOURCEPOINT_BUTTONS:
+        for fr in _sourcepoint_frames(page):
             try:
                 loc = fr.get_by_role("button", name=pat)
                 if loc.count() == 0:
                     continue
                 el = loc.first
-                if el.is_visible():
-                    el.click(timeout=per)
-                    page.wait_for_timeout(900)
-                    logger.info("OSKAR: dismissed cookie banner (%s)", label)
-                    return
+                if not el.is_visible():
+                    continue
             except Exception:
                 continue
+            if _click_sourcepoint_button(el, timeout_ms=per):
+                page.wait_for_timeout(900)
+                logger.info("OSKAR: dismissed cookie banner (%s)", label)
+                return True
+    return False
 
 
-# Same predicate as ``_wait_for_manual_oskar_login`` polling (keep in sync).
-_OSKAR_COCKPIT_READY_JS = r"""() => {
-    const h = (location.hostname || '').toLowerCase();
-    if (!h.includes('mein.oskar.de')) return false;
-    const t = (document.body && document.body.innerText) || '';
-    if (t.includes('Wertentwicklung')) return true;
-    if (/Aktuelle\s*Gewichtung/i.test(t)) return true;
-    return /\bGewichtung\b/i.test(t);
-}"""
+def _ensure_sourcepoint_cookie_banner_dismissed(
+    page: Any, *, timeout_ms: int = 20_000, attempts: int = 8
+) -> bool:
+    """
+    Keep clicking until the consent iframe is really gone, up to *attempts* rounds.
+
+    The banner can (re)appear late — after a minimize, a reload, or an SPA route
+    change — and a single pass sometimes clicks nothing because the iframe has not
+    attached yet. Returns whether the banner is gone.
+    """
+    per = min(8_000, timeout_ms)
+    for attempt in range(1, attempts + 1):
+        if not _sourcepoint_cookie_banner_present(page):
+            if attempt > 1:
+                logger.info("OSKAR: cookie banner gone after %d attempt(s)", attempt - 1)
+            return True
+        clicked = _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=per)
+        logger.info(
+            "OSKAR: cookie banner dismissal attempt %d/%d clicked=%s",
+            attempt,
+            attempts,
+            clicked,
+        )
+        page.wait_for_timeout(600)
+    still_there = _sourcepoint_cookie_banner_present(page)
+    if still_there:
+        logger.warning(
+            "OSKAR: cookie banner still present after %d attempt(s); clicks may be blocked",
+            attempts,
+        )
+    return not still_there
 
 
-def _cockpit_ready(page: Any) -> bool:
+def _on_cockpit_dashboard(page: Any) -> bool:
+    """
+    True once the browser sits on ``mein.oskar.de/cockpit/dashboard``. Auth0 only
+    redirects there after a successful login, so the URL alone tells logged-in from
+    logged-out — no page wording involved.
+    """
     try:
-        return bool(page.evaluate(_OSKAR_COCKPIT_READY_JS))
+        parts = urlparse(page.url or "")
     except Exception:
         return False
+    host = (parts.hostname or "").lower()
+    return host.endswith("mein.oskar.de") and parts.path.rstrip("/") == _DASHBOARD_PATH
 
 
-def _wait_for_oskar_nav_after_dashboard_goto(page: Any, *, timeout_ms: int) -> None:
-    """
-    After ``goto(..., domcontentloaded)``, Auth0 may still be redirecting: ``page.url``
-    can briefly stay on ``mein.oskar.de`` so a one-shot ``_page_needs_login`` is wrong.
-    Poll until login host, cockpit content, or timeout.
-    """
-    steps = max(1, min(timeout_ms // 400, 80))
-    for _ in range(steps):
-        if _page_needs_login(page) or _cockpit_ready(page):
-            return
-        page.wait_for_timeout(400)
-
-
-def _wait_for_cockpit_tabs(page: Any, *, timeout_ms: int) -> None:
-    """
-    Poll until cockpit tab labels («Wertentwicklung» / «Gewichtung») appear in the DOM.
-    Slow networks and post-login ``goto`` reloads often need several seconds before tabs
-    are present even though the URL is already ``mein.oskar.de/cockpit/...``.
-    """
+def _wait_for_cockpit_dashboard(page: Any, *, timeout_ms: int) -> None:
+    """Poll until Auth0 has redirected to the cockpit dashboard URL."""
     deadline = time.monotonic() + timeout_ms / 1000.0
     while time.monotonic() < deadline:
-        try:
-            if _cockpit_ready(page):
-                return
-        except Exception:
-            pass
-        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=5_000)
+        if _on_cockpit_dashboard(page):
+            logger.info("OSKAR: cockpit dashboard reached url=%s", page.url)
+            return
         page.wait_for_timeout(450)
     raise RuntimeError(
-        "OSKAR: timed out waiting for cockpit tabs (expected «Wertentwicklung» or "
-        "«Gewichtung» / «Aktuelle Gewichtung» on mein.oskar.de)."
+        f"OSKAR: timed out waiting for the redirect to {_DASHBOARD_URL} (url={page.url})."
     )
 
 
@@ -264,6 +331,9 @@ def _hide_headed_browser_window(page: Any) -> None:
     Playwright cannot switch a live browser from headed to headless; a relaunch
     would drop the Auth0 session. CDP ``Browser.setWindowBounds`` keeps the
     process running. Best-effort: headless or unsupported hosts just log.
+
+    A late consent banner is dismissed afterwards because a minimized window can
+    attach the Sourcepoint iframe only once it is already off screen.
     """
     try:
         cdp = page.context.new_cdp_session(page)
@@ -275,42 +345,22 @@ def _hide_headed_browser_window(page: Any) -> None:
         logger.info("OSKAR: minimized headed browser; scrape continues in the same session")
     except Exception as exc:
         logger.debug("OSKAR: could not minimize headed browser: %s", exc)
+    _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
 
 
 def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
     """
-    Block until a human has finished Auth0 in the **headed** browser: the cockpit
-    shows «Aktuelle Gewichtung» or «Wertentwicklung» on ``mein.oskar.de``.
-    Periodically clears the Sourcepoint cookie iframe so ``innerText`` can reflect
-    the real cockpit.
+    Block until a human has finished Auth0 in the **headed** browser, i.e. until the
+    redirect to the cockpit dashboard lands. A typo simply keeps the wait running,
+    because a rejected login never leaves the Auth0 URL.
     """
     logger.warning(
         "OSKAR manual login: complete Auth0 in the browser window (credentials + Continue / "
-        "Anmelden). Waiting up to %.0f s until cockpit tabs appear…",
+        "Anmelden). Waiting up to %.0f s for the redirect to %s…",
         timeout_ms / 1000,
+        _DASHBOARD_URL,
     )
-    _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
-    logger.info("OSKAR manual login: cockpit detected url=%s", page.url)
-
-
-def _page_needs_login(page: Any) -> bool:
-    url = (page.url or "").lower()
-    try:
-        host = (urlparse(page.url).hostname or "").lower()
-    except Exception:
-        host = ""
-    if "auth0" in url or "login.oskar" in url or host == "login.oskar.de":
-        return True
-    if "/login" in url and "mein.oskar" in url:
-        return True
-    pw = page.locator('input[type="password"]')
-    if pw.count() > 0:
-        try:
-            if pw.first.is_visible():
-                return True
-        except Exception:
-            return True
-    return False
+    _wait_for_cockpit_dashboard(page, timeout_ms=timeout_ms)
 
 
 def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
@@ -792,7 +842,7 @@ def _open_oskar_page(
     (cookies + localStorage of an already logged-in session), and land on the
     dashboard. Returns ``(browser, context, page)``.
     """
-    browser = p.chromium.launch(headless=headless)
+    browser = p.chromium.launch(headless=headless, args=list(_CHROMIUM_LAUNCH_ARGS))
     context_kwargs: dict[str, Any] = {
         "user_agent": _USER_AGENT,
         "ignore_https_errors": False,
@@ -805,11 +855,13 @@ def _open_oskar_page(
     context.set_default_timeout(timeout_ms)
     page = context.new_page()
     page.goto(dashboard_url, wait_until="domcontentloaded", timeout=timeout_ms)
-    try:
-        page.wait_for_load_state("load", timeout=min(60_000, timeout_ms))
-    except Exception:
-        pass
-    _wait_for_oskar_nav_after_dashboard_goto(page, timeout_ms=min(45_000, timeout_ms))
+    for state in ("load", "networkidle"):
+        # ``networkidle`` lets a pending Auth0 hop land, so ``page.url`` is trustworthy
+        # for callers; the cockpit SPA may never go idle, hence best-effort.
+        try:
+            page.wait_for_load_state(state, timeout=min(15_000, timeout_ms))
+        except Exception:
+            pass
     return browser, context, page
 
 
@@ -828,8 +880,8 @@ def _switch_to_headless_after_login(
     visible.
 
     ``mein.oskar.de`` has been seen to blank-redirect headless Chromium, so if the
-    cockpit does not render we relaunch headed from the same storage state (no second
-    manual login in the common case) and minimize that window instead.
+    dashboard URL is not reached we relaunch headed from the same storage state (no
+    second manual login in the common case) and minimize that window instead.
     """
     storage_state = context.storage_state()
     browser.close()
@@ -843,10 +895,10 @@ def _switch_to_headless_after_login(
         storage_state=storage_state,
     )
     try:
-        if _page_needs_login(page):
-            raise RuntimeError("headless browser was bounced back to the Auth0 login gate")
-        _wait_for_cockpit_tabs(page, timeout_ms=min(45_000, timeout_ms))
-        logger.info("OSKAR: headless session accepted, cockpit ready url=%s", page.url)
+        _wait_for_cockpit_dashboard(page, timeout_ms=min(45_000, timeout_ms))
+        logger.info("OSKAR: headless session accepted url=%s", page.url)
+        # Fresh context, so consent has to be answered again before tabs accept clicks.
+        _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
         return browser, context, page, False
     except Exception as exc:
         logger.warning(
@@ -862,10 +914,8 @@ def _switch_to_headless_after_login(
         timeout_ms=timeout_ms,
         storage_state=storage_state,
     )
-    if _page_needs_login(page):
+    if not _on_cockpit_dashboard(page):
         _wait_for_manual_oskar_login(page, timeout_ms=max(timeout_ms, 300_000))
-    else:
-        _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
     _hide_headed_browser_window(page)
     return browser, context, page, True
 
@@ -878,19 +928,19 @@ def fetch_oskar_etfs(
     timeout_ms: int = 120_000,
 ) -> dict[str, OskarEtf]:
     """
-    Launch Chromium (TLS verification on). If login is required, sign in **manually**
-    in the browser; the run continues once cockpit tabs («Aktuelle Gewichtung» /
-    «Wertentwicklung» / «Gewichtung») appear. With ``headless=True`` and a login gate,
-    the browser is restarted **headed** once so you can complete Auth0.
+    Launch Chromium (TLS verification on). Everything hinges on one signal: the
+    redirect to ``mein.oskar.de/cockpit/dashboard``, which Auth0 only performs after a
+    successful login. Until it lands, sign in **manually** in the browser (a typo just
+    keeps the wait running). With ``headless=True`` and a login gate, the browser is
+    restarted **headed** once so you can complete Auth0.
 
-    Once the cockpit is ready the headed window is taken off screen before the
-    allocation tab is opened and ETF rows are parsed:
+    Once that URL is reached, the headed window is taken off screen before the
+    allocation tab is opened:
 
-    * default — the window is **minimized**, keeping the very same browser process,
-      page and SPA state;
+    * default — the window is **minimized**, keeping the very same browser process;
     * ``headless_after_login=True`` — the session (cookies + localStorage) is moved
-      into a fresh **headless** browser, which reloads the dashboard. Falls back to
-      the minimized headed window if the headless cockpit does not render.
+      into a fresh **headless** browser, which has to reach the same URL. Falls back
+      to the minimized headed window if it does not.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -916,16 +966,8 @@ def fetch_oskar_etfs(
             )
             logger.info("fetch_oskar_etfs: dashboard loaded url=%s", page.url)
 
-            needs_login = _page_needs_login(page)
-            cockpit_ok = _cockpit_ready(page)
-            if needs_login or not cockpit_ok:
-                logger.info(
-                    "fetch_oskar_etfs: waiting for you to sign in or cockpit to load "
-                    "(url=%s needs_login=%s cockpit_ready=%s)",
-                    page.url,
-                    needs_login,
-                    cockpit_ok,
-                )
+            if not _on_cockpit_dashboard(page):
+                logger.info("fetch_oskar_etfs: login required (url=%s)", page.url)
                 if headless:
                     logger.info(
                         "fetch_oskar_etfs: restarting as headed browser for manual Auth0"
@@ -938,22 +980,8 @@ def fetch_oskar_etfs(
                         timeout_ms=timeout_ms,
                     )
                     headed_visible = True
+                _wait_for_manual_oskar_login(page, timeout_ms=max(timeout_ms, 300_000))
 
-                manual_timeout = max(timeout_ms, 300_000)
-                _wait_for_manual_oskar_login(page, timeout_ms=manual_timeout)
-                # Only reload when the cockpit shell is not already visible; a redundant
-                # ``goto`` after Auth0 resets the SPA and races tab rendering on slow links.
-                if not _cockpit_ready(page):
-                    page.goto(dashboard_url, wait_until="load", timeout=timeout_ms)
-            else:
-                try:
-                    page.wait_for_load_state("load", timeout=timeout_ms)
-                except Exception:
-                    pass
-
-            _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
-            logger.info("fetch_oskar_etfs: waiting for cockpit tabs")
-            _wait_for_cockpit_tabs(page, timeout_ms=timeout_ms)
             if headed_visible and headless_after_login:
                 browser, context, page, headed_visible = _switch_to_headless_after_login(
                     p,
@@ -962,10 +990,9 @@ def fetch_oskar_etfs(
                     dashboard_url=dashboard_url,
                     timeout_ms=timeout_ms,
                 )
-                _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
             elif headed_visible:
                 _hide_headed_browser_window(page)
-            page.wait_for_timeout(500)
+            _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
 
             logger.info("fetch_oskar_etfs: clicking allocation tab")
             _click_allocation_tab(page, timeout_ms=timeout_ms)
