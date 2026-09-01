@@ -7,8 +7,6 @@ from unittest.mock import MagicMock, patch
 
 from scrape.oskar import (
     _click_allocation_tab,
-    _click_sourcepoint_button,
-    _ensure_sourcepoint_cookie_banner_dismissed,
     _hide_headed_browser_window,
     _on_cockpit_dashboard,
     _switch_to_headless_after_login,
@@ -118,70 +116,6 @@ class TestSwitchToHeadlessAfterLogin(unittest.TestCase):
         self.assertIs(page, fallback_page)
         self.assertTrue(headed_visible)
         hide.assert_called_once_with(fallback_page)
-
-
-class TestClickSourcepointButton(unittest.TestCase):
-    def test_uses_normal_click_first(self) -> None:
-        el = MagicMock()
-        self.assertTrue(_click_sourcepoint_button(el, timeout_ms=1_000))
-        el.click.assert_called_once_with(timeout=1_000)
-        el.evaluate.assert_not_called()
-
-    def test_falls_back_to_force_then_dom_click(self) -> None:
-        el = MagicMock()
-        el.click.side_effect = [RuntimeError("not stable"), RuntimeError("still not")]
-
-        self.assertTrue(_click_sourcepoint_button(el, timeout_ms=1_000))
-
-        self.assertEqual(el.click.call_count, 2)
-        self.assertTrue(el.click.call_args_list[1].kwargs["force"])
-        el.evaluate.assert_called_once_with("el => el.click()")
-
-    def test_returns_false_when_every_strategy_fails(self) -> None:
-        el = MagicMock()
-        el.click.side_effect = RuntimeError("blocked")
-        el.evaluate.side_effect = RuntimeError("blocked")
-        self.assertFalse(_click_sourcepoint_button(el, timeout_ms=1_000))
-
-
-class TestEnsureCookieBannerDismissed(unittest.TestCase):
-    @patch("scrape.oskar._try_dismiss_sourcepoint_cookie_banner", return_value=True)
-    @patch(
-        "scrape.oskar._sourcepoint_cookie_banner_present",
-        side_effect=[True, True, False],
-    )
-    def test_retries_until_banner_gone(
-        self, _present: MagicMock, dismiss: MagicMock
-    ) -> None:
-        page = MagicMock()
-        self.assertTrue(
-            _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=5_000)
-        )
-        self.assertEqual(dismiss.call_count, 2)
-
-    @patch("scrape.oskar._try_dismiss_sourcepoint_cookie_banner", return_value=False)
-    @patch("scrape.oskar._sourcepoint_cookie_banner_present", return_value=True)
-    def test_gives_up_after_attempts(
-        self, _present: MagicMock, dismiss: MagicMock
-    ) -> None:
-        page = MagicMock()
-        self.assertFalse(
-            _ensure_sourcepoint_cookie_banner_dismissed(
-                page, timeout_ms=5_000, attempts=3
-            )
-        )
-        self.assertEqual(dismiss.call_count, 3)
-
-    @patch("scrape.oskar._try_dismiss_sourcepoint_cookie_banner")
-    @patch("scrape.oskar._sourcepoint_cookie_banner_present", return_value=False)
-    def test_no_click_when_no_banner(
-        self, _present: MagicMock, dismiss: MagicMock
-    ) -> None:
-        page = MagicMock()
-        self.assertTrue(
-            _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=5_000)
-        )
-        dismiss.assert_not_called()
 
 
 class TestOnCockpitDashboard(unittest.TestCase):

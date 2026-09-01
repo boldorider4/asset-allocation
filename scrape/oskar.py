@@ -184,116 +184,33 @@ def _try_oskar_logout(page: Any, *, timeout_ms: int = 15_000) -> None:
     logger.warning("OSKAR logout: no Ausloggen control found (session may stay active)")
 
 
-_SOURCEPOINT_HOST = "privacy-mgmt.com"
-_SOURCEPOINT_BUTTONS = (
-    ("alle ablehnen", re.compile(r"alle\s*ablehnen", re.I)),
-    ("Weiter", re.compile(r"^Weiter$", re.I)),
-    ("Alle akzeptieren", re.compile(r"alle\s*akzeptieren", re.I)),
-)
-
-
-def _sourcepoint_frames(page: Any) -> list[Any]:
-    frames = []
-    for fr in getattr(page, "frames", None) or ():
-        if _SOURCEPOINT_HOST in (getattr(fr, "url", "") or ""):
-            frames.append(fr)
-    return frames
-
-
-def _sourcepoint_cookie_banner_present(page: Any) -> bool:
-    """True while a Sourcepoint consent button is still visible in any consent iframe."""
-    for fr in _sourcepoint_frames(page):
-        for _label, pat in _SOURCEPOINT_BUTTONS:
-            try:
-                loc = fr.get_by_role("button", name=pat)
-                if loc.count() > 0 and loc.first.is_visible():
-                    return True
-            except Exception:
-                continue
-    return False
-
-
-def _click_sourcepoint_button(el: Any, *, timeout_ms: int) -> bool:
-    """
-    Click a consent button, degrading gracefully: a **minimized** window throttles
-    rendering, so Playwright's hit-testing can fail even though the element exists.
-    ``force`` skips those checks and a DOM ``click()`` skips the input pipeline.
-    """
-    try:
-        el.click(timeout=timeout_ms)
-        return True
-    except Exception as exc:
-        logger.debug("OSKAR: cookie banner normal click failed: %s", exc)
-    try:
-        el.click(timeout=timeout_ms, force=True)
-        return True
-    except Exception as exc:
-        logger.debug("OSKAR: cookie banner force click failed: %s", exc)
-    try:
-        el.evaluate("el => el.click()")
-        return True
-    except Exception as exc:
-        logger.debug("OSKAR: cookie banner DOM click failed: %s", exc)
-    return False
-
-
-def _try_dismiss_sourcepoint_cookie_banner(page: Any, *, timeout_ms: int = 20_000) -> bool:
+def _try_dismiss_sourcepoint_cookie_banner(page: Any, *, timeout_ms: int = 20_000) -> None:
     """
     Sourcepoint (``cdn.privacy-mgmt.com``) consent iframe often sits above the cockpit;
-    dismiss it so tabs / «Ausloggen» in the main shell respond to clicks. One pass;
-    returns whether a button was clicked (see
-    :func:`_ensure_sourcepoint_cookie_banner_dismissed` for the retrying variant).
+    dismiss it so tabs / «Ausloggen» in the main shell respond to clicks.
     """
     per = min(8_000, timeout_ms)
-    for label, pat in _SOURCEPOINT_BUTTONS:
-        for fr in _sourcepoint_frames(page):
+    for label, pat in (
+        ("alle ablehnen", re.compile(r"alle\s*ablehnen", re.I)),
+        ("Weiter", re.compile(r"^Weiter$", re.I)),
+        ("Alle akzeptieren", re.compile(r"alle\s*akzeptieren", re.I)),
+    ):
+        for fr in page.frames:
+            u = getattr(fr, "url", "") or ""
+            if "privacy-mgmt.com" not in u:
+                continue
             try:
                 loc = fr.get_by_role("button", name=pat)
                 if loc.count() == 0:
                     continue
                 el = loc.first
-                if not el.is_visible():
-                    continue
+                if el.is_visible():
+                    el.click(timeout=per)
+                    page.wait_for_timeout(900)
+                    logger.info("OSKAR: dismissed cookie banner (%s)", label)
+                    return
             except Exception:
                 continue
-            if _click_sourcepoint_button(el, timeout_ms=per):
-                page.wait_for_timeout(900)
-                logger.info("OSKAR: dismissed cookie banner (%s)", label)
-                return True
-    return False
-
-
-def _ensure_sourcepoint_cookie_banner_dismissed(
-    page: Any, *, timeout_ms: int = 20_000, attempts: int = 8
-) -> bool:
-    """
-    Keep clicking until the consent iframe is really gone, up to *attempts* rounds.
-
-    The banner can (re)appear late — after a minimize, a reload, or an SPA route
-    change — and a single pass sometimes clicks nothing because the iframe has not
-    attached yet. Returns whether the banner is gone.
-    """
-    per = min(8_000, timeout_ms)
-    for attempt in range(1, attempts + 1):
-        if not _sourcepoint_cookie_banner_present(page):
-            if attempt > 1:
-                logger.info("OSKAR: cookie banner gone after %d attempt(s)", attempt - 1)
-            return True
-        clicked = _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=per)
-        logger.info(
-            "OSKAR: cookie banner dismissal attempt %d/%d clicked=%s",
-            attempt,
-            attempts,
-            clicked,
-        )
-        page.wait_for_timeout(600)
-    still_there = _sourcepoint_cookie_banner_present(page)
-    if still_there:
-        logger.warning(
-            "OSKAR: cookie banner still present after %d attempt(s); clicks may be blocked",
-            attempts,
-        )
-    return not still_there
 
 
 def _on_cockpit_dashboard(page: Any) -> bool:
@@ -331,9 +248,6 @@ def _hide_headed_browser_window(page: Any) -> None:
     Playwright cannot switch a live browser from headed to headless; a relaunch
     would drop the Auth0 session. CDP ``Browser.setWindowBounds`` keeps the
     process running. Best-effort: headless or unsupported hosts just log.
-
-    A late consent banner is dismissed afterwards because a minimized window can
-    attach the Sourcepoint iframe only once it is already off screen.
     """
     try:
         cdp = page.context.new_cdp_session(page)
@@ -345,7 +259,6 @@ def _hide_headed_browser_window(page: Any) -> None:
         logger.info("OSKAR: minimized headed browser; scrape continues in the same session")
     except Exception as exc:
         logger.debug("OSKAR: could not minimize headed browser: %s", exc)
-    _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
 
 
 def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
@@ -898,7 +811,7 @@ def _switch_to_headless_after_login(
         _wait_for_cockpit_dashboard(page, timeout_ms=min(45_000, timeout_ms))
         logger.info("OSKAR: headless session accepted url=%s", page.url)
         # Fresh context, so consent has to be answered again before tabs accept clicks.
-        _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
+        _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
         return browser, context, page, False
     except Exception as exc:
         logger.warning(
@@ -992,7 +905,7 @@ def fetch_oskar_etfs(
                 )
             elif headed_visible:
                 _hide_headed_browser_window(page)
-            _ensure_sourcepoint_cookie_banner_dismissed(page, timeout_ms=20_000)
+            _try_dismiss_sourcepoint_cookie_banner(page, timeout_ms=20_000)
 
             logger.info("fetch_oskar_etfs: clicking allocation tab")
             _click_allocation_tab(page, timeout_ms=timeout_ms)
