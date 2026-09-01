@@ -1,4 +1,4 @@
-"""Unit tests for ``update_scalable_etfs_in_portfolio`` (no ``sc`` CLI)."""
+"""Unit tests for ``update_traderepublic_etfs_in_portfolio`` (no pytr login)."""
 
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ from common import (
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
 )
-from scrape.scalable import (
-    ScalableHolding,
-    _TAGESGELD_FETCH_KEY,
-    update_scalable_etfs_in_portfolio,
+from scrape.traderepublic import (
+    TradeRepublicHolding,
+    _CASH_FETCH_KEY,
+    update_traderepublic_etfs_in_portfolio,
 )
 from utils import portfolio as global_portfolio
 from utils import write_portfolio_to_file
 
 
-class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
+class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
     def setUp(self) -> None:
         self._saved = copy.deepcopy(dict(global_portfolio))
         global_portfolio.clear()
@@ -32,11 +32,11 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
             {
                 EQUITY_PORTFOLIO: [
                     {
-                        "name": "Existing Scalable ETF",
+                        "name": "Existing TR ETF",
                         "ISIN": "IE0006WW1TQ4",
                         "shares": 1,
                         "value": 10.0,
-                        "broker": "scalable",
+                        "broker": "traderepublic",
                         "dmem": 1,
                         "dmem_other": 1,
                         "usavn": 0,
@@ -46,9 +46,9 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 FIXED_MATURITY_BOND_PORTFOLIO: [],
                 CASH_PORTFOLIO: [
                     {
-                        "name": "Tagesgeld",
+                        "name": "Cash",
                         "value": 1.0,
-                        "broker": "scalable",
+                        "broker": "traderepublic",
                         "ISIN": None,
                     }
                 ],
@@ -59,36 +59,36 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         global_portfolio.clear()
         global_portfolio.update(copy.deepcopy(self._saved))
 
-    @patch("scalable.fetch_scalable_etfs")
+    @patch("traderepublic.fetch_traderepublic_etfs")
     def test_updates_shares_value_and_price(self, mock_fetch) -> None:
         mock_fetch.return_value = {
-            "IE0006WW1TQ4": ScalableHolding(
+            "IE0006WW1TQ4": TradeRepublicHolding(
                 isin="IE0006WW1TQ4",
                 name="Xtrackers MSCI World ex USA (Acc)",
                 shares=4,
                 value=140.0,
                 price=40.315,
             ),
-            _TAGESGELD_FETCH_KEY: ScalableHolding(
+            _CASH_FETCH_KEY: TradeRepublicHolding(
                 isin=None,
-                name="Tagesgeld",
+                name="Cash",
                 shares=None,
                 value=40.32,
                 price=None,
-                is_tagesgeld=True,
+                is_cash=True,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_traderepublic_etfs_in_portfolio()
         pos = global_portfolio[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
         self.assertEqual(pos["price"], 40.315)
         self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 40.32)
 
-    @patch("scalable.fetch_scalable_etfs")
+    @patch("traderepublic.fetch_traderepublic_etfs")
     def test_writes_assets_file_shares_and_value(self, mock_fetch) -> None:
         mock_fetch.return_value = {
-            "IE0006WW1TQ4": ScalableHolding(
+            "IE0006WW1TQ4": TradeRepublicHolding(
                 isin="IE0006WW1TQ4",
                 name="Xtrackers",
                 shares=4,
@@ -96,7 +96,7 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_traderepublic_etfs_in_portfolio()
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "assets.json"
             write_portfolio_to_file(path)
@@ -106,17 +106,17 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(pos["value"], 140.0)
         self.assertEqual(pos["price"], 40.315)
 
-    @patch("scalable.fetch_scalable_etfs")
+    @patch("traderepublic.fetch_traderepublic_etfs")
     def test_adds_mapped_buckets(self, mock_fetch) -> None:
         mock_fetch.return_value = {
-            "DE000EWG2LD7": ScalableHolding(
+            "DE000EWG2LD7": TradeRepublicHolding(
                 isin="DE000EWG2LD7",
                 name="EUWAX Gold II",
                 shares=1,
                 value=270.0,
                 price=129.6555,
             ),
-            "LU2233156582": ScalableHolding(
+            "LU2233156582": TradeRepublicHolding(
                 isin="LU2233156582",
                 name="Amundi Prime Euro Gov",
                 shares=10,
@@ -124,7 +124,7 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=10.0,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_traderepublic_etfs_in_portfolio()
         self.assertEqual(global_portfolio[COMMODITY_PORTFOLIO][0]["ISIN"], "DE000EWG2LD7")
         self.assertEqual(
             global_portfolio[FIXED_MATURITY_BOND_PORTFOLIO][0]["ISIN"],
@@ -132,10 +132,10 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         )
         self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 0)
 
-    @patch("scalable.fetch_scalable_etfs")
+    @patch("traderepublic.fetch_traderepublic_etfs")
     def test_unknown_isin_falls_back_to_equity(self, mock_fetch) -> None:
         mock_fetch.return_value = {
-            "XX000UNKNOWN1": ScalableHolding(
+            "XX000UNKNOWN1": TradeRepublicHolding(
                 isin="XX000UNKNOWN1",
                 name="Unknown",
                 shares=2,
@@ -144,22 +144,22 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
             ),
         }
         with self.assertLogs("utils", level="WARNING"):
-            update_scalable_etfs_in_portfolio()
+            update_traderepublic_etfs_in_portfolio()
         self.assertEqual(global_portfolio[EQUITY_PORTFOLIO][0]["ISIN"], "XX000UNKNOWN1")
 
-    @patch("scalable.fetch_scalable_etfs")
-    def test_removes_stale_and_keeps_non_scalable(self, mock_fetch) -> None:
+    @patch("traderepublic.fetch_traderepublic_etfs")
+    def test_removes_stale_and_keeps_non_traderepublic(self, mock_fetch) -> None:
         global_portfolio[EQUITY_PORTFOLIO].append(
             {
-                "name": "Oskar leftover",
+                "name": "Scalable leftover",
                 "ISIN": "IE00OSTALE01",
                 "shares": 1,
                 "value": 1.0,
-                "broker": "oskar",
+                "broker": "scalable",
             }
         )
         mock_fetch.return_value = {
-            "IE000BI8OT95": ScalableHolding(
+            "IE000BI8OT95": TradeRepublicHolding(
                 isin="IE000BI8OT95",
                 name="Amundi",
                 shares=3,
@@ -167,16 +167,16 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=10.0,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_traderepublic_etfs_in_portfolio()
         isins = [p["ISIN"] for p in global_portfolio[EQUITY_PORTFOLIO]]
         self.assertIn("IE000BI8OT95", isins)
         self.assertIn("IE00OSTALE01", isins)
         self.assertNotIn("IE0006WW1TQ4", isins)
 
-    @patch("scalable.fetch_scalable_etfs")
-    def test_removes_tagesgeld_when_overnight_absent(self, mock_fetch) -> None:
+    @patch("traderepublic.fetch_traderepublic_etfs")
+    def test_removes_cash_when_absent(self, mock_fetch) -> None:
         mock_fetch.return_value = {
-            "IE0006WW1TQ4": ScalableHolding(
+            "IE0006WW1TQ4": TradeRepublicHolding(
                 isin="IE0006WW1TQ4",
                 name="Xtrackers",
                 shares=4,
@@ -184,14 +184,14 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_traderepublic_etfs_in_portfolio()
         self.assertEqual(global_portfolio[CASH_PORTFOLIO], [])
 
-    @patch("scalable.fetch_scalable_etfs")
+    @patch("traderepublic.fetch_traderepublic_etfs")
     def test_empty_fetch_leaves_portfolio_unchanged(self, mock_fetch) -> None:
         mock_fetch.return_value = {}
-        with self.assertLogs("scalable", level="WARNING"):
-            update_scalable_etfs_in_portfolio()
+        with self.assertLogs("traderepublic", level="WARNING"):
+            update_traderepublic_etfs_in_portfolio()
         self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 1)
         self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 1.0)
 

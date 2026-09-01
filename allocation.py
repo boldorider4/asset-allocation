@@ -36,13 +36,16 @@ from utils import (
     get_assets_file,
     get_fetch_oskar,
     get_fetch_scalable,
+    get_fetch_traderepublic,
     get_incognito,
     apply_incognito_scaling,
     set_fetch_scalable,
+    set_fetch_traderepublic,
 )
 from logger import attach_color_stderr_handler_for_module
-from oskar import update_oskar_etfs_in_portfolio
-from scalable import update_scalable_etfs_in_portfolio
+from scrape.oskar import update_oskar_etfs_in_portfolio
+from scrape.scalable import update_scalable_etfs_in_portfolio
+from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 
 
 def _package_version() -> str:
@@ -78,6 +81,12 @@ def main():
     if get_fetch_scalable():
         logger.info("Fetching Scalable holdings from sc CLI")
         update_scalable_etfs_in_portfolio()
+        write_portfolio_to_file(assets_path)
+        logger.info("Wrote updated portfolio to %s", assets_path)
+
+    if get_fetch_traderepublic():
+        logger.info("Fetching Trade Republic holdings from pytr")
+        update_traderepublic_etfs_in_portfolio()
         write_portfolio_to_file(assets_path)
         logger.info("Wrote updated portfolio to %s", assets_path)
 
@@ -137,8 +146,8 @@ def cli() -> None:
         action="store_true",
         help=(
             "Scrape JustETF/Yahoo quotes and write price to cache.json. "
-            "Scalable-broker rows from the assets file are included unless "
-            "--fetch-scalable is also set."
+            "Scalable- and Trade Republic-broker rows from the assets file "
+            "are included unless --fetch-scalable / --fetch-traderepublic is also set."
         ),
     )
     parser.add_argument(
@@ -165,6 +174,11 @@ def cli() -> None:
         help="Log into Scalable via sc and scrape broker holdings.",
     )
     parser.add_argument(
+        "--fetch-tr",
+        action="store_true",
+        help="Log into Trade Republic via pytr and scrape broker holdings.",
+    )
+    parser.add_argument(
         "--incognito",
         action="store_true",
         help="Show fake values for asset allocation.",
@@ -185,6 +199,8 @@ def cli() -> None:
         set_fetch_oskar(True)
     if args.fetch_scalable:
         set_fetch_scalable(True)
+    if args.fetch_tr:
+        set_fetch_traderepublic(True)
     if args.assets_file:
         set_assets_file(args.assets_file)
     if args.incognito:

@@ -13,6 +13,11 @@ browsers are installed under a Cursor sandbox path, force the default cache::
 
     PLAYWRIGHT_BROWSERS_PATH=0 pytest tests/test_oskar_login.py -s -v --log-cli-level=DEBUG
 
+Each test signs in once, so pick a single one to avoid logging in twice::
+
+    PLAYWRIGHT_BROWSERS_PATH=0 pytest tests/test_oskar_login.py -s -v \
+        -k test_login_then_headless_handover
+
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ class TestOskarLogin(unittest.TestCase):
             )
 
     def test_login_and_oskar_etfs(self) -> None:
-        from oskar import fetch_oskar_etfs
+        from scrape.oskar import fetch_oskar_etfs
 
         logger.info("OSKAR login test: start (manual Auth0, headed browser)")
 
@@ -47,3 +52,23 @@ class TestOskarLogin(unittest.TestCase):
         self.assertIsInstance(rows, dict)
         self.assertGreater(len(rows), 0)
         logger.info("OSKAR login test: done rows=%d", len(rows))
+
+    def test_login_then_headless_handover(self) -> None:
+        """
+        Log in headed, then move the session into a headless browser for the scrape.
+        Falls back to a minimized headed window if OSKAR rejects headless Chromium,
+        so a pass here does not by itself prove the handover worked — check the logs
+        for «headless session accepted» vs «headless handover failed».
+        """
+        from scrape.oskar import fetch_oskar_etfs
+
+        logger.info("OSKAR headless handover test: start (manual Auth0, headed browser)")
+
+        rows = fetch_oskar_etfs(
+            headless=False,
+            headless_after_login=True,
+            timeout_ms=120_000,
+        )
+        self.assertIsInstance(rows, dict)
+        self.assertGreater(len(rows), 0)
+        logger.info("OSKAR headless handover test: done rows=%d", len(rows))

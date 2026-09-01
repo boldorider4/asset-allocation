@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from oskar import (
+from scrape.oskar import (
     _OSKAR_CATEGORY_ANLEIHEN,
     _OSKAR_CATEGORY_AKTIEN,
     _merge_row_snapshots_into,

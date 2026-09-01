@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation"
-version = "0.8.0"
+version = "0.9.0"
 description = "Personal asset allocation and position pricing"
 requires-python = ">=3.10"
 dependencies = [
     "matplotlib",
     "numpy",
     "playwright>=1.40",
+    "pytr",
     "yfinance",
 ]
 
@@ -29,5 +30,5 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
 log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
-py-modules = ["allocation", "common", "logger", "utils", "oskar", "scalable"]
-packages = ["position", "visual", "portfolio"]
+py-modules = ["allocation", "common", "logger", "utils"]
+packages = ["position", "visual", "portfolio", "scrape"]

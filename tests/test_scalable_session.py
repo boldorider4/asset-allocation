@@ -6,7 +6,7 @@ import io
 import unittest
 from unittest.mock import patch
 
-from scalable import Scalable, fetch_scalable_etfs, _TAGESGELD_FETCH_KEY
+from scrape.scalable import Scalable, fetch_scalable_etfs, _TAGESGELD_FETCH_KEY
 
 
 class FakeProc:

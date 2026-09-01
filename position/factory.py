@@ -6,12 +6,14 @@ from utils import (
     get_fetch_geosplit,
     get_fetch_prices,
     get_fetch_scalable,
+    get_fetch_traderepublic,
     get_incognito_value_factor,
 )
+from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
-from position.scalable_position import ScalablePosition
 from position.yfinance_position import YFinancePosition
-from scalable import _SCALABLE as SCALABLE
+from scrape.scalable import _SCALABLE as SCALABLE
+from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -102,7 +104,7 @@ def factory(
     *,
     value_scale: float | None = None,
     price: float | None = None,
-) -> JustETFPosition | YFinancePosition | ScalablePosition:
+) -> JustETFPosition | YFinancePosition | CLIQueryPosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
@@ -110,11 +112,11 @@ def factory(
     cached_price, cached_countries = _parse_cache_entry(cache.get(isin))
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
-    use_scalable = get_fetch_scalable() and broker == SCALABLE
+    use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
-    if use_scalable:
+    if use_broker_quote:
         ctor_price = price
     elif fetch_prices:
         ctor_price = None
@@ -127,15 +129,15 @@ def factory(
         )
 
     scrape_geosplit = fetch_geosplit and not (
-        POSITION_SOURCE == YFINANCE and not use_scalable
+        POSITION_SOURCE == YFINANCE and not use_broker_quote
     )
     if scrape_geosplit:
         countries_arg: dict[str, float] | None = None
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if use_scalable:
-        position = ScalablePosition(
+    if use_broker_quote:
+        position = CLIQueryPosition(
             isin,
             name,
             short_name,
