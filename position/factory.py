@@ -5,8 +5,6 @@ from typing import Any
 from utils import (
     get_fetch_geosplit,
     get_fetch_prices,
-    get_fetch_scalable,
-    get_fetch_traderepublic,
     get_incognito_value_factor,
 )
 from position.cli_query_position import CLIQueryPosition

@@ -56,7 +56,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             "name": "Xtrackers",
             "shares": 4,
             "value": None,
-            "broker": "scalable",
+            "broker": "other",
             "price": 40.315,
         }
         defaults.update(kwargs)
@@ -88,7 +88,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             "_fast_info_price",
             side_effect=AssertionError("_fast_info_price should not be called"),
         ):
-            pos = self._factory()
+            pos = self._factory(broker="scalable")
         self.assertIsInstance(pos, CLIQueryPosition)
         self.assertEqual(pos.price, 40.315)
 
