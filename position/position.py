@@ -133,6 +133,7 @@ class Position(ABC):
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
+        prefer_scrape_value: bool = False,
     ) -> None:
         self._name = name
         self._short_name = short_name
@@ -144,6 +145,7 @@ class Position(ABC):
         self._dmem = dmem
         self._dmem_other = dmem_other
         self._usavn = usavn
+        self._prefer_scrape_value = prefer_scrape_value
         self._countries: list[dict[str, float | str]] | None = None
         self._price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
@@ -210,12 +212,14 @@ class Position(ABC):
     @property
     def value(self) -> float | None:
         base: float | None
-        if self._value is not None:
+        if self._prefer_scrape_value and self._value is not None:
             base = self._value
-        elif self._shares is not None and self._price is not None:
-            base = self._shares * self._price
+        elif get_fetch_prices():
+            base = self._shares_times_price()
+        elif self._value is not None:
+            base = self._value
         else:
-            base = None
+            base = self._shares_times_price()
         if base is None:
             return None
         return base * self._value_scale
@@ -264,6 +268,12 @@ class Position(ABC):
     def __repr__(self) -> str:
         return self.__str__()
 
+    def _shares_times_price(self) -> float | None:
+        if self._shares is not None and self._price is not None:
+            return self._shares * self._price
+        logger.warning("Position: no shares or price to compute value")
+        return None
+
     @staticmethod
     def _cached_countries_to_rows(
         cached_countries: dict[str, float] | None,
@@ -287,7 +297,11 @@ class Position(ABC):
             )
             return None
         logger.info("Position: fetch-geosplit enabled, fetching countries from ISIN %s", self._isin)
-        return self.countries()
+        try:
+            return self.countries()
+        except NotImplementedError:
+            logger.warning("Position: could not fetch countries for ISIN %s", self._isin)
+            return None
 
     def _fetch_fast_info_price(self, supplied_price: float | None) -> float | None:
         if not self._isin:
