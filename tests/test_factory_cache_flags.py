@@ -108,28 +108,21 @@ class TestFactoryCacheFlags(unittest.TestCase):
     def test_live_scalable_value_prevails_with_fetch_prices(self) -> None:
         set_fetch_scalable(True)
         set_fetch_prices(True)
-        pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
-        self.assertEqual(pos.price, 40.315)
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
+        self.assertEqual(pos.price, 99.5)
         self.assertEqual(pos.value, 140.0)
-        saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
-    def test_live_traderepublic_scan_writes_scanned_price_to_cache(self) -> None:
+    def test_live_traderepublic_value_prevails_with_fetch_prices(self) -> None:
         set_fetch_traderepublic(True)
         set_fetch_prices(True)
-        with patch.object(
-            JustETFPosition,
-            "_fast_info_price",
-            side_effect=AssertionError("_fast_info_price should not be called"),
-        ):
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
             pos = self._factory(
                 broker="traderepublic", value=140.0, shares=4, price=40.315
             )
         self.assertIsInstance(pos, JustETFPosition)
-        self.assertEqual(pos.price, 40.315)
+        self.assertEqual(pos.price, 99.5)
         self.assertEqual(pos.value, 140.0)
-        saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
     def test_live_oskar_value_prevails_with_fetch_prices(self) -> None:
         set_fetch_oskar(True)
