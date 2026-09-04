@@ -1047,6 +1047,7 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
                 if isin_match or tagesgeld_match:
                     position["value"] = oskar_etf.value_eur
                     position["shares"] = None
+                    position["price"] = None
                     matched = True
                     if pos_isin is not None:
                         scanned_oskar_isins.add(pos_isin)
@@ -1060,6 +1061,7 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
                 "ISIN": None if _is_oskar_position_tagesgeld(oskar_etf) else oskar_etf.isin,
                 "shares": None,
                 "value": oskar_etf.value_eur,
+                "price": None,
                 "broker": _OSKAR,
                 "dmem": 1,
                 "dmem_other": 1,

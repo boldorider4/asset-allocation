@@ -146,7 +146,9 @@ def cli() -> None:
         action="store_true",
         help=(
             "Scrape JustETF/Yahoo quotes and write price to cache.json. "
-            "Scalable- and Trade Republic-broker rows from the assets file "
+            "OSKAR rows with a freshly scraped holdings value and no share "
+            "count also get an estimated share quantity written to the assets "
+            "file. Scalable- and Trade Republic-broker rows from the assets file "
             "are included unless --fetch-scalable / --fetch-traderepublic is also set."
         ),
     )

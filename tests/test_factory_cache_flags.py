@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from utils import (
     get_fetch_prices,
     get_fetch_scalable,
     get_fetch_traderepublic,
+    portfolio as global_portfolio,
     set_fetch_geosplit,
     set_fetch_oskar,
     set_fetch_prices,
@@ -34,6 +36,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self._traderepublic = get_fetch_traderepublic()
         self._oskar = get_fetch_oskar()
         self._source = factory_mod.POSITION_SOURCE
+        self._saved_portfolio = copy.deepcopy(dict(global_portfolio))
         self._tmpdir = tempfile.TemporaryDirectory()
         self._cache = Path(self._tmpdir.name) / "cache.json"
         self._cache.write_text(
@@ -55,6 +58,8 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_traderepublic(self._traderepublic)
         set_fetch_oskar(self._oskar)
         factory_mod.POSITION_SOURCE = self._source
+        global_portfolio.clear()
+        global_portfolio.update(copy.deepcopy(self._saved_portfolio))
         self._tmpdir.cleanup()
 
     def _factory(self, **kwargs):
@@ -129,12 +134,79 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_prices(True)
         with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
             pos = self._factory(broker="oskar", value=140.0, shares=4)
+        self.assertEqual(pos.price, 99.5)
+        self.assertEqual(pos.shares, 4)
         self.assertEqual(pos.value, 140.0)
+
+    def test_oskar_fetch_prices_estimates_shares_and_writes_portfolio(self) -> None:
+        set_fetch_oskar(True)
+        set_fetch_prices(True)
+        global_portfolio.clear()
+        global_portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": None,
+                "value": 199.0,
+                "broker": "oskar",
+            }
+        ]
+        with patch("position.factory.write_portfolio_to_file") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                pos = self._factory(
+                    broker="oskar", value=199.0, shares=None, price=None
+                )
+        self.assertEqual(pos.price, 99.5)
+        self.assertEqual(pos.shares, 199.0 / 99.5)
+        self.assertEqual(pos.value, 199.0)
+        row = global_portfolio["equity_portfolio"][0]
+        self.assertEqual(row["price"], 99.5)
+        self.assertEqual(row["shares"], 199.0 / 99.5)
+        write.assert_called_once()
+
+    def test_oskar_does_not_estimate_shares_from_cached_price(self) -> None:
+        set_fetch_oskar(True)
+        set_fetch_prices(False)
+        with patch("position.factory.write_portfolio_to_file") as write:
+            with patch.object(
+                JustETFPosition,
+                "_fast_info_price",
+                side_effect=AssertionError("_fast_info_price should not be called"),
+            ):
+                pos = self._factory(broker="oskar", value=199.0, shares=None, price=None)
+        self.assertEqual(pos.price, 10.0)
+        self.assertIsNone(pos.shares)
+        write.assert_not_called()
+
+    def test_oskar_does_not_estimate_shares_when_quote_missing(self) -> None:
+        set_fetch_oskar(True)
+        set_fetch_prices(True)
+        with patch("position.factory.write_portfolio_to_file") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
+                pos = self._factory(
+                    broker="oskar", value=199.0, shares=None, price=None
+                )
+        self.assertIsNone(pos.price)
+        self.assertIsNone(pos.shares)
+        write.assert_not_called()
+
+    def test_oskar_does_not_estimate_shares_without_live_scrape(self) -> None:
+        set_fetch_oskar(False)
+        set_fetch_prices(True)
+        with patch("position.factory.write_portfolio_to_file") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                pos = self._factory(
+                    broker="oskar", value=199.0, shares=None, price=None
+                )
+        self.assertEqual(pos.price, 99.5)
+        self.assertIsNone(pos.shares)
+        write.assert_not_called()
 
     def test_without_fetch_prices_cached_value_prevails(self) -> None:
         set_fetch_prices(False)
         pos = self._factory(value=140.0, shares=4, price=10.0)
-        self.assertEqual(pos.value, 140.0)
+        # Live scrape value is not preferred, so holdings value is shares × quote.
+        self.assertEqual(pos.value, 40.0)
 
     def test_without_fetch_prices_uses_cache_and_skips_fast_info(self) -> None:
         set_fetch_prices(False)

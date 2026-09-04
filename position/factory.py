@@ -3,12 +3,15 @@ import logging
 from typing import Any
 
 from utils import (
+    get_assets_file,
     get_fetch_geosplit,
     get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
     get_fetch_traderepublic,
     get_incognito_value_factor,
+    portfolio as global_portfolio,
+    write_portfolio_to_file,
 )
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
@@ -90,6 +93,27 @@ def _save_position_in_cache(
     cache[isin] = row
     with open(CACHE_FILENAME, "w") as f:
         json.dump(cache, f, indent=2)
+
+
+def _persist_oskar_quote_in_portfolio(
+    isin: str,
+    *,
+    shares: float | None = None,
+) -> None:
+    """Write a freshly fetched quote (and optional estimated shares) into ``assets.json``."""
+    updated = False
+    for positions in global_portfolio.values():
+        for position in positions:
+            if shares is not None:
+                position["shares"] = shares
+                updated = True
+    if updated:
+        write_portfolio_to_file(get_assets_file())
+        logger.info(
+            "Factory: wrote OSKAR quote for %s to portfolio file - shares=%s",
+            isin,
+            shares,
+        )
 
 
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
@@ -203,5 +227,26 @@ def factory(
             countries=countries_rows,
             update_price=update_price,
             update_countries=update_countries,
+        )
+
+    # OSKAR cockpit has no share count or unit price. After a live scrape
+    # (``prefer_scrape_value``) and a fresh ``--fetch-prices`` quote (not cache),
+    # persist the quote and estimate shares from holdings value / price.
+    if prefer_scrape_value and fetch_prices and position.price is not None and broker == OSKAR and isin:
+        estimated_shares: float | None = None
+        if shares is None and value is not None and position.price:
+            estimated_shares = float(value) / float(position.price)
+            position._shares = estimated_shares
+            logger.info(
+                "Factory: estimated OSKAR shares for %s: %s (value=%s / price=%s)",
+                isin,
+                estimated_shares,
+                value,
+                position.price,
+            )
+        _persist_oskar_quote_in_portfolio(
+            isin,
+            price=float(position.price),
+            shares=estimated_shares,
         )
     return position
