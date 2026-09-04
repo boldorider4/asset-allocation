@@ -13,7 +13,7 @@ class NonRegionalPortfolio(Portfolio):
 
         if self._value <= 0 and self._positions:
             logger.warning(
-                "Non-regional portfolio %r has zero total value with %d position(s)",
+                "Non-regional portfolio %r has zero or negative total value with %d position(s)",
                 name,
                 len(self._positions),
             )

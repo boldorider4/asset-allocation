@@ -212,16 +212,21 @@ class Position(ABC):
     @property
     def value(self) -> float | None:
         base: float | None
+        share_and_price_available = self._shares is not None and self._price is not None
         if self._prefer_scrape_value and self._value is not None:
+            logger.info("Position: using cached value from asset file because preferred: %s", self._value)
             base = self._value
-        elif get_fetch_prices():
-            base = self._shares_times_price()
+        elif share_and_price_available:
+            logger.info("Position: using shares and price to compute value because cached \
+                value not preferred or no cached value is available and shares and price are available")
+            base = self._shares * self._price
         elif self._value is not None:
+            logger.info("Position: using cached value from asset file because no price is fetched")
             base = self._value
-        else:
-            base = self._shares_times_price()
         if base is None:
+            logger.warning("Position: no value to compute")
             return None
+        logger.info("Position: computed value: %s", base * self._value_scale)
         return base * self._value_scale
 
     @property
@@ -267,12 +272,6 @@ class Position(ABC):
 
     def __repr__(self) -> str:
         return self.__str__()
-
-    def _shares_times_price(self) -> float | None:
-        if self._shares is not None and self._price is not None:
-            return self._shares * self._price
-        logger.warning("Position: no shares or price to compute value")
-        return None
 
     @staticmethod
     def _cached_countries_to_rows(
