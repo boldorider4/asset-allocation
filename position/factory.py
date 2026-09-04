@@ -10,7 +10,6 @@ from utils import (
     get_fetch_traderepublic,
     get_incognito_value_factor,
 )
-from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
@@ -118,7 +117,7 @@ def factory(
     *,
     value_scale: float | None = None,
     price: float | None = None,
-) -> JustETFPosition | YFinancePosition | CLIQueryPosition:
+) -> JustETFPosition | YFinancePosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
@@ -152,23 +151,7 @@ def factory(
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if use_broker_quote:
-        position = CLIQueryPosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-            prefer_scrape_value=prefer_scrape_value,
-        )
-    elif POSITION_SOURCE == YFINANCE:
+    if POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(
             isin,
             name,
@@ -184,7 +167,7 @@ def factory(
             price=ctor_price,
             prefer_scrape_value=prefer_scrape_value,
         )
-    elif POSITION_SOURCE == JUSTETF:
+    elif POSITION_SOURCE == JUSTETF or use_broker_quote:
         position = JustETFPosition(
             isin,
             name,

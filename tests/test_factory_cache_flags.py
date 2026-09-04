@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from position.factory import factory
-from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
 import position.factory as factory_mod
@@ -18,10 +17,12 @@ from utils import (
     get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
+    get_fetch_traderepublic,
     set_fetch_geosplit,
     set_fetch_oskar,
     set_fetch_prices,
     set_fetch_scalable,
+    set_fetch_traderepublic,
 )
 
 
@@ -30,6 +31,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self._prices = get_fetch_prices()
         self._geo = get_fetch_geosplit()
         self._scalable = get_fetch_scalable()
+        self._traderepublic = get_fetch_traderepublic()
         self._oskar = get_fetch_oskar()
         self._source = factory_mod.POSITION_SOURCE
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -50,6 +52,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_prices(self._prices)
         set_fetch_geosplit(self._geo)
         set_fetch_scalable(self._scalable)
+        set_fetch_traderepublic(self._traderepublic)
         set_fetch_oskar(self._oskar)
         factory_mod.POSITION_SOURCE = self._source
         self._tmpdir.cleanup()
@@ -78,22 +81,21 @@ class TestFactoryCacheFlags(unittest.TestCase):
             ):
                 pos = self._factory()
         self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, CLIQueryPosition)
         fast.assert_called()
         self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
-    def test_fetch_scalable_uses_cli_query_position_not_fast_info(self) -> None:
+    def test_fetch_scalable_uses_supplied_price_not_fast_info(self) -> None:
         set_fetch_scalable(True)
         with patch.object(
-            CLIQueryPosition,
+            JustETFPosition,
             "_fast_info_price",
             side_effect=AssertionError("_fast_info_price should not be called"),
         ):
             pos = self._factory(broker="scalable")
-        self.assertIsInstance(pos, CLIQueryPosition)
+        self.assertIsInstance(pos, JustETFPosition)
         self.assertEqual(pos.price, 40.315)
 
     def test_fetch_prices_uses_shares_times_price_not_cached_value(self) -> None:
@@ -109,6 +111,25 @@ class TestFactoryCacheFlags(unittest.TestCase):
         pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
         self.assertEqual(pos.price, 40.315)
         self.assertEqual(pos.value, 140.0)
+        saved = json.loads(self._cache.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
+
+    def test_live_traderepublic_scan_writes_scanned_price_to_cache(self) -> None:
+        set_fetch_traderepublic(True)
+        set_fetch_prices(True)
+        with patch.object(
+            JustETFPosition,
+            "_fast_info_price",
+            side_effect=AssertionError("_fast_info_price should not be called"),
+        ):
+            pos = self._factory(
+                broker="traderepublic", value=140.0, shares=4, price=40.315
+            )
+        self.assertIsInstance(pos, JustETFPosition)
+        self.assertEqual(pos.price, 40.315)
+        self.assertEqual(pos.value, 140.0)
+        saved = json.loads(self._cache.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
     def test_live_oskar_value_prevails_with_fetch_prices(self) -> None:
         set_fetch_oskar(True)
