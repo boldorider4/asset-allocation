@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 
 from logger import attach_color_stderr_handler_for_module
 from scrape.oskar import _OSKAR
+from utils import get_fetch_geosplit, get_fetch_prices
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -132,6 +133,7 @@ class Position(ABC):
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
+        prefer_scrape_value: bool = False,
     ) -> None:
         self._name = name
         self._short_name = short_name
@@ -143,6 +145,7 @@ class Position(ABC):
         self._dmem = dmem
         self._dmem_other = dmem_other
         self._usavn = usavn
+        self._prefer_scrape_value = prefer_scrape_value
         self._countries: list[dict[str, float | str]] | None = None
         self._price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
@@ -156,29 +159,26 @@ class Position(ABC):
         logger.info("Position: shares: %s, value: %s", shares, value)
         logger.info("Position: short_name: %s", short_name)
 
-        # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
-        if cached_countries is not None:
-            if self._isin is not None:
+        cached_rows = self._cached_countries_to_rows(cached_countries)
+        if get_fetch_geosplit():
+            self._countries = self._fetch_countries_for_geosplit()
+        elif cached_rows is not None:
+            if self._isin:
                 logger.warning("Position: cached countries for ISIN %s: %s", self._isin, cached_countries)
             else:
                 logger.warning("Position: cached countries for asset %s: %s", self._name, cached_countries)
-            self._countries = [
-                {"name": name, "weight_pct": float(w) * 100.0}
-                for name, w in cached_countries.items()
-            ]
-        elif self._isin is not None:
-            logger.info("Position: fetching countries from ISIN %s", self._isin)
-            try:
-                self._countries = self.countries()
-            except NotImplementedError:
-                logger.warning("Position: could not fetch countries for ISIN %s", self._isin)
-                self._countries = None
+            self._countries = cached_rows
+        else:
+            logger.warning(
+                "Position: fetch-geosplit disabled and no cached countries for %s",
+                self._isin or self._name,
+            )
         logger.info("Position: countries: %s", self._countries)
 
         # countries are set either from cache.json or from ISIN
         if self._countries is not None:
             logger.info("Position: countries are set, using them to compute DMEM and USAVN")
-        elif self._isin is not None:
+        elif self._isin:
             logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from asset file", self._isin)
         else:
             logger.warning("Position: no countries found for asset %s, using dmem and usavn from asset file", self._name)
@@ -188,18 +188,17 @@ class Position(ABC):
         self._usavn = self._compute_us_vs_exus_market()
         logger.info("Position: USAVN: %s", self._usavn)
 
-        # price is set from asset file, e.g. scalable, or from cache
-        if price is not None:
+        if get_fetch_prices():
+            self._price = self._fetch_fast_info_price(price)
+        elif price is not None:
             logger.info("Position: using supplied price: %s", price)
             self._price = price
-        # price is not set so must be fetched from web if position is not from OSKAR
-        elif self._isin is not None and self._broker is not _OSKAR:
-            logger.info("Position: fetching price from ISIN %s", self._isin)
-            self._price = self._fast_info_price()
-            if self._price is None:
-                logger.error("Position: no price for ISIN %s", self._isin)
-                raise RuntimeError(f"No price for ISIN {self._isin}")
-            logger.info("Position: price: %s", self._price)
+        elif self._isin and self._broker is not _OSKAR:
+            logger.info(
+                "Position: no supplied price; fetching from ISIN %s (fetch-prices disabled)",
+                self._isin,
+            )
+            self._price = self._fetch_fast_info_price(None)
         elif self._value is None:
             logger.error("Position: No price, neither value nor ISIN was provided")
             raise RuntimeError(
@@ -213,14 +212,24 @@ class Position(ABC):
     @property
     def value(self) -> float | None:
         base: float | None
-        if self._value is not None:
+        share_and_price_available = self._shares is not None and self._price is not None
+        if self._prefer_scrape_value and self._value is not None:
+            logger.info("Position: using cached value from asset file because preferred: %s", self._value)
             base = self._value
-        elif self._shares is not None and self._price is not None:
+        elif share_and_price_available:
+            logger.info(
+                "Position: using shares and price to compute value because cached value not preferred or no cached value is available: %s * %s",
+                float(self._shares),
+                self._price,
+            )
             base = self._shares * self._price
-        else:
-            base = None
+        elif self._value is not None:
+            logger.info("Position: using cached value from asset file because no price is fetched")
+            base = self._value
         if base is None:
+            logger.warning("Position: no value to compute")
             return None
+        logger.info("Position: computed value: %s", base * self._value_scale)
         return base * self._value_scale
 
     @property
@@ -266,6 +275,68 @@ class Position(ABC):
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    @staticmethod
+    def _cached_countries_to_rows(
+        cached_countries: dict[str, float] | None,
+    ) -> list[dict[str, float | str]] | None:
+        # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        if cached_countries is None:
+            return None
+        return [
+            {"name": name, "weight_pct": float(w) * 100.0}
+            for name, w in cached_countries.items()
+        ]
+
+    def _fetch_countries_for_geosplit(
+        self,
+    ) -> list[dict[str, float | str]] | None:
+        if not self._isin:
+            logger.warning(
+                "Position: fetch-geosplit requested but no ISIN for asset %s; "
+                "skipping country lookup",
+                self._name,
+            )
+            return None
+        logger.info("Position: fetch-geosplit enabled, fetching countries from ISIN %s", self._isin)
+        try:
+            return self.countries()
+        except NotImplementedError:
+            logger.warning("Position: could not fetch countries for ISIN %s", self._isin)
+            return None
+
+    def _fetch_fast_info_price(self, supplied_price: float | None) -> float | None:
+        if not self._isin:
+            logger.warning(
+                "Position: fetch-prices requested but no ISIN for asset %s; "
+                "skipping quote lookup",
+                self._name,
+            )
+            return supplied_price
+        if self._broker is _OSKAR:
+            logger.warning(
+                "Position: fetch-prices requested for OSKAR position %s; not fetching quote",
+                self._isin,
+            )
+            return supplied_price
+        logger.info("Position: fetching price from ISIN %s", self._isin)
+        try:
+            fetched = self._fast_info_price()
+        except NotImplementedError:
+            logger.warning(
+                "Position: quote lookup not implemented for ISIN %s; using supplied price %s",
+                self._isin,
+                supplied_price,
+            )
+            return supplied_price
+        if fetched is None:
+            logger.warning(
+                "Position: no price for ISIN %s; continuing without a fetched quote",
+                self._isin,
+            )
+            return None
+        logger.info("Position: price: %s", fetched)
+        return fetched
 
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""

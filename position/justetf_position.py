@@ -72,6 +72,7 @@ class JustETFPosition(Position):
         cached_countries: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
+        prefer_scrape_value: bool = False,
     ) -> None:
         self._chart: dict | None = None
         super().__init__(
@@ -87,6 +88,7 @@ class JustETFPosition(Position):
             cached_countries=cached_countries,
             value_scale=value_scale,
             price=price,
+            prefer_scrape_value=prefer_scrape_value,
         )
 
     def _http_chart_json(self, *, currency: str) -> dict:

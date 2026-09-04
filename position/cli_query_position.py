@@ -8,7 +8,8 @@ class CLIQueryPosition(JustETFPosition):
     JustETF country weights with a broker-supplied price from a CLI scrape
     (``sc`` for Scalable, ``pytr`` for Trade Republic).
 
-    ``_fast_info_price`` is never called when ``price`` is passed to ``Position``.
+    ``_fast_info_price`` raises ``NotImplementedError``; ``Position`` then keeps
+    the broker-supplied ``price`` when ``--fetch-prices`` is set.
     """
 
     def _fast_info_price(self) -> float | None:

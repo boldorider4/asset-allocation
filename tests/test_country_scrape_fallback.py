@@ -7,6 +7,7 @@ import urllib.error
 from unittest.mock import patch
 
 from position.justetf_position import JustETFPosition
+from utils import get_fetch_geosplit, set_fetch_geosplit
 
 _ISIN = "LU1547515137"
 _HTTP_403 = urllib.error.HTTPError(
@@ -15,6 +16,13 @@ _HTTP_403 = urllib.error.HTTPError(
 
 
 class TestJustETFCountryScrapeFailure(unittest.TestCase):
+    def setUp(self) -> None:
+        self._geo = get_fetch_geosplit()
+        set_fetch_geosplit(True)
+
+    def tearDown(self) -> None:
+        set_fetch_geosplit(self._geo)
+
     def _position(self, error: Exception) -> JustETFPosition:
         with patch.object(
             JustETFPosition, "_fetch_countries_with_retries", side_effect=error

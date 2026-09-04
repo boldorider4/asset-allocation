@@ -15,9 +15,11 @@ from position.yfinance_position import YFinancePosition
 import position.factory as factory_mod
 from utils import (
     get_fetch_geosplit,
+    get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
     set_fetch_geosplit,
+    set_fetch_oskar,
     set_fetch_prices,
     set_fetch_scalable,
 )
@@ -28,6 +30,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self._prices = get_fetch_prices()
         self._geo = get_fetch_geosplit()
         self._scalable = get_fetch_scalable()
+        self._oskar = get_fetch_oskar()
         self._source = factory_mod.POSITION_SOURCE
         self._tmpdir = tempfile.TemporaryDirectory()
         self._cache = Path(self._tmpdir.name) / "cache.json"
@@ -47,6 +50,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_prices(self._prices)
         set_fetch_geosplit(self._geo)
         set_fetch_scalable(self._scalable)
+        set_fetch_oskar(self._oskar)
         factory_mod.POSITION_SOURCE = self._source
         self._tmpdir.cleanup()
 
@@ -56,7 +60,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             "name": "Xtrackers",
             "shares": 4,
             "value": None,
-            "broker": "scalable",
+            "broker": "other",
             "price": 40.315,
         }
         defaults.update(kwargs)
@@ -88,15 +92,34 @@ class TestFactoryCacheFlags(unittest.TestCase):
             "_fast_info_price",
             side_effect=AssertionError("_fast_info_price should not be called"),
         ):
-            pos = self._factory()
+            pos = self._factory(broker="scalable")
         self.assertIsInstance(pos, CLIQueryPosition)
         self.assertEqual(pos.price, 40.315)
 
-    def test_explicit_value_preferred_over_shares_times_price(self) -> None:
+    def test_fetch_prices_uses_shares_times_price_not_cached_value(self) -> None:
         set_fetch_prices(True)
         with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
             pos = self._factory(value=140.0, shares=4)
         self.assertEqual(pos.price, 99.5)
+        self.assertEqual(pos.value, 398.0)
+
+    def test_live_scalable_value_prevails_with_fetch_prices(self) -> None:
+        set_fetch_scalable(True)
+        set_fetch_prices(True)
+        pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
+        self.assertEqual(pos.price, 40.315)
+        self.assertEqual(pos.value, 140.0)
+
+    def test_live_oskar_value_prevails_with_fetch_prices(self) -> None:
+        set_fetch_oskar(True)
+        set_fetch_prices(True)
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            pos = self._factory(broker="oskar", value=140.0, shares=4)
+        self.assertEqual(pos.value, 140.0)
+
+    def test_without_fetch_prices_cached_value_prevails(self) -> None:
+        set_fetch_prices(False)
+        pos = self._factory(value=140.0, shares=4, price=10.0)
         self.assertEqual(pos.value, 140.0)
 
     def test_without_fetch_prices_uses_cache_and_skips_fast_info(self) -> None:

@@ -4,6 +4,7 @@ from typing import Any
 
 from utils import (
     get_fetch_geosplit,
+    get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
     get_fetch_traderepublic,
@@ -12,6 +13,7 @@ from utils import (
 from position.cli_query_position import CLIQueryPosition
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
+from scrape.oskar import _OSKAR as OSKAR
 from scrape.scalable import _SCALABLE as SCALABLE
 from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
 from logger import attach_color_stderr_handler_for_module
@@ -91,6 +93,18 @@ def _save_position_in_cache(
         json.dump(cache, f, indent=2)
 
 
+def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
+    if value is None:
+        return False
+    if broker == OSKAR:
+        return get_fetch_oskar()
+    if broker == SCALABLE:
+        return get_fetch_scalable()
+    if broker == TRADEREPUBLIC:
+        return get_fetch_traderepublic()
+    return False
+
+
 def factory(
     isin: str,
     name: str | None = None,
@@ -113,6 +127,8 @@ def factory(
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
     use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
+    prefer_scrape_value = _scrape_holdings_value_prevails(broker, value)
+    logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
@@ -150,6 +166,7 @@ def factory(
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
+            prefer_scrape_value=prefer_scrape_value,
         )
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(
@@ -165,6 +182,7 @@ def factory(
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
+            prefer_scrape_value=prefer_scrape_value,
         )
     elif POSITION_SOURCE == JUSTETF:
         position = JustETFPosition(
@@ -180,6 +198,7 @@ def factory(
             cached_countries=countries_arg,
             value_scale=value_scale,
             price=ctor_price,
+            prefer_scrape_value=prefer_scrape_value,
         )
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")

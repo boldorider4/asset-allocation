@@ -94,6 +94,7 @@ class TestCLIQueryFactoryCache(unittest.TestCase):
                 )
         self.assertIsInstance(pos, CLIQueryPosition)
         self.assertEqual(pos.price, 40.315)
+        self.assertEqual(pos.value, 140.0)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
@@ -116,6 +117,7 @@ class TestCLIQueryFactoryCache(unittest.TestCase):
                 )
         self.assertIsInstance(pos, CLIQueryPosition)
         self.assertEqual(pos.price, 40.315)
+        self.assertEqual(pos.value, 140.0)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
         self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
 
