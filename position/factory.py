@@ -128,6 +128,7 @@ def factory(
     fetch_geosplit = get_fetch_geosplit()
     use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
     prefer_scrape_value = _scrape_holdings_value_prevails(broker, value)
+    logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
