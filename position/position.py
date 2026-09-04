@@ -217,8 +217,11 @@ class Position(ABC):
             logger.info("Position: using cached value from asset file because preferred: %s", self._value)
             base = self._value
         elif share_and_price_available:
-            logger.info("Position: using shares and price to compute value because cached \
-                value not preferred or no cached value is available and shares and price are available")
+            logger.info(
+                "Position: using shares and price to compute value because cached value not preferred or no cached value is available: %s * %s",
+                float(self._shares),
+                self._price,
+            )
             base = self._shares * self._price
         elif self._value is not None:
             logger.info("Position: using cached value from asset file because no price is fetched")
