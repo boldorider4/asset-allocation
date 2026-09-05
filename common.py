@@ -23,3 +23,8 @@ ISIN_TO_PORTFOLIO: dict[str, str] = {
 }
 DEFAULT_ISIN_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 
+# Fresh estimates collected while portfolio Position objects are constructed.
+# Keying by ISIN and scraped value distinguishes the same ETF held in multiple
+# OSKAR entries without involving non-OSKAR positions.
+PENDING_OSKAR_SHARES: dict[tuple[str, float], float] = {}
+

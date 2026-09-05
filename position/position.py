@@ -241,6 +241,10 @@ class Position(ABC):
         return self._usavn
 
     @property
+    def shares(self) -> float | None:
+        return self._shares
+
+    @property
     def price(self) -> float | None:
         return self._price
 
@@ -311,12 +315,6 @@ class Position(ABC):
                 "Position: fetch-prices requested but no ISIN for asset %s; "
                 "skipping quote lookup",
                 self._name,
-            )
-            return supplied_price
-        if self._broker is _OSKAR:
-            logger.warning(
-                "Position: fetch-prices requested for OSKAR position %s; not fetching quote",
-                self._isin,
             )
             return supplied_price
         logger.info("Position: fetching price from ISIN %s", self._isin)

@@ -20,13 +20,18 @@ from scrape.traderepublic import (
     _CASH_FETCH_KEY,
     update_traderepublic_etfs_in_portfolio,
 )
-from utils import portfolio as global_portfolio
-from utils import write_portfolio_to_file
+from utils import (
+    get_fetch_prices,
+    portfolio as global_portfolio,
+    set_fetch_prices,
+    write_portfolio_to_file,
+)
 
 
 class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
     def setUp(self) -> None:
         self._saved = copy.deepcopy(dict(global_portfolio))
+        self._prices = get_fetch_prices()
         global_portfolio.clear()
         global_portfolio.update(
             {
@@ -56,10 +61,11 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        set_fetch_prices(self._prices)
         global_portfolio.clear()
         global_portfolio.update(copy.deepcopy(self._saved))
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_updates_shares_value_and_price(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "IE0006WW1TQ4": TradeRepublicHolding(
@@ -82,10 +88,10 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         pos = global_portfolio[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
-        self.assertEqual(pos["price"], 40.315)
+        self.assertNotIn("price", pos)
         self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 40.32)
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_writes_assets_file_shares_and_value(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "IE0006WW1TQ4": TradeRepublicHolding(
@@ -104,9 +110,9 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         pos = written[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
-        self.assertEqual(pos["price"], 40.315)
+        self.assertNotIn("price", pos)
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_adds_mapped_buckets(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "DE000EWG2LD7": TradeRepublicHolding(
@@ -132,7 +138,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         )
         self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 0)
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_unknown_isin_falls_back_to_equity(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "XX000UNKNOWN1": TradeRepublicHolding(
@@ -147,7 +153,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
             update_traderepublic_etfs_in_portfolio()
         self.assertEqual(global_portfolio[EQUITY_PORTFOLIO][0]["ISIN"], "XX000UNKNOWN1")
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_removes_stale_and_keeps_non_traderepublic(self, mock_fetch) -> None:
         global_portfolio[EQUITY_PORTFOLIO].append(
             {
@@ -173,7 +179,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         self.assertIn("IE00OSTALE01", isins)
         self.assertNotIn("IE0006WW1TQ4", isins)
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_removes_cash_when_absent(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "IE0006WW1TQ4": TradeRepublicHolding(
@@ -187,13 +193,53 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         update_traderepublic_etfs_in_portfolio()
         self.assertEqual(global_portfolio[CASH_PORTFOLIO], [])
 
-    @patch("traderepublic.fetch_traderepublic_etfs")
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
     def test_empty_fetch_leaves_portfolio_unchanged(self, mock_fetch) -> None:
         mock_fetch.return_value = {}
-        with self.assertLogs("traderepublic", level="WARNING"):
+        with self.assertLogs("scrape.traderepublic", level="WARNING"):
             update_traderepublic_etfs_in_portfolio()
         self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 1)
         self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 1.0)
+
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
+    def test_fetch_prices_writes_broker_quote_to_cache(self, mock_fetch) -> None:
+        mock_fetch.return_value = {
+            "IE0006WW1TQ4": TradeRepublicHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+        }
+        set_fetch_prices(True)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            cache_path.write_text("{}", encoding="utf-8")
+            with patch("utils.CACHE_FILENAME", str(cache_path)):
+                update_traderepublic_etfs_in_portfolio()
+            saved = json.loads(cache_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
+        self.assertNotIn("price", global_portfolio[EQUITY_PORTFOLIO][0])
+
+    @patch("scrape.traderepublic.fetch_traderepublic_etfs")
+    def test_without_fetch_prices_does_not_write_cache(self, mock_fetch) -> None:
+        mock_fetch.return_value = {
+            "IE0006WW1TQ4": TradeRepublicHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+        }
+        set_fetch_prices(False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            cache_path.write_text("{}", encoding="utf-8")
+            with patch("utils.CACHE_FILENAME", str(cache_path)):
+                update_traderepublic_etfs_in_portfolio()
+            self.assertEqual(cache_path.read_text(encoding="utf-8"), "{}")
 
 
 if __name__ == "__main__":

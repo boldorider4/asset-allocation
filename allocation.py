@@ -25,6 +25,7 @@ from common import (
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from utils import (
+    persist_oskar_shares_in_portfolio,
     portfolio,
     load_portfolio,
     write_portfolio_to_file,
@@ -102,6 +103,7 @@ def main():
     non_regional_bond_portfolio = NonRegionalPortfolio(name="Bond Portfolio", positions=portfolio[BOND_PORTFOLIO], consolidate=True)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
+    persist_oskar_shares_in_portfolio()
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
@@ -145,9 +147,13 @@ def cli() -> None:
         "--fetch-prices",
         action="store_true",
         help=(
-            "Scrape JustETF/Yahoo quotes and write price to cache.json. "
-            "Scalable- and Trade Republic-broker rows from the assets file "
-            "are included unless --fetch-scalable / --fetch-traderepublic is also set."
+            "Scrape live JustETF/Yahoo quotes and refresh the price in "
+            "cache.json. Holdings values then come from shares × quote, and "
+            "OSKAR rows get an estimated share count. When combined with "
+            "--fetch-scalable / --fetch-tr, broker unit prices from those "
+            "scrapes are cached too. Without this flag, a broker-scraped "
+            "value from the assets file prevails over shares × cached price. "
+            "The assets file never stores price: only shares and value."
         ),
     )
     parser.add_argument(
