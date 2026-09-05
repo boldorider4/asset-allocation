@@ -2,16 +2,14 @@ import json
 import logging
 from typing import Any
 
+from common import PENDING_OSKAR_SHARES
 from utils import (
-    get_assets_file,
     get_fetch_geosplit,
     get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
     get_fetch_traderepublic,
     get_incognito_value_factor,
-    portfolio as global_portfolio,
-    write_portfolio_to_file,
 )
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
@@ -93,30 +91,6 @@ def _save_position_in_cache(
     cache[isin] = row
     with open(CACHE_FILENAME, "w") as f:
         json.dump(cache, f, indent=2)
-
-
-def _persist_oskar_quote_in_portfolio(
-    isin: str,
-    shares: float | None = None,
-) -> None:
-    """Write estimated shares for one OSKAR position into ``assets.json``."""
-    if shares is None:
-        return
-    updated = False
-    for positions in global_portfolio.values():
-        for position in positions:
-            pos_broker = position.get("broker") or position.get("Broker")
-            pos_isin = position.get("ISIN") or position.get("isin")
-            if pos_broker == OSKAR and pos_isin == isin:
-                position["shares"] = shares
-                updated = True
-    if updated:
-        write_portfolio_to_file(get_assets_file())
-        logger.info(
-            "Factory: wrote OSKAR quote for %s to portfolio file - shares=%s",
-            isin,
-            shares,
-        )
 
 
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
@@ -234,7 +208,8 @@ def factory(
 
     # OSKAR cockpit has no share count or unit price. After a live scrape
     # (``prefer_scrape_value``) and a fresh ``--fetch-prices`` quote (not cache),
-    # persist the quote and estimate shares from holdings value / price.
+    # queue an estimate from holdings value / price for batch persistence after
+    # all portfolio Position objects have been constructed.
     if prefer_scrape_value and fetch_prices and position.price is not None and broker == OSKAR and isin:
         estimated_shares: float | None = None
         if shares is None and value is not None and position.price:
@@ -247,8 +222,5 @@ def factory(
                 value,
                 position.price,
             )
-        _persist_oskar_quote_in_portfolio(
-            isin,
-            shares=estimated_shares,
-        )
+            PENDING_OSKAR_SHARES[(isin, float(value))] = estimated_shares
     return position

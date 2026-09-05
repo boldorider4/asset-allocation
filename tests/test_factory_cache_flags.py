@@ -19,6 +19,7 @@ from utils import (
     get_fetch_prices,
     get_fetch_scalable,
     get_fetch_traderepublic,
+    persist_oskar_shares_in_portfolio,
     portfolio as global_portfolio,
     set_fetch_geosplit,
     set_fetch_oskar,
@@ -138,7 +139,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.shares, 4)
         self.assertEqual(pos.value, 140.0)
 
-    def test_oskar_fetch_prices_estimates_shares_and_writes_portfolio(self) -> None:
+    def test_oskar_fetch_prices_queues_shares_for_batch_write(self) -> None:
         set_fetch_oskar(True)
         set_fetch_prices(True)
         global_portfolio.clear()
@@ -152,11 +153,15 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("position.factory.write_portfolio_to_file") as write:
+        with patch("utils.write_portfolio_to_file") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
                 )
+            self.assertIsNone(
+                global_portfolio["equity_portfolio"][0]["shares"]
+            )
+            persist_oskar_shares_in_portfolio()
         self.assertEqual(pos.price, 99.5)
         self.assertEqual(pos.shares, 199.0 / 99.5)
         self.assertEqual(pos.value, 199.0)
@@ -193,24 +198,37 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             },
         ]
-        with patch("position.factory.write_portfolio_to_file"):
+        with patch("utils.write_portfolio_to_file") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 self._factory(broker="oskar", value=199.0, shares=None, price=None)
+                self._factory(
+                    isin="IE000OTHER00",
+                    name="Other OSKAR ETF",
+                    broker="oskar",
+                    value=50.0,
+                    shares=None,
+                    price=None,
+                )
+            self.assertIsNone(global_portfolio["equity_portfolio"][0]["shares"])
+            self.assertIsNone(global_portfolio["equity_portfolio"][2]["shares"])
+            persist_oskar_shares_in_portfolio()
         oskar_row, scalable_row, other_row = global_portfolio["equity_portfolio"]
         self.assertEqual(oskar_row["shares"], 199.0 / 99.5)
         self.assertEqual(scalable_row["shares"], 7)
-        self.assertIsNone(other_row["shares"])
+        self.assertEqual(other_row["shares"], 50.0 / 99.5)
+        write.assert_called_once()
 
     def test_oskar_does_not_estimate_shares_from_cached_price(self) -> None:
         set_fetch_oskar(True)
         set_fetch_prices(False)
-        with patch("position.factory.write_portfolio_to_file") as write:
+        with patch("utils.write_portfolio_to_file") as write:
             with patch.object(
                 JustETFPosition,
                 "_fast_info_price",
                 side_effect=AssertionError("_fast_info_price should not be called"),
             ):
                 pos = self._factory(broker="oskar", value=199.0, shares=None, price=None)
+            persist_oskar_shares_in_portfolio()
         self.assertEqual(pos.price, 10.0)
         self.assertIsNone(pos.shares)
         write.assert_not_called()
@@ -218,11 +236,12 @@ class TestFactoryCacheFlags(unittest.TestCase):
     def test_oskar_does_not_estimate_shares_when_quote_missing(self) -> None:
         set_fetch_oskar(True)
         set_fetch_prices(True)
-        with patch("position.factory.write_portfolio_to_file") as write:
+        with patch("utils.write_portfolio_to_file") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
                 )
+            persist_oskar_shares_in_portfolio()
         self.assertIsNone(pos.price)
         self.assertIsNone(pos.shares)
         write.assert_not_called()
@@ -230,11 +249,12 @@ class TestFactoryCacheFlags(unittest.TestCase):
     def test_oskar_does_not_estimate_shares_without_live_scrape(self) -> None:
         set_fetch_oskar(False)
         set_fetch_prices(True)
-        with patch("position.factory.write_portfolio_to_file") as write:
+        with patch("utils.write_portfolio_to_file") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
                 )
+            persist_oskar_shares_in_portfolio()
         self.assertEqual(pos.price, 99.5)
         self.assertIsNone(pos.shares)
         write.assert_not_called()

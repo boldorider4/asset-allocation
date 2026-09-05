@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from common import DEFAULT_ISIN_PORTFOLIO_BUCKET, ISIN_TO_PORTFOLIO
+from common import DEFAULT_ISIN_PORTFOLIO_BUCKET, ISIN_TO_PORTFOLIO, PENDING_OSKAR_SHARES
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -199,6 +199,38 @@ def write_portfolio_to_file(path: Path | None = None) -> None:
     with assets_path.open("w", encoding="utf-8") as f:
         json.dump(portfolio, f, indent=2, ensure_ascii=False)
         f.write("\n")
+
+
+def persist_oskar_shares_in_portfolio() -> None:
+    """Apply all fresh OSKAR share estimates and write ``assets.json`` once."""
+    if not PENDING_OSKAR_SHARES:
+        return
+    # Lazy import: ``scrape.oskar`` imports ``utils.portfolio``.
+    from scrape.oskar import _OSKAR as OSKAR
+
+    updated_count = 0
+    try:
+        for positions in portfolio.values():
+            for position in positions:
+                pos_broker = position.get("broker") or position.get("Broker")
+                pos_isin = position.get("ISIN") or position.get("isin")
+                pos_value = position.get("value")
+                if pos_broker != OSKAR or not pos_isin or pos_value is None:
+                    continue
+                shares = PENDING_OSKAR_SHARES.get(
+                    (str(pos_isin), float(pos_value))
+                )
+                if shares is not None:
+                    position["shares"] = shares
+                    updated_count += 1
+        if updated_count:
+            write_portfolio_to_file(get_assets_file())
+            logger.info(
+                "wrote %d OSKAR share estimate(s) to portfolio file",
+                updated_count,
+            )
+    finally:
+        PENDING_OSKAR_SHARES.clear()
 
 
 def bucket_for_isin(isin: str) -> str:
