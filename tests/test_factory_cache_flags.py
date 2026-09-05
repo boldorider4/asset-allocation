@@ -148,6 +148,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "ISIN": "IE0006WW1TQ4",
                 "shares": None,
                 "value": 199.0,
+                "price": None,
                 "broker": "oskar",
             }
         ]
@@ -160,9 +161,45 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.shares, 199.0 / 99.5)
         self.assertEqual(pos.value, 199.0)
         row = global_portfolio["equity_portfolio"][0]
-        self.assertEqual(row["price"], 99.5)
+        # The fetched quote belongs in cache.json only, never in the asset file.
+        self.assertIsNone(row["price"])
         self.assertEqual(row["shares"], 199.0 / 99.5)
         write.assert_called_once()
+
+    def test_oskar_shares_only_persisted_on_matching_oskar_row(self) -> None:
+        set_fetch_oskar(True)
+        set_fetch_prices(True)
+        global_portfolio.clear()
+        global_portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": None,
+                "value": 199.0,
+                "broker": "oskar",
+            },
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 7,
+                "value": 700.0,
+                "broker": "scalable",
+            },
+            {
+                "name": "Other OSKAR ETF",
+                "ISIN": "IE000OTHER00",
+                "shares": None,
+                "value": 50.0,
+                "broker": "oskar",
+            },
+        ]
+        with patch("position.factory.write_portfolio_to_file"):
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                self._factory(broker="oskar", value=199.0, shares=None, price=None)
+        oskar_row, scalable_row, other_row = global_portfolio["equity_portfolio"]
+        self.assertEqual(oskar_row["shares"], 199.0 / 99.5)
+        self.assertEqual(scalable_row["shares"], 7)
+        self.assertIsNone(other_row["shares"])
 
     def test_oskar_does_not_estimate_shares_from_cached_price(self) -> None:
         set_fetch_oskar(True)

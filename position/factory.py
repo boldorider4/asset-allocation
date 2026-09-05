@@ -97,14 +97,17 @@ def _save_position_in_cache(
 
 def _persist_oskar_quote_in_portfolio(
     isin: str,
-    *,
     shares: float | None = None,
 ) -> None:
-    """Write a freshly fetched quote (and optional estimated shares) into ``assets.json``."""
+    """Write estimated shares for one OSKAR position into ``assets.json``."""
+    if shares is None:
+        return
     updated = False
     for positions in global_portfolio.values():
         for position in positions:
-            if shares is not None:
+            pos_broker = position.get("broker") or position.get("Broker")
+            pos_isin = position.get("ISIN") or position.get("isin")
+            if pos_broker == OSKAR and pos_isin == isin:
                 position["shares"] = shares
                 updated = True
     if updated:
@@ -246,7 +249,6 @@ def factory(
             )
         _persist_oskar_quote_in_portfolio(
             isin,
-            price=float(position.price),
             shares=estimated_shares,
         )
     return position
