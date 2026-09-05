@@ -32,12 +32,17 @@ def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> 
     if value is None:
         return False
     if broker == OSKAR:
-        return get_fetch_oskar()
-    if broker == SCALABLE:
-        return get_fetch_scalable()
-    if broker == TRADEREPUBLIC:
-        return get_fetch_traderepublic()
-    return False
+        fresh_scrape = get_fetch_oskar()
+    elif broker == SCALABLE:
+        fresh_scrape = get_fetch_scalable()
+    elif broker == TRADEREPUBLIC:
+        fresh_scrape = get_fetch_traderepublic()
+    else:
+        return False
+    # A holdings value an earlier scrape wrote to the assets file stays
+    # authoritative (whatever the cached price and share count say) until
+    # ``--fetch-prices`` asks for a freshly quoted shares × price.
+    return fresh_scrape or not get_fetch_prices()
 
 
 def factory(
@@ -123,17 +128,22 @@ def factory(
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
 
+    # ``--fetch-prices`` always refreshes the cached quote; the assets file
+    # never stores a price.
+    update_price = fetch_prices and isin is not None and position.price is not None
     update_countries = (
         scrape_geosplit
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
-    if update_countries:
+    if update_price or update_countries:
         save_position_in_cache(
             cache,
             isin,
-            countries=position.countries(),
-            update_countries=True,
+            price=position.price,
+            countries=position.countries() if update_countries else None,
+            update_price=update_price,
+            update_countries=update_countries,
         )
 
     # OSKAR cockpit has no share count or unit price. After a live scrape

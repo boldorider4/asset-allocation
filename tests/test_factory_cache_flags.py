@@ -90,8 +90,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         fast.assert_called()
         self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        # JustETF quotes are live-only; cache prices come from broker scrapes.
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 10.0)
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
     def test_fetch_scalable_uses_supplied_price_not_fast_info(self) -> None:
@@ -130,6 +129,41 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertEqual(pos.price, 99.5)
         self.assertEqual(pos.value, 140.0)
+
+    def test_scraped_value_prevails_without_fetch_flags(self) -> None:
+        """A value an earlier scrape wrote wins over shares × cached price."""
+        set_fetch_prices(False)
+        set_fetch_scalable(False)
+        for broker in ("scalable", "traderepublic", "oskar"):
+            with self.subTest(broker=broker):
+                pos = self._factory(
+                    broker=broker, value=140.0, shares=4, price=None
+                )
+                self.assertEqual(pos.price, 10.0)
+                self.assertEqual(pos.shares, 4)
+                self.assertEqual(pos.value, 140.0)
+
+    def test_fetch_prices_alone_requotes_broker_row(self) -> None:
+        """``--fetch-prices`` without the broker flag asks for shares × quote."""
+        set_fetch_prices(True)
+        set_fetch_scalable(False)
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            pos = self._factory(
+                broker="scalable", value=140.0, shares=4, price=40.315
+            )
+        self.assertEqual(pos.price, 99.5)
+        self.assertEqual(pos.value, 398.0)
+        saved = json.loads(self._cache.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
+
+    def test_fetch_prices_updates_cache_even_when_value_prevails(self) -> None:
+        set_fetch_scalable(True)
+        set_fetch_prices(True)
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
+        self.assertEqual(pos.value, 140.0)
+        saved = json.loads(self._cache.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
 
     def test_live_oskar_value_prevails_with_fetch_prices(self) -> None:
         set_fetch_oskar(True)
@@ -171,7 +205,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(row["shares"], 199.0 / 99.5)
         write.assert_called_once()
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 10.0)
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
 
     def test_oskar_shares_only_persisted_on_matching_oskar_row(self) -> None:
         set_fetch_oskar(True)

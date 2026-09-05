@@ -147,10 +147,12 @@ def cli() -> None:
         "--fetch-prices",
         action="store_true",
         help=(
-            "Scrape live JustETF/Yahoo quotes for display and OSKAR share "
-            "estimates. Those quotes are not written to cache.json. "
-            "When combined with --fetch-scalable / --fetch-tr, broker unit "
-            "prices from those scrapes are written to cache.json. "
+            "Scrape live JustETF/Yahoo quotes and refresh the price in "
+            "cache.json. Holdings values then come from shares × quote, and "
+            "OSKAR rows get an estimated share count. When combined with "
+            "--fetch-scalable / --fetch-tr, broker unit prices from those "
+            "scrapes are cached too. Without this flag, a broker-scraped "
+            "value from the assets file prevails over shares × cached price. "
             "The assets file never stores price: only shares and value."
         ),
     )

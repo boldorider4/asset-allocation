@@ -186,8 +186,7 @@ def save_position_in_cache(
 def cache_broker_quotes(quotes: dict[str, float | None]) -> None:
     """Write Scalable / Trade Republic unit prices to ``cache.json``.
 
-    No-op unless ``--fetch-prices`` is set. JustETF / Yahoo quotes are never
-    stored here; those are only used live (e.g. OSKAR share estimates).
+    No-op unless ``--fetch-prices`` is set.
     """
     if not get_fetch_prices():
         return
