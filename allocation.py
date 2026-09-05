@@ -147,11 +147,11 @@ def cli() -> None:
         "--fetch-prices",
         action="store_true",
         help=(
-            "Scrape JustETF/Yahoo quotes and write price to cache.json. "
-            "OSKAR rows with a freshly scraped holdings value and no share "
-            "count also get an estimated share quantity written to the assets "
-            "file. Scalable- and Trade Republic-broker rows from the assets file "
-            "are included unless --fetch-scalable / --fetch-traderepublic is also set."
+            "Scrape live JustETF/Yahoo quotes for display and OSKAR share "
+            "estimates. Those quotes are not written to cache.json. "
+            "When combined with --fetch-scalable / --fetch-tr, broker unit "
+            "prices from those scrapes are written to cache.json. "
+            "The assets file never stores price: only shares and value."
         ),
     )
     parser.add_argument(

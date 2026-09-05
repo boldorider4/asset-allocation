@@ -73,7 +73,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
             "price": 40.315,
         }
         defaults.update(kwargs)
-        with patch("position.factory.CACHE_FILENAME", str(self._cache)):
+        with patch("utils.CACHE_FILENAME", str(self._cache)):
             return factory(**defaults)
 
     def test_fetch_prices_without_scalable_uses_justetf_and_fast_info(self) -> None:
@@ -90,7 +90,8 @@ class TestFactoryCacheFlags(unittest.TestCase):
         fast.assert_called()
         self.assertEqual(pos.price, 99.5)
         saved = json.loads(self._cache.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 99.5)
+        # JustETF quotes are live-only; cache prices come from broker scrapes.
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 10.0)
         self.assertEqual(saved["IE0006WW1TQ4"]["countries"]["Germany"], 0.4)
 
     def test_fetch_scalable_uses_supplied_price_not_fast_info(self) -> None:
@@ -149,7 +150,6 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "ISIN": "IE0006WW1TQ4",
                 "shares": None,
                 "value": 199.0,
-                "price": None,
                 "broker": "oskar",
             }
         ]
@@ -167,9 +167,11 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.value, 199.0)
         row = global_portfolio["equity_portfolio"][0]
         # The fetched quote belongs in cache.json only, never in the asset file.
-        self.assertIsNone(row["price"])
+        self.assertNotIn("price", row)
         self.assertEqual(row["shares"], 199.0 / 99.5)
         write.assert_called_once()
+        saved = json.loads(self._cache.read_text(encoding="utf-8"))
+        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 10.0)
 
     def test_oskar_shares_only_persisted_on_matching_oskar_row(self) -> None:
         set_fetch_oskar(True)

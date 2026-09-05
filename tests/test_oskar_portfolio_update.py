@@ -51,7 +51,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         pos = global_portfolio["equity_portfolio"][0]
         self.assertEqual(pos["value"], 1234.5)
         self.assertIsNone(pos["shares"])
-        self.assertIsNone(pos["price"])
+        self.assertNotIn("price", pos)
         self.assertEqual(len(global_portfolio["equity_portfolio"]), 1)
 
     @patch("scrape.oskar.fetch_oskar_etfs")
@@ -272,7 +272,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(pos["ISIN"], "LU0123456789")
         self.assertEqual(pos["value"], 999.0)
         self.assertIsNone(pos["shares"])
-        self.assertIsNone(pos["price"])
+        self.assertNotIn("price", pos)
         self.assertEqual(pos["broker"], "oskar")
         self.assertEqual(pos["name"], "New Bond ETF")
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from common import CASH_PORTFOLIO
 from logger import attach_color_stderr_handler_for_module
-from utils import bucket_for_isin, portfolio as global_portfolio
+from utils import bucket_for_isin, cache_broker_quotes, portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -324,7 +324,6 @@ def update_traderepublic_etfs_in_portfolio() -> None:
                     position["value"] = fetched_cash.value
                     position["shares"] = None
                     position["ISIN"] = None
-                    position.pop("price", None)
                     cash_matched = True
                 continue
             pos_isin = position.get("ISIN") or position.get("isin")
@@ -339,7 +338,6 @@ def update_traderepublic_etfs_in_portfolio() -> None:
                 continue
             position["value"] = holding.value
             position["shares"] = holding.shares
-            position["price"] = holding.price
             matched_isins.add(holding.isin)
 
     if fetched_cash is not None and not cash_matched:
@@ -371,7 +369,6 @@ def update_traderepublic_etfs_in_portfolio() -> None:
                 "ISIN": holding.isin,
                 "shares": holding.shares,
                 "value": holding.value,
-                "price": holding.price,
                 "broker": _TRADEREPUBLIC,
                 "dmem": 1,
                 "dmem_other": 1,
@@ -384,6 +381,10 @@ def update_traderepublic_etfs_in_portfolio() -> None:
             bucket,
             holding.value,
         )
+
+    cache_broker_quotes(
+        {holding.isin: holding.price for holding in fetched_by_isin.values()}
+    )
 
     for bucket, position in to_remove:
         global_portfolio[bucket].remove(position)

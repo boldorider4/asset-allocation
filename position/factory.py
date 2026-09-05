@@ -1,9 +1,10 @@
-import json
 import logging
-from typing import Any
 
 from common import PENDING_OSKAR_SHARES
 from utils import (
+    load_cache,
+    parse_cache_entry,
+    save_position_in_cache,
     get_fetch_geosplit,
     get_fetch_oskar,
     get_fetch_prices,
@@ -25,72 +26,6 @@ attach_color_stderr_handler_for_module(logger)
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
-CACHE_FILENAME = "cache.json"
-# Per-ISIN value in ``cache.json`` (written by ``_save_position_in_cache``).
-_CACHE_PRICE = "price"
-_CACHE_COUNTRIES = "countries"
-
-
-def _parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
-    """
-    Returns ``(price, cached_countries)``.
-    Each element is ``None`` if the row has no stored value for it (fetch at use);
-    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``price``.
-    Country values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
-    """
-    if not isinstance(entry, dict):
-        return None, None
-    raw_price = entry.get(_CACHE_PRICE)
-    price = None if raw_price is None else float(raw_price)
-    co = entry.get(_CACHE_COUNTRIES)
-    if co is None:
-        return price, None
-    return price, {str(k): float(v) for k, v in co.items()}
-
-
-def _load_cache() -> dict[str, Any]:
-    logger.info("Factory: loading cache from %s", CACHE_FILENAME)
-    try:
-        with open(CACHE_FILENAME, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.info("Factory: cache file not found, creating empty cache")
-        with open(CACHE_FILENAME, "w") as f:
-            json.dump({}, f, indent=2)
-        return {}
-
-
-def _countries_to_cache_fractions(
-    rows: list[dict[str, float | str]] | None,
-) -> dict[str, float]:
-    if not rows:
-        return {}
-    return {str(r["name"]): float(r["weight_pct"]) / 100.0 for r in rows}
-
-
-def _save_position_in_cache(
-    cache: dict[str, Any],
-    isin: str,
-    *,
-    price: float | None = None,
-    countries: list[dict[str, float | str]] | None = None,
-    update_price: bool = False,
-    update_countries: bool = False,
-) -> None:
-    if not update_price and not update_countries:
-        return
-    row = cache.get(isin)
-    if not isinstance(row, dict):
-        row = {}
-    else:
-        row = dict(row)
-    if update_price and price is not None:
-        row[_CACHE_PRICE] = price
-    if update_countries:
-        row[_CACHE_COUNTRIES] = _countries_to_cache_fractions(countries)
-    cache[isin] = row
-    with open(CACHE_FILENAME, "w") as f:
-        json.dump(cache, f, indent=2)
 
 
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
@@ -122,8 +57,8 @@ def factory(
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
-    cache = _load_cache()
-    cached_price, cached_countries = _parse_cache_entry(cache.get(isin))
+    cache = load_cache()
+    cached_price, cached_countries = parse_cache_entry(cache.get(isin))
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
     use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
@@ -132,8 +67,9 @@ def factory(
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
+    # Scalable / Trade Republic quotes live in cache.json (never the assets file).
     if use_broker_quote:
-        ctor_price = price
+        ctor_price = price if price is not None else cached_price
     elif fetch_prices:
         ctor_price = None
     else:
@@ -187,23 +123,17 @@ def factory(
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
 
-    update_price = fetch_prices and isin is not None and position.price is not None
     update_countries = (
         scrape_geosplit
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
-    if update_price or update_countries:
-        countries_rows = (
-            position.countries() if update_countries else None
-        )
-        _save_position_in_cache(
+    if update_countries:
+        save_position_in_cache(
             cache,
             isin,
-            price=position.price,
-            countries=countries_rows,
-            update_price=update_price,
-            update_countries=update_countries,
+            countries=position.countries(),
+            update_countries=True,
         )
 
     # OSKAR cockpit has no share count or unit price. After a live scrape
