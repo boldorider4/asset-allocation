@@ -3,9 +3,10 @@ import numpy as np
 
 # Portfolio parameters
 historical_price = 100.0
-transfer_value = 150.0
-de_base_increase = 10.0
+transfer_value = 135.0
+de_base_increase = 11.0
 annual_growth = 0.06
+fictional_cap_growth = .025
 years = 15
 de_tax = 0.26375
 it_tax = 0.26
@@ -35,17 +36,28 @@ capital_gain_it_scen2 = gross_scen2 - historical_price
 # Net value if liquidated at year t (also subtracting the sunk Vorabpauschale)
 net_scen2 = gross_scen2 - (capital_gain_it_scen2 * it_tax) - paid_vorabpauschale
 
+# --- SCENARIO 3: No liquidation, no transfer, Vorabpauschale paid in DE and advance on taxable valid in IT ---
+# The transferred gross capital is higher (200), the taxable base is higher and continues to account for the fictional
+#  capital growth (135 + ...)
+gross_scen3 = transfer_value * (1 + annual_growth * (1 - fictional_cap_growth * de_tax))**t
+capital_gain_it_scen3 = gross_scen3 - ((historical_price + de_base_increase) * (1 + fictional_cap_growth)**t)
+# Net value if liquidated at year t (also subtracting the sunk Vorabpauschale)
+net_scen3 = gross_scen3 - (capital_gain_it_scen3 * it_tax)
+
 # --- Generating the Plot ---
 plt.figure(figsize=(10, 6))
 
 plt.plot(t, net_scen1, label='Scenario 1: Liquidation in Germany', color='#1f77b4', linewidth=2.5)
 plt.plot(t, net_scen2, label='Scenario 2: Transfer to Italy', color='#ff7f0e', linewidth=2.5)
+plt.plot(t, net_scen3, label='Scenario 3: No liquidation, no transfer', color='#2ca02c', linewidth=2.5)
 
 # Highlighting the crossover / break-even point
 plt.fill_between(t, net_scen1, net_scen2, where=(net_scen1 > net_scen2), 
                  interpolate=True, color='#1f77b4', alpha=0.1)
 plt.fill_between(t, net_scen1, net_scen2, where=(net_scen2 > net_scen1), 
                  interpolate=True, color='#ff7f0e', alpha=0.1)
+plt.fill_between(t, net_scen2, net_scen3, where=(net_scen3 > net_scen2),
+                 interpolate=True, color='#1f77b4', alpha=0.1)
 
 plt.title('Realizable Net Value: Liquidation vs Transfer', fontsize=14, fontweight='bold')
 plt.xlabel('Years since change of tax residency', fontsize=12)
@@ -60,4 +72,8 @@ plt.show()
 # Printing the results at year 15
 print(f"Net Scenario 1 (Year 15): {net_scen1[-1]:.2f} €")
 print(f"Net Scenario 2 (Year 15): {net_scen2[-1]:.2f} €")
+print(f"Net Scenario 3 (Year 15): {net_scen3[-1]:.2f} €")
 print(f"Difference: {abs(net_scen1[-1] - net_scen2[-1]):.2f} €")
+print(f"Difference: {abs(net_scen1[-1] - net_scen3[-1]):.2f} €")
+print(f"Percentage spread: {abs(net_scen1[-1] - net_scen2[-1]) / net_scen1[-1] * 100:.2f}%")
+print(f"Percentage spread: {abs(net_scen1[-1] - net_scen3[-1]) / net_scen1[-1] * 100:.2f}%")
