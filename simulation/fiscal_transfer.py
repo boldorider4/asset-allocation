@@ -2,11 +2,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Portfolio parameters
-historical_price = 300000
-transfer_value = 400000
-de_base_increase = 33000
+historical_price = 250000
+transfer_value = 300000
+fictional_cap_growth = .02
+growth_spread = .045
+years_before_transfer = 3
+de_base_increase = historical_price * fictional_cap_growth**years_before_transfer
+transfer_value = historical_price + (fictional_cap_growth + growth_spread)**years_before_transfer
 annual_growth = 0.06
-fictional_cap_growth = .025
 years = 25
 de_tax = 0.26375
 it_tax = 0.26
@@ -72,6 +75,14 @@ plt.tight_layout()
 plt.show()
 
 # Printing the results at year 20
+print(f"Historical Price: {historical_price:.2f} €")
+print(f"Fictional Cap Growth: {fictional_cap_growth:.2f}")
+print(f"Growth Spread: {growth_spread:.2f}")
+print(f"Years Before Transfer: {years_before_transfer}")
+print(f"De Base Increase: {de_base_increase:.2f} €")
+print(f"Transfer Value: {transfer_value:.2f} €")
+print(f"Annual Growth: {annual_growth:.2f}")
+print(f"Years: {years}")
 print(f"Net Scenario 1 (Year {years}): {net_scen1[-1]:.2f} €")
 print(f"Net Scenario 2 (Year {years}): {net_scen2[-1]:.2f} €")
 print(f"Net Scenario 3 (Year {years}): {net_scen3[-1]:.2f} €")
