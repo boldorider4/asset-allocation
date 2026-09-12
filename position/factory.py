@@ -115,7 +115,13 @@ def factory(
         "prefer_scrape_value": prefer_scrape_value,
     }
     position: JustETFPosition | YFinancePosition
-    if _is_xtrackers_position(isin, name) and dws_product_url_exists(isin):
+    # DWS reachability GET and holdings scrape are only needed when refreshing
+    # country weights. Cached geosplit uses JustETF/YFinance like any other ETF.
+    if (
+        fetch_geosplit
+        and _is_xtrackers_position(isin, name)
+        and dws_product_url_exists(isin)
+    ):
         logger.info("Factory: using XtrackersPosition for %s", isin)
         position = XtrackersPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:

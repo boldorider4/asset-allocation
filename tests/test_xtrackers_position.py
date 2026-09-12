@@ -178,7 +178,7 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self._prices = get_fetch_prices()
         self._geo = get_fetch_geosplit()
         set_fetch_prices(False)
-        set_fetch_geosplit(False)
+        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
         self._cache = Path(self._tmpdir.name) / "cache.json"
         self._cache.write_text("{}", encoding="utf-8")
@@ -199,31 +199,48 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         with patch("utils.CACHE_FILENAME", str(self._cache)):
             return factory(**defaults)
 
+    def _no_country_scrape(self):
+        return patch.object(
+            JustETFPosition, "_fetch_countries_with_retries", return_value=[]
+        )
+
     def test_name_and_existing_url_use_xtrackers(self) -> None:
         with patch("position.factory.dws_product_url_exists", return_value=True):
-            pos = self._factory()
+            with self._no_country_scrape():
+                pos = self._factory()
         self.assertIsInstance(pos, XtrackersPosition)
 
     def test_known_isin_without_xtrackers_in_name(self) -> None:
         with patch("position.factory.dws_product_url_exists", return_value=True):
-            pos = self._factory(
-                isin="LU2903252349",
-                name="Scalable AC World UCITS ETF (Acc)",
-            )
+            with self._no_country_scrape():
+                pos = self._factory(
+                    isin="LU2903252349",
+                    name="Scalable AC World UCITS ETF (Acc)",
+                )
         self.assertIsInstance(pos, XtrackersPosition)
 
     def test_404_falls_back_to_justetf(self) -> None:
         with patch("position.factory.dws_product_url_exists", return_value=False):
-            pos = self._factory()
+            with self._no_country_scrape():
+                pos = self._factory()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_amundi_stays_justetf(self) -> None:
         with patch("position.factory.dws_product_url_exists") as exists:
-            pos = self._factory(
-                isin="IE000BI8OT95",
-                name="Amundi Core MSCI World UCITS ETF (Acc)",
-            )
+            with self._no_country_scrape():
+                pos = self._factory(
+                    isin="IE000BI8OT95",
+                    name="Amundi Core MSCI World UCITS ETF (Acc)",
+                )
+        exists.assert_not_called()
+        self.assertIsInstance(pos, JustETFPosition)
+        self.assertNotIsInstance(pos, XtrackersPosition)
+
+    def test_without_fetch_geosplit_skips_dws_probe(self) -> None:
+        set_fetch_geosplit(False)
+        with patch("position.factory.dws_product_url_exists") as exists:
+            pos = self._factory()
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
