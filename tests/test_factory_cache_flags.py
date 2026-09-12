@@ -38,6 +38,10 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self._oskar = get_fetch_oskar()
         self._source = factory_mod.POSITION_SOURCE
         self._saved_portfolio = copy.deepcopy(dict(global_portfolio))
+        self._exists_patch = patch(
+            "position.factory.dws_product_url_exists", return_value=True
+        )
+        self._exists_patch.start()
         self._tmpdir = tempfile.TemporaryDirectory()
         self._cache = Path(self._tmpdir.name) / "cache.json"
         self._cache.write_text(
@@ -59,6 +63,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_traderepublic(self._traderepublic)
         set_fetch_oskar(self._oskar)
         factory_mod.POSITION_SOURCE = self._source
+        self._exists_patch.stop()
         global_portfolio.clear()
         global_portfolio.update(copy.deepcopy(self._saved_portfolio))
         self._tmpdir.cleanup()
@@ -350,7 +355,12 @@ class TestFactoryCacheFlags(unittest.TestCase):
         set_fetch_geosplit(True)
         set_fetch_scalable(False)
         with patch.object(YFinancePosition, "_fast_info_price", return_value=12.0):
-            pos = self._factory(price=None, broker="other")
+            pos = self._factory(
+                price=None,
+                broker="other",
+                isin="IE000BI8OT95",
+                name="Amundi Core MSCI World UCITS ETF (Acc)",
+            )
         self.assertIsInstance(pos, YFinancePosition)
         self.assertNotIsInstance(pos, JustETFPosition)
         with self.assertRaises(NotImplementedError):

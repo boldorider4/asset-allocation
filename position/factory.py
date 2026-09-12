@@ -1,6 +1,6 @@
 import logging
 
-from common import PENDING_OSKAR_SHARES
+from common import PENDING_OSKAR_SHARES, XTRACKERS_ISINS
 from utils import (
     load_cache,
     parse_cache_entry,
@@ -13,6 +13,7 @@ from utils import (
     get_incognito_value_factor,
 )
 from position.justetf_position import JustETFPosition
+from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
 from scrape.scalable import _SCALABLE as SCALABLE
@@ -43,6 +44,12 @@ def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> 
     # authoritative (whatever the cached price and share count say) until
     # ``--fetch-prices`` asks for a freshly quoted shares × price.
     return fresh_scrape or not get_fetch_prices()
+
+
+def _is_xtrackers_position(isin: str, name: str | None) -> bool:
+    if name and "Xtrackers" in name:
+        return True
+    return isin in XTRACKERS_ISINS
 
 
 def factory(
@@ -93,38 +100,28 @@ def factory(
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if POSITION_SOURCE == YFINANCE:
-        position = YFinancePosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-            prefer_scrape_value=prefer_scrape_value,
-        )
+    ctor_kwargs = {
+        "name": name,
+        "short_name": short_name,
+        "shares": shares,
+        "value": value,
+        "broker": broker,
+        "dmem": dmem,
+        "usavn": usavn,
+        "dmem_other": dmem_other,
+        "cached_countries": countries_arg,
+        "value_scale": value_scale,
+        "price": ctor_price,
+        "prefer_scrape_value": prefer_scrape_value,
+    }
+    position: JustETFPosition | YFinancePosition
+    if _is_xtrackers_position(isin, name) and dws_product_url_exists(isin):
+        logger.info("Factory: using XtrackersPosition for %s", isin)
+        position = XtrackersPosition(isin, **ctor_kwargs)
+    elif POSITION_SOURCE == YFINANCE:
+        position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:
-        position = JustETFPosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-            prefer_scrape_value=prefer_scrape_value,
-        )
+        position = JustETFPosition(isin, **ctor_kwargs)
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
 
