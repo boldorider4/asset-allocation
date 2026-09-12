@@ -47,6 +47,14 @@ _HOLDINGS = {
                     "column_3": {"value": "Korea, Republic of"},
                 },
                 {
+                    "column_1": {"value": "2.00%", "sortValue": 2.0},
+                    "column_3": {"value": "--"},
+                },
+                {
+                    "column_1": {"value": "1.00%", "sortValue": 1.0},
+                    "column_3": {"value": "--"},
+                },
+                {
                     "column_1": {"value": "0.01%", "sortValue": 0.01},
                     "column_3": {"value": ""},
                 },
@@ -68,6 +76,7 @@ class TestHoldingsJsonAggregation(unittest.TestCase):
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
+                {"name": "Other", "weight_pct": 3.0},
             ],
         )
 
@@ -169,6 +178,7 @@ class TestXtrackersCountryFetch(unittest.TestCase):
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
+                {"name": "Other", "weight_pct": 3.0},
             ],
         )
 
