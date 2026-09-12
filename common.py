@@ -23,11 +23,9 @@ ISIN_TO_PORTFOLIO: dict[str, str] = {
 }
 DEFAULT_ISIN_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 
-# Equity Xtrackers products in ISIN_TO_PORTFOLIO. Overnight / Xtrackers II cash
-# ETFs are matched only when the holding name contains "Xtrackers".
+# Equity Xtrackers products whose country weights come from DWS (not JustETF).
 XTRACKERS_ISINS: frozenset[str] = frozenset(
     {
-        "LU2903252349",
         "IE00BTJRMP35",
         "IE0006WW1TQ4",
         "IE00BLNMYC90",

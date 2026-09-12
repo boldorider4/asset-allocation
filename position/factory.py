@@ -46,12 +46,6 @@ def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> 
     return fresh_scrape or not get_fetch_prices()
 
 
-def _is_xtrackers_position(isin: str, name: str | None) -> bool:
-    if name and "Xtrackers" in name:
-        return True
-    return isin in XTRACKERS_ISINS
-
-
 def factory(
     isin: str,
     name: str | None = None,
@@ -119,7 +113,7 @@ def factory(
     # country weights. Cached geosplit uses JustETF/YFinance like any other ETF.
     if (
         fetch_geosplit
-        and _is_xtrackers_position(isin, name)
+        and isin in XTRACKERS_ISINS
         and dws_product_url_exists(isin)
     ):
         logger.info("Factory: using XtrackersPosition for %s", isin)
