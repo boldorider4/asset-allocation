@@ -1,7 +1,10 @@
-.PHONY: web web-example web-clean
+.PHONY: install web web-example web-clean serve
 
 VISUALIZER := _visualizer
 TEMPLATE := visual/web
+
+install:
+	pip install -e .
 
 web:
 	mkdir -p $(VISUALIZER)/data
@@ -14,3 +17,7 @@ web-example: web
 
 web-clean:
 	rm -rf $(VISUALIZER)
+
+serve:
+	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
+	asalloc serve

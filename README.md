@@ -7,7 +7,7 @@ Personal portfolio reporter: load holdings from JSON, optionally fetch prices an
 ## Setup
 
 ```bash
-pip install -e .
+make install
 ```
 
 Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `playwright`, and `pytr`.
@@ -45,13 +45,13 @@ Positions are built through `position/factory.py` (JustETF by default, Yahoo Fin
 
 ## Run
 
-From the repository root, after `pip install -e .`:
+From the repository root, after `make install`:
 
 ```bash
-asalloc
+asalloc update
 ```
 
-Useful flags:
+Useful `update` flags:
 
 | Flag | Purpose |
 | --- | --- |
@@ -69,16 +69,22 @@ The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into
 make web
 ```
 
-Then run `asalloc` and serve `_visualizer` over HTTP (browsers cannot list `file://` directories), for example:
+Then run `asalloc update` and serve `_visualizer` over HTTP (browsers cannot list `file://` directories):
 
 ```bash
-python -m http.server --directory _visualizer
+make serve
+# or
+asalloc serve
 ```
+
+The HTTP port comes from `config.ini` (`[server] port`, default `8765`). The server runs in the background.
 
 | Target | What it does |
 | --- | --- |
+| `make install` | `pip install -e .` so `asalloc` is on your PATH |
 | `make web` | Copy `visual/web` into `_visualizer`, stamp version and GitHub URL |
 | `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
+| `make serve` | Background HTTP server for `_visualizer` (port from `config.ini`); fails if `asalloc` is not callable |
 | `make web-clean` | Delete `_visualizer` |
 
 To use matplotlib windows instead, set `DEFAULT_VISUALIZER` in `visual/__init__.py` to `PieChart`.
