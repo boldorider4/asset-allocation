@@ -30,6 +30,7 @@ _LIST_OF_DEVELOPED_MARKETS = [
     "Cayman Islands",
     "Cyprus",
     "Denmark",
+    "European Union",
     "Finland",
     "France",
     "Germany",
