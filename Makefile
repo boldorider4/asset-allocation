@@ -1,4 +1,4 @@
-.PHONY: install web web-example web-clean serve stop-serve service
+.PHONY: install web web-example web-clean serve stop-serve service stop-service
 
 VISUALIZER := $(HOME)/.local/asalloc/visualizer
 TEMPLATE := visual/web
@@ -51,3 +51,10 @@ service:
 	systemctl --user enable --now asalloc-update.timer
 	@echo "Installed user units. Place holdings at $(INSTALL_ROOT)/assets.json"
 	@echo "Headless hosts: sudo loginctl enable-linger $$USER"
+
+stop-service:
+	@command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found; need a systemd Linux host." >&2; exit 1; }
+	systemctl --user disable --now asalloc-serve.service
+	systemctl --user disable --now asalloc-update.timer
+	-systemctl --user stop asalloc-update.service
+	@echo "Stopped and disabled asalloc user units."

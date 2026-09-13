@@ -90,6 +90,7 @@ The bind address, HTTP port, and directory come from `config.ini` (`[server] add
 | `make serve` | Background HTTP server for the visualizer dir (from `config.ini`); fails if `asalloc` is not callable |
 | `make stop-serve` | Stop the background visualizer server |
 | `make service` | Linux: install systemd user units, enable serve + 6-hour update timer |
+| `make stop-service` | Linux: stop and disable those user units |
 | `make web-clean` | Delete `~/.local/asalloc/visualizer` |
 
 On a headless Debian box, after `make install` and `make service`, put holdings at `~/.local/asalloc/assets.json` and enable lingering so the user units run without a login:
