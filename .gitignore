@@ -5,3 +5,4 @@ cache.json
 .vscode/
 .DS_Store
 _visualizer/
+config.ini
