@@ -122,13 +122,14 @@ def main():
 
     total_growth_portfolio.plot(
         title="95-5 Equity Portfolio",
-        closing_title="Value: {:.2f}".format(total_growth_portfolio.total_value),
+        closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
+
         label_fontsize=7,
         autopct_fontsize=7,
     )
     total_portfolio.plot(
         title="Complete Portfolio",
-        closing_title="Net Worth: {:.2f}".format(total_portfolio.total_value),
+        closing_title="Net Worth: {:.2f} €".format(total_portfolio.total_value),
         label_fontsize=7,
         autopct_fontsize=7,
     )
