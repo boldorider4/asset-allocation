@@ -358,8 +358,8 @@ class TestFactoryCacheFlags(unittest.TestCase):
             pos = self._factory(
                 price=None,
                 broker="other",
-                isin="IE000BI8OT95",
-                name="Amundi Core MSCI World UCITS ETF (Acc)",
+                isin="IE00B4YBJ215",
+                name="iShares Core MSCI World UCITS ETF",
             )
         self.assertIsInstance(pos, YFinancePosition)
         self.assertNotIsInstance(pos, JustETFPosition)

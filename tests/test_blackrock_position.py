@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from position.amundi_position import AmundiPosition
 from position.blackrock_position import (
     BlackRockPosition,
     _ISHARES_PRODUCT_EXISTS,
@@ -245,15 +246,16 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, BlackRockPosition)
 
-    def test_amundi_stays_justetf(self) -> None:
+    def test_amundi_does_not_use_blackrock(self) -> None:
         with patch("position.factory.ishares_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="IE000BI8OT95",
-                    name="Amundi Core MSCI World UCITS ETF (Acc)",
-                )
+            with patch("position.factory.amundi_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="IE000BI8OT95",
+                        name="Amundi Core MSCI World UCITS ETF (Acc)",
+                    )
         exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
+        self.assertIsInstance(pos, AmundiPosition)
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_without_fetch_geosplit_skips_ishares_probe(self) -> None:

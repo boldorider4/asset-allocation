@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from io import BytesIO
 
+from position.amundi_position import AmundiPosition
 from position.factory import factory
 from position.justetf_position import JustETFPosition
 from position.xtrackers_position import (
@@ -253,15 +254,16 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
-    def test_amundi_stays_justetf(self) -> None:
+    def test_amundi_does_not_use_xtrackers(self) -> None:
         with patch("position.factory.dws_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="IE000BI8OT95",
-                    name="Amundi Core MSCI World UCITS ETF (Acc)",
-                )
+            with patch("position.factory.amundi_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="IE000BI8OT95",
+                        name="Amundi Core MSCI World UCITS ETF (Acc)",
+                    )
         exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
+        self.assertIsInstance(pos, AmundiPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_without_fetch_geosplit_skips_dws_probe(self) -> None:

@@ -49,6 +49,16 @@ BLACKROCK_ISINS: frozenset[str] = frozenset(
     }
 )
 
+# Amundi products whose country weights come from the Amundi ProductAPI
+# (not JustETF).
+AMUNDI_ISINS: frozenset[str] = frozenset(
+    {
+        "IE000BI8OT95",
+        "LU2233156582",
+        "LU2300294316",
+    }
+)
+
 # Fresh estimates collected while portfolio Position objects are constructed.
 # Keying by ISIN and scraped value distinguishes the same ETF held in multiple
 # OSKAR entries without involving non-OSKAR positions.
