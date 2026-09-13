@@ -44,7 +44,7 @@ service:
 	@command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found; need a systemd Linux host." >&2; exit 1; }
 	$(MAKE) web VISUALIZER=$(INSTALL_VIS)
 	mkdir -p $(INSTALL_ROOT) $(INSTALL_VIS)/data $(SYSTEMD_USER)
-	printf '[server]\naddress = localhost\nport = 8765\ndirectory = %s\n' "$(INSTALL_VIS)" > $(INSTALL_ROOT)/config.ini
+	cp config.ini $(INSTALL_ROOT)/
 	cp systemd/asalloc-serve.service systemd/asalloc-update.service systemd/asalloc-update.timer $(SYSTEMD_USER)/
 	systemctl --user daemon-reload
 	systemctl --user enable --now asalloc-serve.service
