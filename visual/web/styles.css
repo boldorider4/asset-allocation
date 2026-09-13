@@ -26,12 +26,12 @@ body {
 }
 
 body {
-  padding: 2.5rem 1.5rem 5rem;
+  padding: 1.25rem 1.5rem 4rem;
 }
 
 .masthead {
-  max-width: 72rem;
-  margin: 0 auto 2.5rem;
+  max-width: 90rem;
+  margin: 0 auto 1.1rem;
 }
 
 h1 {
@@ -50,9 +50,9 @@ code {
 
 .gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
   gap: 1.4rem;
-  max-width: 72rem;
+  max-width: 90rem;
   margin: 0 auto;
 }
 
@@ -61,11 +61,11 @@ code {
   border: 1px solid var(--line);
   border-radius: 1.1rem;
   box-shadow: var(--shadow);
-  padding: 1.35rem 1.35rem 1.15rem;
+  padding: 0.85rem 1.2rem 0.9rem;
 }
 
 .card h2 {
-  margin: 0 0 1rem;
+  margin: 0 0 0.35rem;
   font-family: Georgia, "Iowan Old Style", Palatino, serif;
   font-size: 1.05rem;
   font-weight: 500;
@@ -78,32 +78,50 @@ code {
 }
 
 .donut {
-  width: min(100%, 16rem);
+  width: min(100%, 24rem);
   height: auto;
   overflow: visible;
 }
 
 .legend {
-  list-style: none;
-  margin: 1.1rem 0 0;
+  width: 100%;
+  margin: 0.35rem 0 0;
   padding: 0;
-  display: grid;
-  gap: 0.45rem;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.legend li {
-  display: grid;
-  grid-template-columns: 0.7rem 1fr auto;
-  gap: 0.65rem;
-  align-items: center;
+.legend td {
+  padding: 0.28rem 0;
   font-size: 0.86rem;
   color: var(--muted);
+  vertical-align: middle;
+  border: none;
+}
+
+.legend .name {
+  width: 50%;
+}
+
+.legend .name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.legend .pct,
+.legend .val {
+  width: 25%;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .swatch {
   width: 0.7rem;
   height: 0.7rem;
   border-radius: 999px;
+  flex-shrink: 0;
 }
 
 .legend .label {
@@ -118,8 +136,8 @@ code {
 }
 
 .closing-title {
-  margin: 1.1rem 0 0;
-  padding-top: 0.85rem;
+  margin: 0.55rem 0 0;
+  padding-top: 0.5rem;
   border-top: 1px solid var(--line);
   font-weight: 700;
   font-size: 0.95rem;
@@ -128,7 +146,7 @@ code {
 
 .empty,
 .status {
-  max-width: 72rem;
+  max-width: 90rem;
   margin: 3rem auto 0;
   padding: 2.2rem 1.6rem;
   border: 1px dashed var(--line);

@@ -65,6 +65,24 @@ function wedgePath(cx, cy, rOuter, rInner, start, end) {
   ].join(" ");
 }
 
+function formatGrouped(n, decimals = 2) {
+  const fixed = Number(n).toFixed(decimals);
+  const [intPart, frac] = fixed.split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  return frac != null ? `${grouped}.${frac}` : grouped;
+}
+
+function groupThousandsInText(text) {
+  return String(text).replace(/-?\d[\d']*\.\d+/g, (raw) => {
+    const n = Number(raw.replace(/'/g, ""));
+    if (Number.isNaN(n)) {
+      return raw;
+    }
+    const frac = raw.split(".").pop().replace(/'/g, "");
+    return formatGrouped(n, frac.length);
+  });
+}
+
 function formatPct(weight, total) {
   if (total <= 0) {
     return "0%";
@@ -76,10 +94,7 @@ function formatSegmentValue(wedge) {
   if (wedge.value == null || Number.isNaN(Number(wedge.value))) {
     return "";
   }
-  const formatted = Number(wedge.value).toLocaleString("de-CH", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const formatted = formatGrouped(wedge.value, 2);
   const unit = wedge.unit ? ` ${wedge.unit}` : "";
   return `${formatted}${unit}`;
 }
@@ -89,8 +104,8 @@ function renderDonut(wedges) {
   const size = 320;
   const cx = size / 2;
   const cy = size / 2;
-  const rOuter = 118;
-  const rInner = 68;
+  const rOuter = 152;
+  const rInner = 88;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
   svg.setAttribute("class", "donut");
@@ -126,7 +141,7 @@ function renderCard(chart) {
   card.className = "card";
 
   const title = document.createElement("h2");
-  title.textContent = chart.name || "Untitled";
+  title.textContent = groupThousandsInText(chart.name || "Untitled");
   card.appendChild(title);
 
   const wrap = document.createElement("div");
@@ -135,29 +150,42 @@ function renderCard(chart) {
   card.appendChild(wrap);
 
   const total = chart.wedges.reduce((sum, w) => sum + Number(w.weight || 0), 0);
-  const legend = document.createElement("ul");
+  const legend = document.createElement("table");
   legend.className = "legend";
+  const body = document.createElement("tbody");
   for (const wedge of chart.wedges) {
-    const item = document.createElement("li");
+    const row = document.createElement("tr");
+
+    const nameCell = document.createElement("td");
+    nameCell.className = "name";
+    const nameWrap = document.createElement("span");
+    nameWrap.className = "name-cell";
     const swatch = document.createElement("span");
     swatch.className = "swatch";
     swatch.style.background = wedge.color || "#d4a574";
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = wedge.label;
-    const pct = document.createElement("span");
+    nameWrap.append(swatch, label);
+    nameCell.appendChild(nameWrap);
+
+    const pct = document.createElement("td");
     pct.className = "pct";
-    const share = formatPct(Number(wedge.weight || 0), total);
-    const amount = formatSegmentValue(wedge);
-    pct.textContent = amount ? `${share} · ${amount}` : share;
-    item.append(swatch, label, pct);
-    legend.appendChild(item);
+    pct.textContent = formatPct(Number(wedge.weight || 0), total);
+
+    const val = document.createElement("td");
+    val.className = "val";
+    val.textContent = formatSegmentValue(wedge);
+
+    row.append(nameCell, pct, val);
+    body.appendChild(row);
   }
+  legend.appendChild(body);
   card.appendChild(legend);
   if (chart.closing_title) {
     const closing = document.createElement("p");
     closing.className = "closing-title";
-    closing.textContent = chart.closing_title;
+    closing.textContent = groupThousandsInText(chart.closing_title);
     card.appendChild(closing);
   }
   return card;
