@@ -113,6 +113,14 @@ def amundi_product_url_exists(isin: str) -> bool:
 class AmundiPosition(JustETFPosition):
     """JustETF quotes with country weights from the Amundi ProductAPI."""
 
+    ISINS: frozenset[str] = frozenset(
+        {
+            "IE000BI8OT95",
+            "LU2233156582",
+            "LU2300294316",
+        }
+    )
+
     @staticmethod
     def _select_product(payload: dict[str, Any], isin: str) -> dict[str, Any] | None:
         products = payload.get("products") or []

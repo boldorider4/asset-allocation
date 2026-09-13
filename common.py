@@ -23,42 +23,6 @@ ISIN_TO_PORTFOLIO: dict[str, str] = {
 }
 DEFAULT_ISIN_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 
-# Equity Xtrackers products whose country weights come from DWS (not JustETF).
-XTRACKERS_ISINS: frozenset[str] = frozenset(
-    {
-        "IE00BTJRMP35",
-        "IE0006WW1TQ4",
-        "IE00BLNMYC90",
-    }
-)
-
-# iShares products whose country weights come from the iShares holdings CSV
-# (not JustETF).
-BLACKROCK_ISINS: frozenset[str] = frozenset(
-    {
-        "IE00BKM4GZ66",
-        "IE00BD1F4M44",
-        "IE00BHZPJ239",
-        "IE00BF4RFH31",
-        "IE00BFNM3D14",
-        "IE00BL6K8C82",
-        "IE00BFNM3L97",
-        "IE00BFNM3P36",
-        "IE000APK27S2",
-        "IE00BKPT2S34",
-    }
-)
-
-# Amundi products whose country weights come from the Amundi ProductAPI
-# (not JustETF).
-AMUNDI_ISINS: frozenset[str] = frozenset(
-    {
-        "IE000BI8OT95",
-        "LU2233156582",
-        "LU2300294316",
-    }
-)
-
 # Fresh estimates collected while portfolio Position objects are constructed.
 # Keying by ISIN and scraped value distinguishes the same ETF held in multiple
 # OSKAR entries without involving non-OSKAR positions.

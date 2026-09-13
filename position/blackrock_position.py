@@ -19,6 +19,7 @@ _ISHARES_HOLDINGS_URL = (
 _ISHARES_EXISTS_TIMEOUT_S = 10
 _ISHARES_FETCH_TIMEOUT_S = 30
 
+# ISIN -> iShares product id. Keys are the BlackRock geosplit allow-list.
 _ISHARES_PRODUCT_IDS: dict[str, str] = {
     "IE00BKM4GZ66": "264659",
     "IE00BD1F4M44": "285207",
