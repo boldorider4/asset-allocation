@@ -3,17 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>asalloc visualizer</title>
+    <title>Asset Allocation</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="masthead">
-      <p class="wordmark">asalloc</p>
-      <h1>Portfolio visualizer</h1>
-      <p class="lede">Charts are loaded from <code>data/*.raw</code>. Serve this folder over HTTP, then run <code>asalloc</code> or <code>make web-example</code>.</p>
+      <h1>Asset Allocation</h1>
     </header>
     <main id="gallery" class="gallery" aria-live="polite"></main>
     <p id="status" class="status" hidden></p>
+    <footer class="site-footer">
+      <span>asalloc v__ASALLOC_VERSION__</span>
+      <a href="__ASALLOC_REPO_URL__">__ASALLOC_REPO_URL__</a>
+    </footer>
     <script src="app.js"></script>
   </body>
 </html>

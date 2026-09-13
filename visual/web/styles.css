@@ -26,7 +26,7 @@ body {
 }
 
 body {
-  padding: 2.5rem 1.5rem 4rem;
+  padding: 2.5rem 1.5rem 5rem;
 }
 
 .masthead {
@@ -34,28 +34,12 @@ body {
   margin: 0 auto 2.5rem;
 }
 
-.wordmark {
-  margin: 0 0 0.35rem;
-  color: var(--gold);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-}
-
 h1 {
-  margin: 0 0 0.6rem;
+  margin: 0;
   font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
   font-size: clamp(1.8rem, 4vw, 2.6rem);
   font-weight: 500;
   letter-spacing: -0.03em;
-}
-
-.lede {
-  margin: 0;
-  max-width: 40rem;
-  color: var(--muted);
-  line-height: 1.55;
 }
 
 code {
@@ -154,4 +138,33 @@ code {
 
 .status[hidden] {
   display: none;
+}
+
+.site-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.5rem;
+  background: rgba(18, 16, 14, 0.92);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.site-footer a {
+  color: var(--gold);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
 }

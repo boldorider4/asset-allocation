@@ -7,6 +7,7 @@ web:
 	mkdir -p $(VISUALIZER)/data
 	cp -R $(TEMPLATE)/. $(VISUALIZER)/
 	mkdir -p $(VISUALIZER)/data
+	python -m visual.stamp_web
 
 web-example: web
 	python -m visual.web_example
