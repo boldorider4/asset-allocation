@@ -80,7 +80,7 @@ asalloc serve
 
 Stop it with `make stop-serve`.
 
-The HTTP port and directory come from `config.ini` (`[server] port` and `directory`, default `8765` and `~/.local/asalloc/visualizer`). The server runs in the background.
+The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 
 | Target | What it does |
 | --- | --- |

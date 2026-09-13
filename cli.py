@@ -6,6 +6,7 @@ import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import NamedTuple
 
 from allocation import main as run_update
 from logger import attach_color_stderr_handler_for_module, configure_cli_logging
@@ -48,13 +49,20 @@ def config_path() -> Path:
     return DEFAULT_CONFIG_PATH
 
 
-def load_server_config(path: Path | None = None) -> tuple[int, Path]:
+class ServerConfig(NamedTuple):
+    port: int
+    address: str
+    directory: Path
+
+
+def load_server_config(path: Path | None = None) -> ServerConfig:
     cfg_path = path or config_path()
     parser = configparser.ConfigParser()
     if not cfg_path.is_file():
         raise FileNotFoundError(f"config file not found: {cfg_path}")
     parser.read(cfg_path, encoding="utf-8")
     port = parser.getint("server", "port")
+    address = parser.get("server", "address", fallback="localhost").strip() or "localhost"
     raw = parser.get(
         "server",
         "directory",
@@ -63,12 +71,11 @@ def load_server_config(path: Path | None = None) -> tuple[int, Path]:
     directory = Path(raw).expanduser()
     if not directory.is_absolute():
         directory = (cfg_path.parent / directory).resolve()
-    return port, directory
+    return ServerConfig(port=port, address=address, directory=directory)
 
 
 def server_port(path: Path | None = None) -> int:
-    port, _ = load_server_config(path)
-    return port
+    return load_server_config(path).port
 
 
 def cmd_update(args: argparse.Namespace) -> None:
@@ -91,29 +98,32 @@ def cmd_update(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
-    port, visualizer = load_server_config()
-    visualizer.mkdir(parents=True, exist_ok=True)
-    (visualizer / "data").mkdir(exist_ok=True)
-    pid_file = visualizer / ".serve.pid"
+    cfg = load_server_config()
+    cfg.directory.mkdir(parents=True, exist_ok=True)
+    (cfg.directory / "data").mkdir(exist_ok=True)
+    pid_file = cfg.directory / ".serve.pid"
     proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "http.server",
-            str(port),
+            str(cfg.port),
+            "--bind",
+            cfg.address,
             "--directory",
-            str(visualizer),
+            str(cfg.directory),
         ],
-        cwd=visualizer,
+        cwd=cfg.directory,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
     pid_file.write_text(str(proc.pid), encoding="utf-8")
     logger.info(
-        "Serving %s in the background on http://127.0.0.1:%s (pid %s)",
-        visualizer,
-        port,
+        "Serving %s in the background on http://%s:%s (pid %s)",
+        cfg.directory,
+        cfg.address,
+        cfg.port,
         proc.pid,
     )
 
@@ -210,7 +220,7 @@ def main(argv: list[str] | None = None) -> None:
 
     serve = subparsers.add_parser(
         "serve",
-        help="Serve the visualizer directory over HTTP in the background (port from config.ini).",
+        help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
     )
     serve.set_defaults(func=cmd_serve)
 
