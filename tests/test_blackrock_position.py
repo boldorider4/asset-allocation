@@ -31,8 +31,8 @@ Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Location
 2330,TSMC,Information Technology,Equity,1,15.00,Taiwan
 0050,FOO,Information Technology,Equity,1,13.04,Taiwan
 005930,SAMSUNG,Information Technology,Equity,1,21.77,Korea (South)
-CASH,USD CASH,Cash,Cash,1,2.00,-
-CASH2,USD CASH 2,Cash,Cash,1,1.00,Cash and/or Derivatives
+USD,USD CASH,Cash and/or Derivatives,Cash,1,2.00,United States
+FUT,MSCI EM INDEX SEP,Cash and/or Derivatives,Futures,1,0.00,-
 EMPTY,SKIP ME,Equity,Equity,1,0.01,
 """
 
@@ -59,7 +59,7 @@ class TestHoldingsCsvAggregation(unittest.TestCase):
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
-                {"name": "Other", "weight_pct": 3.0},
+                {"name": "United States", "weight_pct": 2.0},
             ],
         )
 
@@ -179,7 +179,7 @@ class TestBlackRockCountryFetch(unittest.TestCase):
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
-                {"name": "Other", "weight_pct": 3.0},
+                {"name": "United States", "weight_pct": 2.0},
             ],
         )
 

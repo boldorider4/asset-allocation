@@ -39,8 +39,6 @@ _ISHARES_COUNTRY_ALIASES: dict[str, str] = {
     "Republic of Korea": "South Korea",
     "Korea": "South Korea",
     "Russian Federation": "Russia",
-    "Cash and/or Derivatives": "Other",
-    "-": "Other",
 }
 
 _ISHARES_PRODUCT_EXISTS: dict[str, bool] = {}
