@@ -10,7 +10,7 @@ years_before_transfer = 3
 de_base_increase = historical_price * fictional_cap_growth**years_before_transfer
 transfer_value = historical_price + (fictional_cap_growth + growth_spread)**years_before_transfer
 annual_growth = 0.06
-years = 25
+years = 15
 de_tax = 0.26375
 it_tax = 0.26
 

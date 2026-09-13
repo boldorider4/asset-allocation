@@ -12,7 +12,14 @@ from utils import (
     get_fetch_traderepublic,
     get_incognito_value_factor,
 )
+from position.amundi_position import AmundiPosition, amundi_product_url_exists
+from position.blackrock_position import (
+    BlackRockPosition,
+    _ISHARES_PRODUCT_IDS,
+    ishares_product_url_exists,
+)
 from position.justetf_position import JustETFPosition
+from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
 from scrape.scalable import _SCALABLE as SCALABLE
@@ -93,38 +100,48 @@ def factory(
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    if POSITION_SOURCE == YFINANCE:
-        position = YFinancePosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-            prefer_scrape_value=prefer_scrape_value,
-        )
+    ctor_kwargs = {
+        "name": name,
+        "short_name": short_name,
+        "shares": shares,
+        "value": value,
+        "broker": broker,
+        "dmem": dmem,
+        "usavn": usavn,
+        "dmem_other": dmem_other,
+        "cached_countries": countries_arg,
+        "value_scale": value_scale,
+        "price": ctor_price,
+        "prefer_scrape_value": prefer_scrape_value,
+    }
+    position: JustETFPosition | YFinancePosition
+    # DWS reachability GET and holdings scrape are only needed when refreshing
+    # country weights. Cached geosplit uses JustETF/YFinance like any other ETF.
+    if (
+        fetch_geosplit
+        and isin in XtrackersPosition.ISINS
+        and dws_product_url_exists(isin)
+    ):
+        logger.info("Factory: using XtrackersPosition for %s", isin)
+        position = XtrackersPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in _ISHARES_PRODUCT_IDS
+        and ishares_product_url_exists(isin)
+    ):
+        logger.info("Factory: using BlackRockPosition for %s", isin)
+        position = BlackRockPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in AmundiPosition.ISINS
+        and amundi_product_url_exists(isin)
+    ):
+        logger.info("Factory: using AmundiPosition for %s", isin)
+        position = AmundiPosition(isin, **ctor_kwargs)
+    elif POSITION_SOURCE == YFINANCE:
+        position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:
-        position = JustETFPosition(
-            isin,
-            name,
-            short_name,
-            shares,
-            value,
-            broker,
-            dmem,
-            usavn,
-            dmem_other,
-            cached_countries=countries_arg,
-            value_scale=value_scale,
-            price=ctor_price,
-            prefer_scrape_value=prefer_scrape_value,
-        )
+        position = JustETFPosition(isin, **ctor_kwargs)
     else:
         raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
 
