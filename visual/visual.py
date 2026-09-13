@@ -21,3 +21,8 @@ class Visual(ABC):
     @abstractmethod
     def plot(self) -> None:
         pass
+
+    @classmethod
+    def finish_plots(cls) -> None:
+        """Run after all :meth:`plot` calls. Window backends keep figures open."""
+        return

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 
 import matplotlib
@@ -14,6 +15,8 @@ if (
     matplotlib.use("tkagg")
 
 from .visual import Visual
+
+logger = logging.getLogger(__name__)
 
 
 class VisualWindow(Visual):
@@ -53,3 +56,10 @@ class VisualWindow(Visual):
                 win.setGeometry(int(x), int(y), w, h)
         except Exception:
             pass
+
+    @classmethod
+    def finish_plots(cls) -> None:
+        import matplotlib.pyplot as plt
+
+        logger.info("Opening chart window (close window to exit)")
+        plt.show()

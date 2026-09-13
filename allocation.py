@@ -39,6 +39,7 @@ from logger import attach_color_stderr_handler_for_module
 from scrape.oskar import update_oskar_etfs_in_portfolio
 from scrape.scalable import update_scalable_etfs_in_portfolio
 from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
+from visual import DEFAULT_VISUALIZER
 
 
 def _package_version() -> str:
@@ -121,7 +122,7 @@ def main():
 
     total_growth_portfolio.plot(title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     total_portfolio.plot(title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-    logger.info("Wrote chart data to _visualizer/data")
+    DEFAULT_VISUALIZER.finish_plots()
 
 
 def cli() -> None:

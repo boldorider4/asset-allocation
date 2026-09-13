@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -22,6 +23,8 @@ _TAB10 = (
 )
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
+
+logger = logging.getLogger(__name__)
 
 
 def _slug(title: str | None) -> str:
@@ -126,3 +129,7 @@ class WebChart(Visual):
         )
         for chart in examples:
             chart.plot()
+
+    @classmethod
+    def finish_plots(cls) -> None:
+        logger.info("Wrote chart data to %s", cls.data_dir)
