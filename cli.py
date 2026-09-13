@@ -21,6 +21,7 @@ from utils import (
 REPO_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = REPO_ROOT / "config.ini"
 VISUALIZER_DIR = REPO_ROOT / "_visualizer"
+SERVE_PID_FILE = VISUALIZER_DIR / ".serve.pid"
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -85,6 +86,7 @@ def cmd_serve(_args: argparse.Namespace) -> None:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    SERVE_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
     logger.info(
         "Serving %s in the background on http://127.0.0.1:%s (pid %s)",
         visualizer,

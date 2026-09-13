@@ -77,6 +77,8 @@ make serve
 asalloc serve
 ```
 
+Stop it with `make stop-serve`.
+
 The HTTP port comes from `config.ini` (`[server] port`, default `8765`). The server runs in the background.
 
 | Target | What it does |
@@ -85,6 +87,7 @@ The HTTP port comes from `config.ini` (`[server] port`, default `8765`). The ser
 | `make web` | Copy `visual/web` into `_visualizer`, stamp version and GitHub URL |
 | `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
 | `make serve` | Background HTTP server for `_visualizer` (port from `config.ini`); fails if `asalloc` is not callable |
+| `make stop-serve` | Stop the background visualizer server |
 | `make web-clean` | Delete `_visualizer` |
 
 To use matplotlib windows instead, set `DEFAULT_VISUALIZER` in `visual/__init__.py` to `PieChart`.
