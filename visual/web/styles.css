@@ -83,6 +83,16 @@ code {
   overflow: visible;
 }
 
+.wedge-label {
+  fill: #fff;
+  stroke: #111;
+  stroke-width: 2.4px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 .legend {
   width: 100%;
   margin: 0.35rem 0 0;

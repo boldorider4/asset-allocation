@@ -99,6 +99,47 @@ function formatSegmentValue(wedge) {
   return `${formatted}${unit}`;
 }
 
+const _measureCtx = document.createElement("canvas").getContext("2d");
+
+function measureLabel(text, fontSize) {
+  _measureCtx.font = `600 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
+  return _measureCtx.measureText(text).width;
+}
+
+function splitLabel(label) {
+  const i = label.lastIndexOf(" ");
+  if (i <= 0) {
+    return null;
+  }
+  return [label.slice(0, i), label.slice(i + 1)];
+}
+
+function fitWedgeLabel(label, span, rLabel, ringWidth) {
+  const chord = 2 * rLabel * Math.sin(Math.min(span, Math.PI) / 2);
+  const maxWidth = chord * 1.35;
+  if (maxWidth < 10 || ringWidth < 12) {
+    return null;
+  }
+  let best = null;
+  for (let fontSize = 11; fontSize >= 6; fontSize -= 0.5) {
+    if (measureLabel(label, fontSize) <= maxWidth && fontSize + 2 <= ringWidth) {
+      best = { lines: [label], fontSize };
+      break;
+    }
+    const parts = splitLabel(label);
+    if (
+      parts &&
+      fontSize * 2.05 <= ringWidth &&
+      measureLabel(parts[0], fontSize) <= maxWidth &&
+      measureLabel(parts[1], fontSize) <= maxWidth
+    ) {
+      best = { lines: parts, fontSize };
+      break;
+    }
+  }
+  return best;
+}
+
 function renderDonut(wedges) {
   const total = wedges.reduce((sum, w) => sum + Number(w.weight || 0), 0);
   const size = 320;
@@ -106,11 +147,15 @@ function renderDonut(wedges) {
   const cy = size / 2;
   const rOuter = 152;
   const rInner = 88;
+  const ringWidth = rOuter - rInner;
+  const rMid = (rOuter + rInner) / 2;
+  const rLabel = rInner + ringWidth * 0.72;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
   svg.setAttribute("class", "donut");
   svg.setAttribute("role", "img");
 
+  const labels = [];
   let angle = -Math.PI / 2;
   for (const wedge of wedges) {
     const share = total > 0 ? Number(wedge.weight) / total : 0;
@@ -121,17 +166,46 @@ function renderDonut(wedges) {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       ring.setAttribute("cx", String(cx));
       ring.setAttribute("cy", String(cy));
-      ring.setAttribute("r", String((rOuter + rInner) / 2));
+      ring.setAttribute("r", String(rMid));
       ring.setAttribute("fill", "none");
       ring.setAttribute("stroke", wedge.color || "#d4a574");
-      ring.setAttribute("stroke-width", String(rOuter - rInner));
+      ring.setAttribute("stroke-width", String(ringWidth));
       svg.appendChild(ring);
     } else if (span > 1e-9) {
       path.setAttribute("d", wedgePath(cx, cy, rOuter, rInner, angle, next));
       path.setAttribute("fill", wedge.color || "#d4a574");
       svg.appendChild(path);
     }
+    const label = String(wedge.label || "");
+    const fitted = label && span > 1e-9 ? fitWedgeLabel(label, span, rLabel, ringWidth) : null;
+    if (fitted) {
+      labels.push({ start: angle, end: next, ...fitted });
+    }
     angle = next;
+  }
+
+  for (const item of labels) {
+    const mid = item.start + (item.end - item.start) / 2;
+    const [x, y] = polar(cx, cy, rLabel, mid);
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("class", "wedge-label");
+    text.setAttribute("x", String(x));
+    text.setAttribute("y", String(y));
+    text.setAttribute("text-anchor", "middle");
+    text.setAttribute("dominant-baseline", "middle");
+    text.setAttribute("font-size", String(item.fontSize));
+    if (item.lines.length === 1) {
+      text.textContent = item.lines[0];
+    } else {
+      item.lines.forEach((line, i) => {
+        const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+        tspan.setAttribute("x", String(x));
+        tspan.setAttribute("dy", i === 0 ? "-0.55em" : "1.15em");
+        tspan.textContent = line;
+        text.appendChild(tspan);
+      });
+    }
+    svg.appendChild(text);
   }
   return svg;
 }
