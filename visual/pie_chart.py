@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
-from typing import TypedDict
 from uuid import uuid4
 
-from visual import Visual
-
-
-class _PieFactor(TypedDict):
-    value: float | int
-    unit: str
+from .chart_merge import PieFactor, merge_charts
+from .visual_window import VisualWindow
 
 import matplotlib.pyplot as plt
 
@@ -35,7 +29,7 @@ def _title_with_grouped_floats(s: str) -> str:
     return _TITLE_FLOAT.sub(repl, s)
 
 
-class PieChart(Visual):
+class PieChart(VisualWindow):
     """Pie chart from label → weight; slice areas match each weight’s share of the total."""
 
     def __init__(
@@ -43,66 +37,23 @@ class PieChart(Visual):
         data: dict[str, float],
         title: str | None = None,
         *,
-        factor: _PieFactor | None = None,
+        factor: PieFactor | None = None,
     ):
         super().__init__(data=data, title=title)
         self._factor = factor
 
-    def _merge_weights(self, other: PieChart) -> tuple[float, float] | None:
-        """Return (left, right) portfolio weights for weighted merge, or None for plain additive merge."""
-        sf, of = self._factor, other._factor
-        if sf is None and of is None:
-            return None
-        if sf is not None and of is not None and sf["unit"] != of["unit"]:
-            return None
-        left = float(sf["value"]) if sf is not None else float(sum(self._data.values()))
-        right = float(of["value"]) if of is not None else float(sum(other._data.values()))
-        return (left, right)
-
     def __add__(self, other: object) -> PieChart:
         if not isinstance(other, PieChart):
             return NotImplemented
-
-        weights = self._merge_weights(other)
-        if weights is None:
-            merged: dict[str, float] = deepcopy(self._data)
-            for k, v in other._data.items():
-                merged[k] = merged.get(k, 0) + v
-        else:
-            left, right = weights
-            total_w = left + right
-            # Preserve insertion order: self keys first, then keys only in other (matches additive branch).
-            keys = list(dict.fromkeys([*self._data, *other._data]))
-            merged = {
-                k: (self._data.get(k, 0) * left + other._data.get(k, 0) * right) / total_w
-                for k in keys
-            }
-
-        title_parts: list[str] = []
-        if self._title:
-            title_parts.append(self._title)
-        if other._title:
-            title_parts.append(other._title)
-        merged_title = " + ".join(title_parts) if title_parts else None
-
-        merged_factor = self._merge_factor_with(other, weights)
-        return PieChart(data=merged, title=merged_title, factor=merged_factor)
-
-    def _merge_factor_with(self, other: PieChart, weights: tuple[float, float] | None) -> _PieFactor | None:
-        if weights is None:
-            return None
-        left, right = weights
-        sf, of = self._factor, other._factor
-        unit = (sf or of)["unit"]
-        return {"value": left + right, "unit": unit}
-
-    @property
-    def title(self) -> str | None:
-        return self._title
-
-    @title.setter
-    def title(self, value: str | None) -> None:
-        self._title = value
+        merged, title, factor = merge_charts(
+            self._data,
+            self._title,
+            self._factor,
+            other._data,
+            other._title,
+            other._factor,
+        )
+        return PieChart(data=merged, title=title, factor=factor)
 
     def plot(
         self,
@@ -173,22 +124,6 @@ class PieChart(Visual):
 
 
 if __name__ == "__main__":
-    # sample_0 = {
-    #     "USA": 45,
-    #     "Emerging Markets": 23,
-    #     "ex-USA-Developed": 22,
-    # }
-    # pc0 = PieChart(data=sample_0, title="Regional split")
-    # pc0.plot()
-
-    # sample_1 = {
-    #     "Europe": 45,
-    #     "Developed Markets": 23,
-    #     "Emerging Markets": 11,
-    # }
-    # pc1 = PieChart(data=sample_1, title="Other Regional split")
-    # pc1.plot()
-
     sample_2 = {
         "Europe": 45,
         "Developed Markets": 23,

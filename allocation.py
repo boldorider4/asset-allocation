@@ -4,15 +4,6 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import matplotlib
-
-# Match visual package: macosx backend cannot move windows; use TkAgg before pyplot import.
-if sys.platform == "darwin" and matplotlib.get_backend().lower() == "macosx":
-    matplotlib.use("tkagg")
-
-import numpy as np
-import matplotlib.pyplot as plt
-
 from logger import configure_cli_logging
 from common import (
     BOND_PORTFOLIO,
@@ -130,8 +121,7 @@ def main():
 
     total_growth_portfolio.plot(title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
     total_portfolio.plot(title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-    logger.info("Opening chart window (close window to exit)")
-    plt.show()
+    logger.info("Wrote chart data to _visualizer/data")
 
 
 def cli() -> None:

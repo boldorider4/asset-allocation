@@ -1,0 +1,157 @@
+:root {
+  --ink: #12100e;
+  --paper: #1c1916;
+  --line: #3a332c;
+  --text: #f3ece3;
+  --muted: #9a8f82;
+  --gold: #d4a574;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(212, 165, 116, 0.12), transparent 55%),
+    var(--ink);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+.masthead {
+  max-width: 72rem;
+  margin: 0 auto 2.5rem;
+}
+
+.wordmark {
+  margin: 0 0 0.35rem;
+  color: var(--gold);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0 0 0.6rem;
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.lede {
+  margin: 0;
+  max-width: 40rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.86em;
+  color: var(--gold);
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1.4rem;
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  box-shadow: var(--shadow);
+  padding: 1.35rem 1.35rem 1.15rem;
+}
+
+.card h2 {
+  margin: 0 0 1rem;
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.chart-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.donut {
+  width: min(100%, 16rem);
+  height: auto;
+  overflow: visible;
+}
+
+.legend {
+  list-style: none;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.legend li {
+  display: grid;
+  grid-template-columns: 0.7rem 1fr auto;
+  gap: 0.65rem;
+  align-items: center;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+}
+
+.legend .label {
+  color: var(--text);
+}
+
+.legend .pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.empty,
+.status {
+  max-width: 72rem;
+  margin: 3rem auto 0;
+  padding: 2.2rem 1.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 1.1rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.empty strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+  font-family: Georgia, Palatino, serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.status[hidden] {
+  display: none;
+}

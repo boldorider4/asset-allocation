@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>asalloc visualizer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <p class="wordmark">asalloc</p>
+      <h1>Portfolio visualizer</h1>
+      <p class="lede">Charts are loaded from <code>data/*.raw</code>. Serve this folder over HTTP, then run <code>asalloc</code> or <code>make web-example</code>.</p>
+    </header>
+    <main id="gallery" class="gallery" aria-live="polite"></main>
+    <p id="status" class="status" hidden></p>
+    <script src="app.js"></script>
+  </body>
+</html>

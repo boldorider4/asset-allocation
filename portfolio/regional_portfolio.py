@@ -3,7 +3,7 @@ import logging
 import numpy as np
 
 from portfolio.portfolio import Portfolio
-from visual.pie_chart import PieChart
+from visual import DEFAULT_VISUALIZER
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,12 @@ class RegionalPortfolio(Portfolio):
             float(np.dot(values, usavn_arr)) / dmem_weighted if dmem_weighted > 0 else 0.0
         )
 
-        self._dmem_visualizer = PieChart(data={
+        self._dmem_visualizer = DEFAULT_VISUALIZER(data={
             "Developed Markets": developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }, title="{}: Developed Markets vs. Emerging Markets".format(self._name))
 
-        self._usavn_visualizer = PieChart(data={
+        self._usavn_visualizer = DEFAULT_VISUALIZER(data={
             "US": us_within_developed,
             "Ex-US": 1.0 - us_within_developed,
         }, title="{}: US vs. Ex-US (within developed markets)".format(self._name))
@@ -48,7 +48,7 @@ class RegionalPortfolio(Portfolio):
             "Ex-US": (1.0 - us_within_developed) * developed_share,
             "Emerging Markets": 1.0 - developed_share,
         }
-        self._visualizer = PieChart(
+        self._visualizer = DEFAULT_VISUALIZER(
             data=self._regional_split_data,
             title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
             factor={"value": self._value, "unit": "Euro"},
