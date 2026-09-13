@@ -1,6 +1,8 @@
 # asset-allocation
 
-Personal portfolio reporter: load holdings from JSON, fetch prices (JustETF or Yahoo Finance via `yfinance`), and print bucket values plus simple geographic-style splits (developed vs emerging, US vs non-US within developed).
+Personal portfolio reporter: load holdings from JSON, optionally fetch prices and broker positions, then chart allocation (regional split, growth sleeve, total net worth).
+
+![Asset Allocation web visualizer](visual/media/web_view.png)
 
 ## Setup
 
@@ -8,7 +10,7 @@ Personal portfolio reporter: load holdings from JSON, fetch prices (JustETF or Y
 pip install -e .
 ```
 
-Requires Python 3.10+. Declared dependencies: `numpy`, `yfinance`. The default JustETF backend uses only the standard library for HTTP.
+Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `playwright`, and `pytr`.
 
 ## Holdings file
 
@@ -21,6 +23,7 @@ Copy or create `assets.json` in the project root. It must be a JSON object whose
 | `cash_portfolio` | Cash / emergency fund |
 | `bond_portfolio` | Other bonds |
 | `commodity_portfolio` | Commodities |
+| `pension_portfolio` | Pension |
 
 Each bucket is an array of position objects. Typical fields:
 
@@ -34,25 +37,51 @@ Each bucket is an array of position objects. Typical fields:
 | `dmem_other` | When a country is “other”, fraction treated as developed (0–1) |
 | `usavn` | Within developed markets, fraction attributed to the **US** (0–1) |
 
-`assets.json` is listed in `.gitignore` so you can keep real balances private; commit a redacted example if you share the repo.
+`assets.json` is listed in `.gitignore` so you can keep real balances private; `assets.sample.json` is a redacted starting point.
 
 ## Price source
 
-In `asset_price/factory.py`, set `POSITION_SOURCE` to `justetf` (default) or `yfinance`. With caching enabled, new prices are written to `cache.json` (also gitignored).
+Positions are built through `position/factory.py` (JustETF by default, Yahoo Finance via `yfinance` for some ISINs). With `--fetch-prices`, quotes are written to `cache.json` (also gitignored). `--fetch-geosplit` refreshes country weights in the same cache.
 
 ## Run
 
-From the repository root:
+From the repository root, after `pip install -e .`:
 
 ```bash
-python allocation.py
+asalloc
 ```
 
-Refresh all quotes without reading the cache (fetched prices are still written to `cache.json`):
+Useful flags:
+
+| Flag | Purpose |
+| --- | --- |
+| `--fetch-prices` | Scrape live quotes into `cache.json` |
+| `--fetch-geosplit` | Scrape country allocations into `cache.json` |
+| `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
+| `--incognito` | Scale display values |
+| `--assets-file PATH` | Use a holdings file other than `assets.json` |
+
+## Web visualizer
+
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `_visualizer/data/`. Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
-python allocation.py --no-cache
+make web
 ```
+
+Then run `asalloc` and serve `_visualizer` over HTTP (browsers cannot list `file://` directories), for example:
+
+```bash
+python -m http.server --directory _visualizer
+```
+
+| Target | What it does |
+| --- | --- |
+| `make web` | Copy `visual/web` into `_visualizer`, stamp version and GitHub URL |
+| `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
+| `make web-clean` | Delete `_visualizer` |
+
+To use matplotlib windows instead, set `DEFAULT_VISUALIZER` in `visual/__init__.py` to `PieChart`.
 
 ## Disclaimer
 
