@@ -5,7 +5,7 @@ import numpy as np
 from position.factory import factory as _factory
 from position.position import Position
 from logger import attach_color_stderr_handler_for_module
-from visual.pie_chart import PieChart
+from visual import Visual
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -56,7 +56,7 @@ class Portfolio:
         logger.info("Portfolio %r: calculated DMEM values: %r", name, self._dmem)
         self._usavn = self._calculate_usavn()
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
-        self._visualizer: PieChart | None = None  # subclasses set a PieChart
+        self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
@@ -70,6 +70,7 @@ class Portfolio:
     def plot(
         self,
         title: str | None = None,
+        closing_title: str | None = None,
         *,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
@@ -79,6 +80,8 @@ class Portfolio:
             return
         if title is not None:
             self._visualizer.title = title
+        if closing_title is not None:
+            self._visualizer.closing_title = closing_title
         self._visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,

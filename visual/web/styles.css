@@ -1,0 +1,209 @@
+:root {
+  --ink: #12100e;
+  --paper: #1c1916;
+  --line: #3a332c;
+  --text: #f3ece3;
+  --muted: #9a8f82;
+  --gold: #d4a574;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(212, 165, 116, 0.12), transparent 55%),
+    var(--ink);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  padding: 1.25rem 1.5rem 4rem;
+}
+
+.masthead {
+  max-width: 90rem;
+  margin: 0 auto 1.1rem;
+}
+
+h1 {
+  margin: 0;
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.86em;
+  color: var(--gold);
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: 1.4rem;
+  max-width: 90rem;
+  margin: 0 auto;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  box-shadow: var(--shadow);
+  padding: 0.85rem 1.2rem 0.9rem;
+}
+
+.card h2 {
+  margin: 0 0 0.35rem;
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.chart-wrap {
+  display: grid;
+  place-items: center;
+}
+
+.donut {
+  width: min(100%, 24rem);
+  height: auto;
+  overflow: visible;
+}
+
+.wedge-label {
+  fill: #fff;
+  stroke: #111;
+  stroke-width: 2.4px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.legend {
+  width: 100%;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.legend td {
+  padding: 0.28rem 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+  vertical-align: middle;
+  border: none;
+}
+
+.legend .name {
+  width: 50%;
+}
+
+.legend .name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.legend .pct,
+.legend .val {
+  width: 25%;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.legend .label {
+  color: var(--text);
+}
+
+.legend .pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.closing-title {
+  margin: 0.55rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.empty,
+.status {
+  max-width: 90rem;
+  margin: 3rem auto 0;
+  padding: 2.2rem 1.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 1.1rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.empty strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+  font-family: Georgia, Palatino, serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.status[hidden] {
+  display: none;
+}
+
+.site-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.5rem;
+  background: rgba(18, 16, 14, 0.92);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.site-footer a {
+  color: var(--gold);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-footer a:hover {
+  text-decoration: underline;
+}

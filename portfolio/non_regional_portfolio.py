@@ -1,7 +1,7 @@
 import logging
 
 from portfolio.portfolio import Portfolio
-from visual.pie_chart import PieChart
+from visual import get_plotter
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,10 @@ class NonRegionalPortfolio(Portfolio):
                 self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
 
 
-        self._visualizer = PieChart(
+        self._visualizer = get_plotter()(
             data=self._visualizer_data,
             title="{}: {:.2f} Euro".format(name, self._value),
+            closing_title="Value: {:.2f}".format(self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
 
