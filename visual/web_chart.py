@@ -35,9 +35,9 @@ def _slug(title: str | None) -> str:
 
 
 class WebChart(Visual):
-    """Write one JSON ``*.raw`` pie payload for the ``_visualizer`` JS app."""
+    """Write one JSON ``*.raw`` pie payload for the JS visualizer."""
 
-    data_dir: Path = Path("_visualizer") / "data"
+    data_dir: Path = Path.home() / ".local" / "asalloc" / "visualizer" / "data"
     _slug_counts: dict[str, int] = {}
 
     def __init__(

@@ -27,7 +27,7 @@ from utils import (
     get_incognito,
     apply_incognito_scaling,
 )
-from visual import DEFAULT_VISUALIZER
+from visual import get_plotter
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -105,4 +105,4 @@ def main():
         label_fontsize=7,
         autopct_fontsize=7,
     )
-    DEFAULT_VISUALIZER.finish_plots()
+    get_plotter().finish_plots()

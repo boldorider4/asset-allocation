@@ -31,7 +31,7 @@ def github_repo_url() -> str:
 
 
 def stamp_index(index_path: Path | None = None) -> None:
-    path = index_path or (_REPO_ROOT / "_visualizer" / "index.html")
+    path = index_path or (Path.home() / ".local" / "asalloc" / "visualizer" / "index.html")
     version = project_version()
     url = github_repo_url()
     path.write_text(
@@ -43,7 +43,10 @@ def stamp_index(index_path: Path | None = None) -> None:
 
 
 def main() -> None:
-    stamp_index()
+    import sys
+
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    stamp_index(path)
 
 
 if __name__ == "__main__":

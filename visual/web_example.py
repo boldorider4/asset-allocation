@@ -1,4 +1,4 @@
-"""Write example ``*.raw`` chart files for the ``_visualizer`` JS app."""
+"""Write example ``*.raw`` chart files for the JS visualizer."""
 
 from .web_chart import WebChart
 

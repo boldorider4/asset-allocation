@@ -60,16 +60,17 @@ Useful `update` flags:
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
 | `--incognito` | Scale display values |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |
+| `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
 
-The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `_visualizer/data/`. Scaffold the JS app (without touching existing raw files) with:
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/`. Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
 make web
 ```
 
-Then run `asalloc update` and serve `_visualizer` over HTTP (browsers cannot list `file://` directories):
+Then run `asalloc update` and serve the visualizer over HTTP (browsers cannot list `file://` directories):
 
 ```bash
 make serve
@@ -79,18 +80,27 @@ asalloc serve
 
 Stop it with `make stop-serve`.
 
-The HTTP port comes from `config.ini` (`[server] port`, default `8765`). The server runs in the background.
+The HTTP port and directory come from `config.ini` (`[server] port` and `directory`, default `8765` and `~/.local/asalloc/visualizer`). The server runs in the background.
 
 | Target | What it does |
 | --- | --- |
 | `make install` | `pip install -e .` so `asalloc` is on your PATH |
-| `make web` | Copy `visual/web` into `_visualizer`, stamp version and GitHub URL |
+| `make web` | Copy `visual/web` into `~/.local/asalloc/visualizer`, stamp version and GitHub URL |
 | `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
-| `make serve` | Background HTTP server for `_visualizer` (port from `config.ini`); fails if `asalloc` is not callable |
+| `make serve` | Background HTTP server for the visualizer dir (from `config.ini`); fails if `asalloc` is not callable |
 | `make stop-serve` | Stop the background visualizer server |
-| `make web-clean` | Delete `_visualizer` |
+| `make service` | Linux: install systemd user units, enable serve + 6-hour update timer |
+| `make web-clean` | Delete `~/.local/asalloc/visualizer` |
 
-To use matplotlib windows instead, set `DEFAULT_VISUALIZER` in `visual/__init__.py` to `PieChart`.
+On a headless Debian box, after `make install` and `make service`, put holdings at `~/.local/asalloc/assets.json` and enable lingering so the user units run without a login:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Units live in `systemd/` (`*.service` / `*.timer` for systemd) and are copied to `~/.config/systemd/user/`.
+
+To use matplotlib windows instead, pass `--plot pie-chart` (or set `DEFAULT_VISUALIZER` in `visual/__init__.py`).
 
 ## Disclaimer
 
