@@ -80,6 +80,22 @@ class TestHoldingsCsvAggregation(unittest.TestCase):
             [{"name": "United States", "weight_pct": 10.5}],
         )
 
+    def test_discards_zero_and_negative_weights(self) -> None:
+        payload = (
+            "Ticker,Name,Weight (%),Location\n"
+            "AAPL,Apple,10.5,United States\n"
+            "ZERO,Zero Corp,0,United States\n"
+            "NEG,Short,-0.20,Japan\n"
+            "TSM,TSMC,1.0,Taiwan\n"
+        )
+        self.assertEqual(
+            BlackRockPosition._countries_from_holdings_csv(payload),
+            [
+                {"name": "United States", "weight_pct": 10.5},
+                {"name": "Taiwan", "weight_pct": 1.0},
+            ],
+        )
+
 
 class TestIsharesProductUrl(unittest.TestCase):
     def setUp(self) -> None:

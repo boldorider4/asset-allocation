@@ -159,7 +159,7 @@ class BlackRockPosition(JustETFPosition):
                 continue
             name = _ISHARES_COUNTRY_ALIASES.get(raw_name, raw_name)
             weight = BlackRockPosition._parse_weight_pct(record[weight_i])
-            if weight is None:
+            if weight is None or weight <= 0:
                 continue
             weights[name] = weights.get(name, 0.0) + weight
         return [
