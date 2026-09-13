@@ -1,6 +1,6 @@
 import logging
 
-from common import PENDING_OSKAR_SHARES, XTRACKERS_ISINS
+from common import BLACKROCK_ISINS, PENDING_OSKAR_SHARES, XTRACKERS_ISINS
 from utils import (
     load_cache,
     parse_cache_entry,
@@ -12,6 +12,7 @@ from utils import (
     get_fetch_traderepublic,
     get_incognito_value_factor,
 )
+from position.blackrock_position import BlackRockPosition, ishares_product_url_exists
 from position.justetf_position import JustETFPosition
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
@@ -118,6 +119,13 @@ def factory(
     ):
         logger.info("Factory: using XtrackersPosition for %s", isin)
         position = XtrackersPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in BLACKROCK_ISINS
+        and ishares_product_url_exists(isin)
+    ):
+        logger.info("Factory: using BlackRockPosition for %s", isin)
+        position = BlackRockPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:

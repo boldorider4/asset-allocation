@@ -32,6 +32,23 @@ XTRACKERS_ISINS: frozenset[str] = frozenset(
     }
 )
 
+# iShares products whose country weights come from the iShares holdings CSV
+# (not JustETF).
+BLACKROCK_ISINS: frozenset[str] = frozenset(
+    {
+        "IE00BKM4GZ66",
+        "IE00BD1F4M44",
+        "IE00BHZPJ239",
+        "IE00BF4RFH31",
+        "IE00BFNM3D14",
+        "IE00BL6K8C82",
+        "IE00BFNM3L97",
+        "IE00BFNM3P36",
+        "IE000APK27S2",
+        "IE00BKPT2S34",
+    }
+)
+
 # Fresh estimates collected while portfolio Position objects are constructed.
 # Keying by ISIN and scraped value distinguishes the same ETF held in multiple
 # OSKAR entries without involving non-OSKAR positions.
