@@ -104,7 +104,7 @@ def main():
     # print(equity_portfolio)
     # equity_portfolio.plot_dmem()
     # equity_portfolio.plot_usavn()
-    equity_portfolio.plot()
+    # equity_portfolio.plot()
 
     # print(bond_portfolio)
     # bond_portfolio.plot_dmem()
@@ -121,14 +121,14 @@ def main():
     # commodity_portfolio.plot()
 
     total_growth_portfolio.plot(
-        title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value),
+        title="95-5 Equity Portfolio",
         closing_title="Value: {:.2f}".format(total_growth_portfolio.total_value),
         label_fontsize=7,
         autopct_fontsize=7,
     )
     total_portfolio.plot(
-        title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value),
-        closing_title="Value: {:.2f}".format(total_portfolio.total_value),
+        title="Complete Portfolio",
+        closing_title="Net Worth: {:.2f}".format(total_portfolio.total_value),
         label_fontsize=7,
         autopct_fontsize=7,
     )
