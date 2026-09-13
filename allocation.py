@@ -152,8 +152,7 @@ def cli() -> None:
             "Scrape live JustETF/Yahoo quotes and refresh the price in "
             "cache.json. Holdings values then come from shares × quote, and "
             "that value is written back to the assets file for brokers that "
-            "were not live-scraped. OSKAR rows get an estimated share count "
-            "when --fetch-oskar is also set. When combined with "
+            "were not live-scraped. When combined with "
             "--fetch-scalable / --fetch-tr / --fetch-oskar, the scraped "
             "holdings value is favored over shares × quote. Without this "
             "flag, a broker value from the assets file prevails over "
@@ -177,7 +176,7 @@ def cli() -> None:
     parser.add_argument(
         "--fetch-oskar",
         action="store_true",
-        help="Log into Oskar and scrape ETF positions.",
+        help="Log into Oskar and scrape ETF positions. Missing share counts are estimated from holdings value / quote (cached, or freshly fetched if --fetch-prices is also set).",
     )
     parser.add_argument(
         "--fetch-scalable",

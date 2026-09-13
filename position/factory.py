@@ -163,11 +163,10 @@ def factory(
             update_countries=update_countries,
         )
 
-    # OSKAR cockpit has no share count or unit price. After a live scrape
-    # (``prefer_scrape_value``) and a fresh ``--fetch-prices`` quote (not cache),
-    # queue an estimate from holdings value / price for batch persistence after
-    # all portfolio Position objects have been constructed.
-    if prefer_scrape_value and fetch_prices and position.price is not None and broker == OSKAR and isin:
+    # OSKAR cockpit has no share count or unit price. After a live scrape,
+    # estimate shares from holdings value / the available quote (fresh or cached)
+    # and queue them for batch persistence after all Position objects exist.
+    if prefer_scrape_value and position.price is not None and broker == OSKAR and isin:
         estimated_shares: float | None = None
         if shares is None and value is not None and position.price:
             estimated_shares = float(value) / float(position.price)
