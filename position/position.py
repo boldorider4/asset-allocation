@@ -7,9 +7,10 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
+from common import PENDING_FETCHED_VALUES
 from logger import attach_color_stderr_handler_for_module
 from scrape.oskar import _OSKAR
-from utils import get_fetch_geosplit, get_fetch_prices
+from utils import get_fetch_geosplit, get_fetch_prices, get_incognito
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -205,30 +206,56 @@ class Position(ABC):
             raise RuntimeError(
                 "No price for position because neither value nor ISIN was provided"
             )
+        self._stage_fetched_asset_value(*self._resolve_holdings_value())
 
     @property
     def isin(self) -> str:
         return self._isin
 
-    @property
-    def value(self) -> float | None:
-        base: float | None
+    def _resolve_holdings_value(self) -> tuple[float | None, bool]:
+        """Unscaled holdings value and whether it is shares × quote."""
         share_and_price_available = self._shares is not None and self._price is not None
         if self._prefer_scrape_value and self._value is not None:
             logger.info("Position: using cached value from asset file because preferred: %s", self._value)
-            base = self._value
-        elif share_and_price_available:
+            return self._value, False
+        if share_and_price_available:
             logger.info(
                 "Position: using shares and price to compute value because cached value not preferred or no cached value is available: %s * %s",
                 float(self._shares),
                 self._price,
             )
-            base = self._shares * self._price
-        elif self._value is not None:
+            return self._shares * self._price, True
+        if self._value is not None:
             logger.info("Position: using cached value from asset file because no price is fetched")
-            base = self._value
+            return self._value, False
+        logger.warning("Position: no value to compute")
+        return None, False
+
+    def _stage_fetched_asset_value(self, base: float | None, from_quote: bool) -> None:
+        """Queue shares × quote for the assets file when scrape is not favored."""
+        if (
+            not from_quote
+            or base is None
+            or not get_fetch_prices()
+            or self._prefer_scrape_value
+            or get_incognito()
+            or not self._isin
+            or self._shares is None
+        ):
+            return
+        PENDING_FETCHED_VALUES[
+            (
+                str(self._isin),
+                self._broker,
+                None if self._value is None else float(self._value),
+                float(self._shares),
+            )
+        ] = float(base)
+
+    @property
+    def value(self) -> float | None:
+        base, _from_quote = self._resolve_holdings_value()
         if base is None:
-            logger.warning("Position: no value to compute")
             return None
         logger.info("Position: computed value: %s", base * self._value_scale)
         return base * self._value_scale

@@ -46,9 +46,9 @@ def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> 
         fresh_scrape = get_fetch_traderepublic()
     else:
         return False
-    # A holdings value an earlier scrape wrote to the assets file stays
-    # authoritative (whatever the cached price and share count say) until
-    # ``--fetch-prices`` asks for a freshly quoted shares × price.
+    # A live ``--fetch-<broker>`` scrape always wins over shares × quote.
+    # Without ``--fetch-prices``, an earlier scrape (or a previous
+    # ``--fetch-prices`` write) in the assets file stays authoritative.
     return fresh_scrape or not get_fetch_prices()
 
 

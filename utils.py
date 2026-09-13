@@ -3,7 +3,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from common import DEFAULT_ISIN_PORTFOLIO_BUCKET, ISIN_TO_PORTFOLIO, PENDING_OSKAR_SHARES
+from common import (
+    DEFAULT_ISIN_PORTFOLIO_BUCKET,
+    ISIN_TO_PORTFOLIO,
+    PENDING_FETCHED_VALUES,
+    PENDING_OSKAR_SHARES,
+)
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -317,6 +322,42 @@ def persist_oskar_shares_in_portfolio() -> None:
             )
     finally:
         PENDING_OSKAR_SHARES.clear()
+
+
+def persist_fetched_values_in_portfolio() -> None:
+    """Write shares × quote into the assets file for unsraped broker rows."""
+    if not PENDING_FETCHED_VALUES:
+        return
+
+    updated_count = 0
+    try:
+        for positions in portfolio.values():
+            for position in positions:
+                pos_isin = position.get("ISIN") or position.get("isin")
+                if not pos_isin:
+                    continue
+                pos_broker = position.get("broker") or position.get("Broker")
+                pos_value = position.get("value")
+                pos_shares = position.get("shares")
+                new_value = PENDING_FETCHED_VALUES.get(
+                    (
+                        str(pos_isin),
+                        pos_broker,
+                        None if pos_value is None else float(pos_value),
+                        None if pos_shares is None else float(pos_shares),
+                    )
+                )
+                if new_value is not None:
+                    position["value"] = new_value
+                    updated_count += 1
+        if updated_count:
+            write_portfolio_to_file(get_assets_file())
+            logger.info(
+                "wrote %d fetch-prices value(s) to portfolio file",
+                updated_count,
+            )
+    finally:
+        PENDING_FETCHED_VALUES.clear()
 
 
 def bucket_for_isin(isin: str) -> str:

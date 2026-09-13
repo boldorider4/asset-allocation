@@ -25,6 +25,7 @@ from common import (
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from utils import (
+    persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
     portfolio,
     load_portfolio,
@@ -104,6 +105,7 @@ def main():
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
     persist_oskar_shares_in_portfolio()
+    persist_fetched_values_in_portfolio()
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
@@ -149,11 +151,14 @@ def cli() -> None:
         help=(
             "Scrape live JustETF/Yahoo quotes and refresh the price in "
             "cache.json. Holdings values then come from shares × quote, and "
-            "OSKAR rows get an estimated share count. When combined with "
-            "--fetch-scalable / --fetch-tr, broker unit prices from those "
-            "scrapes are cached too. Without this flag, a broker-scraped "
-            "value from the assets file prevails over shares × cached price. "
-            "The assets file never stores price: only shares and value."
+            "that value is written back to the assets file for brokers that "
+            "were not live-scraped. OSKAR rows get an estimated share count "
+            "when --fetch-oskar is also set. When combined with "
+            "--fetch-scalable / --fetch-tr / --fetch-oskar, the scraped "
+            "holdings value is favored over shares × quote. Without this "
+            "flag, a broker value from the assets file prevails over "
+            "shares × cached price. The assets file never stores price: "
+            "only shares and value."
         ),
     )
     parser.add_argument(
