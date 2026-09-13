@@ -14,10 +14,8 @@ from position.factory import factory
 from position.justetf_position import JustETFPosition
 from position.xtrackers_position import (
     XtrackersPosition,
-    clear_dws_product_url_cache,
-    countries_from_holdings_json,
+    _DWS_PRODUCT_EXISTS,
     dws_product_url_exists,
-    slug_from_dws_product_url,
 )
 from utils import (
     get_fetch_geosplit,
@@ -70,7 +68,7 @@ def _http_error(url: str, code: int) -> urllib.error.HTTPError:
 
 class TestHoldingsJsonAggregation(unittest.TestCase):
     def test_sums_by_country_and_aliases_korea(self) -> None:
-        rows = countries_from_holdings_json(_HOLDINGS)
+        rows = XtrackersPosition._countries_from_holdings_json(_HOLDINGS)
         self.assertEqual(
             rows,
             [
@@ -81,8 +79,8 @@ class TestHoldingsJsonAggregation(unittest.TestCase):
         )
 
     def test_empty_tables(self) -> None:
-        self.assertEqual(countries_from_holdings_json({"tables": []}), [])
-        self.assertEqual(countries_from_holdings_json({}), [])
+        self.assertEqual(XtrackersPosition._countries_from_holdings_json({"tables": []}), [])
+        self.assertEqual(XtrackersPosition._countries_from_holdings_json({}), [])
 
     def test_parses_percent_text_when_sort_value_missing(self) -> None:
         payload = {
@@ -98,20 +96,20 @@ class TestHoldingsJsonAggregation(unittest.TestCase):
             ]
         }
         self.assertEqual(
-            countries_from_holdings_json(payload),
+            XtrackersPosition._countries_from_holdings_json(payload),
             [{"name": "India", "weight_pct": 10.5}],
         )
 
 
 class TestDwsProductUrl(unittest.TestCase):
     def setUp(self) -> None:
-        clear_dws_product_url_cache()
+        _DWS_PRODUCT_EXISTS.clear()
 
     def tearDown(self) -> None:
-        clear_dws_product_url_cache()
+        _DWS_PRODUCT_EXISTS.clear()
 
     def test_slug_from_redirect_target(self) -> None:
-        self.assertEqual(slug_from_dws_product_url(_PRODUCT_FINAL), _SLUG)
+        self.assertEqual(XtrackersPosition._slug_from_dws_product_url(_PRODUCT_FINAL), _SLUG)
 
     def test_exists_on_200(self) -> None:
         resp = MagicMock()
