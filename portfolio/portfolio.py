@@ -70,6 +70,7 @@ class Portfolio:
     def plot(
         self,
         title: str | None = None,
+        closing_title: str | None = None,
         *,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
@@ -79,6 +80,8 @@ class Portfolio:
             return
         if title is not None:
             self._visualizer.title = title
+        if closing_title is not None:
+            self._visualizer.closing_title = closing_title
         self._visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,

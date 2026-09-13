@@ -43,6 +43,7 @@ class NonRegionalPortfolio(Portfolio):
         self._visualizer = DEFAULT_VISUALIZER(
             data=self._visualizer_data,
             title="{}: {:.2f} Euro".format(name, self._value),
+            closing_title="Value: {:.2f}".format(self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
 

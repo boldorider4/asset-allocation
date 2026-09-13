@@ -72,6 +72,18 @@ function formatPct(weight, total) {
   return `${((weight / total) * 100).toFixed(1)}%`;
 }
 
+function formatSegmentValue(wedge) {
+  if (wedge.value == null || Number.isNaN(Number(wedge.value))) {
+    return "";
+  }
+  const formatted = Number(wedge.value).toLocaleString("de-CH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const unit = wedge.unit ? ` ${wedge.unit}` : "";
+  return `${formatted}${unit}`;
+}
+
 function renderDonut(wedges) {
   const total = wedges.reduce((sum, w) => sum + Number(w.weight || 0), 0);
   const size = 320;
@@ -135,11 +147,19 @@ function renderCard(chart) {
     label.textContent = wedge.label;
     const pct = document.createElement("span");
     pct.className = "pct";
-    pct.textContent = formatPct(Number(wedge.weight || 0), total);
+    const share = formatPct(Number(wedge.weight || 0), total);
+    const amount = formatSegmentValue(wedge);
+    pct.textContent = amount ? `${share} · ${amount}` : share;
     item.append(swatch, label, pct);
     legend.appendChild(item);
   }
   card.appendChild(legend);
+  if (chart.closing_title) {
+    const closing = document.createElement("p");
+    closing.className = "closing-title";
+    closing.textContent = chart.closing_title;
+    card.appendChild(closing);
+  }
   return card;
 }
 

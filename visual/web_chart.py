@@ -5,7 +5,7 @@ import logging
 import re
 from pathlib import Path
 
-from .chart_merge import PieFactor, merge_charts
+from .chart_merge import PieFactor, merge_charts, merge_closing_title
 from .visual import Visual
 
 # matplotlib tab10 — explicit slice colors for the JS engine
@@ -45,9 +45,10 @@ class WebChart(Visual):
         data: dict[str, float],
         title: str | None = None,
         *,
+        closing_title: str | None = None,
         factor: PieFactor | None = None,
     ):
-        super().__init__(data=data, title=title)
+        super().__init__(data=data, title=title, closing_title=closing_title)
         self._factor = factor
 
     def __add__(self, other: object) -> WebChart:
@@ -61,21 +62,32 @@ class WebChart(Visual):
             other._title,
             other._factor,
         )
-        return WebChart(data=merged, title=title, factor=factor)
+        closing = merge_closing_title(self._closing_title, other._closing_title, factor)
+        return WebChart(data=merged, title=title, closing_title=closing, factor=factor)
 
     def _payload(self) -> dict:
-        wedges = [
-            {
+        total_w = sum(float(v) for v in self._data.values())
+        total_attr = float(self._factor["value"]) if self._factor is not None else None
+        unit = self._factor["unit"] if self._factor is not None else None
+        wedges = []
+        for i, (label, weight) in enumerate(self._data.items()):
+            weight_f = float(weight)
+            wedge: dict = {
                 "label": label,
-                "weight": float(weight),
+                "weight": weight_f,
                 "color": _TAB10[i % len(_TAB10)],
             }
-            for i, (label, weight) in enumerate(self._data.items())
-        ]
+            if total_attr is not None and total_w > 0:
+                wedge["value"] = weight_f / total_w * total_attr
+                if unit:
+                    wedge["unit"] = unit
+            wedges.append(wedge)
         payload: dict = {
             "name": self._title or "Untitled",
             "wedges": wedges,
         }
+        if self._closing_title is not None:
+            payload["closing_title"] = self._closing_title
         if self._factor is not None:
             payload["factor"] = dict(self._factor)
         return payload
@@ -114,6 +126,7 @@ class WebChart(Visual):
                     "Emerging Markets": 0.20,
                 },
                 title="Example: Regional split",
+                closing_title="Value: 125000.00",
                 factor={"value": 125000, "unit": "Euro"},
             ),
             WebChart(
@@ -124,6 +137,7 @@ class WebChart(Visual):
                     "Cash": 0.10,
                 },
                 title="Example: Asset mix",
+                closing_title="Value: 250000.00",
                 factor={"value": 250000, "unit": "Euro"},
             ),
         )

@@ -76,3 +76,15 @@ def merge_charts(
     title_parts = [t for t in (left_title, right_title) if t]
     merged_title = " + ".join(title_parts) if title_parts else None
     return merged, merged_title, merge_factor(left_factor, right_factor, weights)
+
+
+def merge_closing_title(
+    left_closing: str | None,
+    right_closing: str | None,
+    merged_factor: PieFactor | None,
+) -> str | None:
+    """Prefer ``Value: {merged}`` when factors combined; otherwise join closing titles."""
+    if merged_factor is not None:
+        return "Value: {:.2f}".format(float(merged_factor["value"]))
+    parts = [t for t in (left_closing, right_closing) if t]
+    return " + ".join(parts) if parts else None

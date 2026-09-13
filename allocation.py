@@ -120,8 +120,18 @@ def main():
     # print(commodity_portfolio)
     # commodity_portfolio.plot()
 
-    total_growth_portfolio.plot(title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
-    total_portfolio.plot(title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value), label_fontsize=7, autopct_fontsize=7)
+    total_growth_portfolio.plot(
+        title="Hedged Equity Portfolio: {:.2f} Euro".format(total_growth_portfolio.total_value),
+        closing_title="Value: {:.2f}".format(total_growth_portfolio.total_value),
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
+    total_portfolio.plot(
+        title="Total Net Worth: {:.2f} Euro".format(total_portfolio.total_value),
+        closing_title="Value: {:.2f}".format(total_portfolio.total_value),
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
     DEFAULT_VISUALIZER.finish_plots()
 
 

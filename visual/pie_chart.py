@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from uuid import uuid4
 
-from .chart_merge import PieFactor, merge_charts
+from .chart_merge import PieFactor, merge_charts, merge_closing_title
 from .visual_window import VisualWindow
 
 import matplotlib.pyplot as plt
@@ -37,9 +37,10 @@ class PieChart(VisualWindow):
         data: dict[str, float],
         title: str | None = None,
         *,
+        closing_title: str | None = None,
         factor: PieFactor | None = None,
     ):
-        super().__init__(data=data, title=title)
+        super().__init__(data=data, title=title, closing_title=closing_title)
         self._factor = factor
 
     def __add__(self, other: object) -> PieChart:
@@ -53,7 +54,8 @@ class PieChart(VisualWindow):
             other._title,
             other._factor,
         )
-        return PieChart(data=merged, title=title, factor=factor)
+        closing = merge_closing_title(self._closing_title, other._closing_title, factor)
+        return PieChart(data=merged, title=title, closing_title=closing, factor=factor)
 
     def plot(
         self,
@@ -105,8 +107,23 @@ class PieChart(VisualWindow):
                 t.set_fontsize(autopct_fontsize)
         ax.axis("equal")
         display_title = _title_with_grouped_floats(self._title) if self._title is not None else None
+        display_closing = (
+            _title_with_grouped_floats(self._closing_title) if self._closing_title is not None else None
+        )
         if display_title is not None:
             fig.suptitle(display_title)
+        if display_closing is not None:
+            fig.text(
+                0.5,
+                0.04,
+                display_closing,
+                ha="center",
+                va="center",
+                fontsize=11,
+                fontweight="bold",
+            )
+            top = 0.88 if display_title is not None else 0.95
+            fig.subplots_adjust(bottom=0.12, top=top)
         # Non-blocking so multiple charts each get their own window.
         plt.show(block=False)
         # Position/size after show so the native window exists (stagger is no-op otherwise).

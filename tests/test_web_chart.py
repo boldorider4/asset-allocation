@@ -33,6 +33,7 @@ class TestWebChart(unittest.TestCase):
         chart = WebChart(
             data={"US": 0.42, "Ex-US": 0.38, "Emerging Markets": 0.20},
             title="Equity Portfolio: Regional Split",
+            closing_title="Value: 1000.00",
             factor={"value": 1000, "unit": "Euro"},
         )
         chart.plot()
@@ -40,10 +41,13 @@ class TestWebChart(unittest.TestCase):
         self.assertTrue(path.is_file())
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["name"], "Equity Portfolio: Regional Split")
+        self.assertEqual(payload["closing_title"], "Value: 1000.00")
         self.assertEqual(payload["factor"], {"value": 1000, "unit": "Euro"})
         wedges = payload["wedges"]
         self.assertEqual([w["label"] for w in wedges], ["US", "Ex-US", "Emerging Markets"])
         self.assertEqual([w["weight"] for w in wedges], [0.42, 0.38, 0.20])
+        self.assertEqual([w["value"] for w in wedges], [420.0, 380.0, 200.0])
+        self.assertTrue(all(w["unit"] == "Euro" for w in wedges))
         self.assertTrue(all(w["color"].startswith("#") and len(w["color"]) == 7 for w in wedges))
         self.assertEqual(wedges[0]["color"], "#1f77b4")
 
@@ -74,6 +78,7 @@ class TestWebChart(unittest.TestCase):
         )
         self.assertEqual(web._data, pie._data)
         self.assertEqual(web._title, pie._title)
+        self.assertEqual(web._closing_title, pie._closing_title)
         self.assertEqual(web._factor, pie._factor)
         self.assertIsInstance(web, WebChart)
 
@@ -91,5 +96,8 @@ class TestWebChart(unittest.TestCase):
                 self.assertIn("label", wedge)
                 self.assertIn("weight", wedge)
                 self.assertIn("color", wedge)
+                self.assertIn("value", wedge)
                 self.assertIsInstance(wedge["weight"], (int, float))
                 self.assertGreaterEqual(wedge["weight"], 0)
+                self.assertGreaterEqual(wedge["value"], 0)
+            self.assertIn("closing_title", payload)
