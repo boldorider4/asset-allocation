@@ -1,5 +1,7 @@
 const GALLERY = document.getElementById("gallery");
 const STATUS = document.getElementById("status");
+const VERSION_LABEL = document.getElementById("version-label");
+const VERSION_TEXT = VERSION_LABEL ? VERSION_LABEL.textContent.trim() : "";
 const POLL_MS = 2000;
 const EQUITY_GROUP_COLOR = "#d4a574";
 
@@ -33,6 +35,71 @@ async function scanRawFiles() {
   }
   const text = await response.text();
   return listRawHrefs(text).map((name) => `data/${encodeURIComponent(name)}`);
+}
+
+async function chartFileLastModified(url) {
+  const tryFetch = async (method) => {
+    const response = await fetch(url, { method, cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const header = response.headers.get("Last-Modified");
+    if (!header) {
+      return null;
+    }
+    const ts = Date.parse(header);
+    return Number.isNaN(ts) ? null : ts;
+  };
+  try {
+    const head = await tryFetch("HEAD");
+    if (head != null) {
+      return head;
+    }
+  } catch {
+    // Some static servers reject HEAD; fall through to GET.
+  }
+  try {
+    return await tryFetch("GET");
+  } catch {
+    return null;
+  }
+}
+
+async function readChartsLastModified(urls) {
+  const times = await Promise.all(urls.map(chartFileLastModified));
+  let latest = null;
+  for (const ts of times) {
+    if (ts == null) {
+      continue;
+    }
+    if (latest == null || ts > latest) {
+      latest = ts;
+    }
+  }
+  return latest == null ? null : new Date(latest);
+}
+
+function formatLastUpdated(date) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function renderFooterLastUpdated(date) {
+  if (!VERSION_LABEL) {
+    return;
+  }
+  if (!date) {
+    VERSION_LABEL.textContent = VERSION_TEXT;
+    return;
+  }
+  VERSION_LABEL.textContent = `${VERSION_TEXT} - Last updated: ${formatLastUpdated(date)}`;
 }
 
 async function loadChart(url) {
@@ -349,7 +416,9 @@ function renderEmpty() {
 async function refresh() {
   try {
     const files = await scanRawFiles();
-    const signature = files.join("|");
+    const lastUpdated = await readChartsLastModified(files);
+    renderFooterLastUpdated(lastUpdated);
+    const signature = `${files.join("|")}@${lastUpdated ? lastUpdated.getTime() : ""}`;
     if (signature === lastSignature) {
       STATUS.hidden = true;
       return;
