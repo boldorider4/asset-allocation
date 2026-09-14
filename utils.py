@@ -337,15 +337,8 @@ def persist_fetched_values_in_portfolio() -> None:
                 if not pos_isin:
                     continue
                 pos_broker = position.get("broker") or position.get("Broker")
-                pos_value = position.get("value")
-                pos_shares = position.get("shares")
                 new_value = PENDING_FETCHED_VALUES.get(
-                    (
-                        str(pos_isin),
-                        pos_broker,
-                        None if pos_value is None else float(pos_value),
-                        None if pos_shares is None else float(pos_shares),
-                    )
+                    (str(pos_isin), pos_broker)
                 )
                 if new_value is not None:
                     position["value"] = new_value

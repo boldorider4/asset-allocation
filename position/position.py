@@ -195,7 +195,7 @@ class Position(ABC):
         elif price is not None:
             logger.info("Position: using supplied price: %s", price)
             self._price = price
-        elif self._isin and self._broker is not _OSKAR:
+        elif self._isin and self._broker != _OSKAR:
             logger.info(
                 "Position: no supplied price; fetching from ISIN %s (fetch-prices disabled)",
                 self._isin,
@@ -243,18 +243,12 @@ class Position(ABC):
             or self._shares is None
         ):
             return
-        PENDING_FETCHED_VALUES[
-            (
-                str(self._isin),
-                self._broker,
-                None if self._value is None else float(self._value),
-                float(self._shares),
-            )
-        ] = float(base)
+        PENDING_FETCHED_VALUES[(str(self._isin), self._broker)] = float(base)
 
     @property
     def value(self) -> float | None:
-        base, _from_quote = self._resolve_holdings_value()
+        base, from_quote = self._resolve_holdings_value()
+        self._stage_fetched_asset_value(base, from_quote)
         if base is None:
             return None
         logger.info("Position: computed value: %s", base * self._value_scale)
@@ -357,10 +351,11 @@ class Position(ABC):
             return supplied_price
         if fetched is None:
             logger.warning(
-                "Position: no price for ISIN %s; continuing without a fetched quote",
+                "Position: no price for ISIN %s; using supplied price %s",
                 self._isin,
+                supplied_price,
             )
-            return None
+            return supplied_price
         logger.info("Position: price: %s", fetched)
         return fetched
 
