@@ -10,6 +10,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 
+import ccy
 import pycountry
 
 from logger import attach_color_stderr_handler_for_module
@@ -70,6 +71,11 @@ _PYCOUNTRY_NAME_ALIASES: dict[str, str] = {
 _ISIN_PREFIX_TO_MARKET: dict[str, str] = {
     "EU": "European Union",
     "UK": "United Kingdom",
+}
+
+# Offshore yuan is not in ISO 4217 / ccy; treat it as CNY -> China.
+_CURRENCY_ALIASES: dict[str, str] = {
+    "CNH": "CNY",
 }
 
 _UBS_PRODUCT_EXISTS: dict[str, bool] = {}
@@ -271,6 +277,34 @@ class UBSPosition(JustETFPosition):
         return UBSPosition._name_for_market_lists(record)
 
     @staticmethod
+    def _country_from_currency(raw_currency: str) -> str | None:
+        """Map a unique listing currency to a market name; ambiguous -> None."""
+        code = raw_currency.strip().upper()
+        code = _CURRENCY_ALIASES.get(code, code)
+        if not code:
+            return None
+        try:
+            currency = ccy.currency(code)
+        except (KeyError, ValueError, TypeError):
+            return None
+        alpha2 = getattr(currency, "default_country", None)
+        # EUR's default is the EU pseudo-country; split those rows via ISIN.
+        if not isinstance(alpha2, str) or not alpha2 or alpha2 == "EU":
+            return None
+        record = UBSPosition._country_record_for_prefix(alpha2)
+        if record is None:
+            return None
+        return UBSPosition._name_for_market_lists(record)
+
+    @staticmethod
+    def _country_from_holding(raw_isin: str, raw_currency: str) -> str | None:
+        """Prefer unique listing currency; else ISIN prefix (EUR and unknowns)."""
+        name = UBSPosition._country_from_currency(raw_currency)
+        if name:
+            return name
+        return UBSPosition._country_from_isin(raw_isin)
+
+    @staticmethod
     def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
         if "xl/sharedStrings.xml" not in archive.namelist():
             return []
@@ -318,7 +352,7 @@ class UBSPosition(JustETFPosition):
 
     @staticmethod
     def _countries_from_holdings_xlsx(data: bytes) -> list[dict[str, float | str]]:
-        """Sum constituent rows by ISIN country prefix into JustETF-shaped rows."""
+        """Sum constituent rows by listing currency, with ISIN fallback."""
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 rows = UBSPosition._sheet_rows(archive)
@@ -340,14 +374,26 @@ class UBSPosition(JustETFPosition):
             )
         except (ValueError, StopIteration):
             return []
+        currency_i = next(
+            (
+                i
+                for i, col in enumerate(header)
+                if col.casefold().startswith("curr")
+            ),
+            None,
+        )
+        needed = max(isin_i, weight_i, currency_i if currency_i is not None else 0)
         weights: dict[str, float] = {}
         for record in rows[header_i + 1 :]:
             if UBSPosition._is_disclaimer_row(record):
                 break
-            if len(record) <= max(isin_i, weight_i):
+            if len(record) <= needed:
                 continue
             raw_isin = record[isin_i].strip()
-            name = UBSPosition._country_from_isin(raw_isin)
+            raw_currency = (
+                record[currency_i].strip() if currency_i is not None else ""
+            )
+            name = UBSPosition._country_from_holding(raw_isin, raw_currency)
             if not name:
                 continue
             weight = UBSPosition._parse_weight_pct(record[weight_i])

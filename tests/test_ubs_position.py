@@ -128,14 +128,14 @@ def _xlsx_response(body: bytes = _HOLDINGS_XLSX) -> MagicMock:
 
 
 class TestHoldingsXlsxAggregation(unittest.TestCase):
-    def test_sums_by_isin_country_prefix(self) -> None:
+    def test_sums_by_listing_currency(self) -> None:
         rows = UBSPosition._countries_from_holdings_xlsx(_HOLDINGS_XLSX)
         self.assertEqual(
             rows,
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
-                {"name": "United States", "weight_pct": 2.0},
+                {"name": "United States", "weight_pct": 2.01},
             ],
         )
 
@@ -143,13 +143,45 @@ class TestHoldingsXlsxAggregation(unittest.TestCase):
         self.assertEqual(UBSPosition._countries_from_holdings_xlsx(b""), [])
         self.assertEqual(UBSPosition._countries_from_holdings_xlsx(b"not xlsx"), [])
 
+    def test_usd_uses_currency_even_when_isin_prefix_differs(self) -> None:
+        payload = _xlsx_bytes(
+            [
+                ["Securities", "ISIN", "Currency", "Weight %"],
+                ["ADR", "IE00B4BNMY34", "USD", "2.0"],
+                ["CAYMAN", "KYG123456789", "USD", "1.0"],
+                ["LIBERIA", "LR0000000000", "USD", "0.5"],
+            ]
+        )
+        self.assertEqual(
+            UBSPosition._countries_from_holdings_xlsx(payload),
+            [{"name": "United States", "weight_pct": 3.5}],
+        )
+
+    def test_eur_falls_back_to_isin_country(self) -> None:
+        payload = _xlsx_bytes(
+            [
+                ["Securities", "ISIN", "Currency", "Weight %"],
+                ["SAP", "DE0007164600", "EUR", "3.0"],
+                ["ASML", "NL0010273215", "EUR", "2.0"],
+                ["ENEL", "IT0003128367", "EUR", "1.0"],
+            ]
+        )
+        self.assertEqual(
+            UBSPosition._countries_from_holdings_xlsx(payload),
+            [
+                {"name": "Germany", "weight_pct": 3.0},
+                {"name": "Netherlands", "weight_pct": 2.0},
+                {"name": "Italy", "weight_pct": 1.0},
+            ],
+        )
+
     def test_maps_special_and_unknown_isin_prefixes_to_other(self) -> None:
         payload = _xlsx_bytes(
             [
-                ["Securities", "ISIN", "Weight %"],
-                ["EUROBOND", "XS1234567890", "1.5"],
-                ["CINS", "XA0987654321", "0.4"],
-                ["UNKNOWN", "ZZ0000000001", "0.1"],
+                ["Securities", "ISIN", "Currency", "Weight %"],
+                ["EUROBOND", "XS1234567890", "EUR", "1.5"],
+                ["CINS", "XA0987654321", "EUR", "0.4"],
+                ["UNKNOWN", "ZZ0000000001", "EUR", "0.1"],
             ]
         )
         self.assertEqual(
@@ -157,7 +189,7 @@ class TestHoldingsXlsxAggregation(unittest.TestCase):
             [{"name": "Other", "weight_pct": 2.0}],
         )
 
-    def test_maps_country_prefixes_including_liberia(self) -> None:
+    def test_maps_country_prefixes_when_currency_column_missing(self) -> None:
         payload = _xlsx_bytes(
             [
                 ["Securities", "ISIN", "Weight %"],
@@ -186,6 +218,12 @@ class TestHoldingsXlsxAggregation(unittest.TestCase):
             UBSPosition._country_from_isin("RU0000000001"), "Russian Federation"
         )
         self.assertEqual(UBSPosition._country_from_isin("EU0000000001"), "European Union")
+        self.assertEqual(UBSPosition._country_from_currency("TWD"), "Taiwan")
+        self.assertEqual(UBSPosition._country_from_currency("KRW"), "South Korea")
+        self.assertEqual(UBSPosition._country_from_currency("USD"), "United States")
+        self.assertEqual(UBSPosition._country_from_currency("CNY"), "China")
+        self.assertEqual(UBSPosition._country_from_currency("CNH"), "China")
+        self.assertIsNone(UBSPosition._country_from_currency("EUR"))
 
     def test_maps_historic_prefix_via_pycountry(self) -> None:
         self.assertEqual(
@@ -274,7 +312,7 @@ class TestUbsCountryFetch(unittest.TestCase):
             [
                 {"name": "Taiwan", "weight_pct": 28.04},
                 {"name": "South Korea", "weight_pct": 21.77},
-                {"name": "United States", "weight_pct": 2.0},
+                {"name": "United States", "weight_pct": 2.01},
             ],
         )
 
