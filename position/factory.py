@@ -20,6 +20,7 @@ from position.blackrock_position import (
 )
 from position.invesco_position import InvescoPosition, invesco_product_url_exists
 from position.justetf_position import JustETFPosition
+from position.l_and_g_position import LAndGPosition, landg_product_url_exists
 from position.state_street_position import (
     StateStreetPosition,
     ssga_product_url_exists,
@@ -47,6 +48,23 @@ def _name_looks_like_ubs(name: str | None) -> bool:
 
 def _name_looks_like_invesco(name: str | None) -> bool:
     return bool(name) and "invesco" in name.casefold()
+
+
+def _name_looks_like_landg(name: str | None) -> bool:
+    if not name:
+        return False
+    folded = name.casefold()
+    return any(
+        token in folded
+        for token in (
+            "l&g",
+            "l & g",
+            "lgim",
+            "landg",
+            "legal & general",
+            "legal and general",
+        )
+    )
 
 
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
@@ -171,6 +189,13 @@ def factory(
         position = InvescoPosition(isin, **ctor_kwargs)
     elif (
         fetch_geosplit
+        and isin in LAndGPosition.ISINS
+        and landg_product_url_exists(isin)
+    ):
+        logger.info("Factory: using LAndGPosition for %s", isin)
+        position = LAndGPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
         and _name_looks_like_invesco(name)
         and invesco_product_url_exists(isin)
     ):
@@ -181,6 +206,13 @@ def factory(
         # constituents when etfinstidfromisin returns an instId.
         logger.info("Factory: using UBSPosition for %s (HA4 instId)", isin)
         position = UBSPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and _name_looks_like_landg(name)
+        and landg_product_url_exists(isin)
+    ):
+        logger.info("Factory: using LAndGPosition for %s (fund-centre)", isin)
+        position = LAndGPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:
