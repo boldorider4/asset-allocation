@@ -1,0 +1,281 @@
+"""L&G fund-centre Country (%) aggregation and factory routing."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+import urllib.error
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from position.amundi_position import AmundiPosition
+from position.factory import factory
+from position.justetf_position import JustETFPosition
+from position.l_and_g_position import (
+    LAndGPosition,
+    _LANDG_PRODUCT_EXISTS,
+    _LANDG_SHARECLASS,
+    landg_product_url_exists,
+)
+from utils import (
+    get_fetch_geosplit,
+    get_fetch_prices,
+    set_fetch_geosplit,
+    set_fetch_prices,
+)
+
+_ISIN = "IE000Z9UVQ99"
+_LISTING = {
+    "metadata": {
+        "share_class_fields": [
+            {"code_name": "shareclassPageURL"},
+            {"code_name": "ter"},
+            {"code_name": "shareclassISIN"},
+        ]
+    },
+    "funds": [
+        {
+            "id": 2137,
+            "share_classes": [
+                {
+                    "id": 6908,
+                    "data": [
+                        "/en/de/adviser-wealth/fund-centre/ETF/Asia-Pacific-ex-Japan-ESG-Exclusions-Paris-Aligned/IE000Z9UVQ99/",
+                        "0.16",
+                        _ISIN,
+                    ],
+                }
+            ],
+        }
+    ],
+}
+_COUNTRY_ROWS = [
+    ["Australia", "61.0"],
+    ["Hong Kong", "15.0"],
+    ["Singapore", "13.7"],
+    ["New Zealand", "4.4"],
+    ["Cayman Islands", "4.1"],
+    ["United States", "1.2"],
+    ["Bermuda", "0.6"],
+    ["Cash", "0.01"],
+]
+
+
+def _portfolio_html(rows: list[list[str]] | None = None) -> bytes:
+    payload = json.dumps(rows if rows is not None else _COUNTRY_ROWS)
+    return (
+        "<div>"
+        '<data data-key="country" data-title="Country (%)" data-component="country">'
+        '<div data-part_id="12761">'
+        f'<script type="application/json" class="data">{payload}</script>'
+        "</div>"
+        '<div data-part_id="12602">'
+        '<script type="application/json" class="data">[]</script>'
+        "</div>"
+        "</data>"
+        "</div>"
+    ).encode()
+
+
+def _http_error(url: str, code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(url, code, "error", {}, BytesIO(b""))
+
+
+def _response(body: bytes, status: int = 200, content_type: str = "application/json") -> MagicMock:
+    resp = MagicMock()
+    resp.status = status
+    resp.headers = {"Content-Type": content_type}
+    resp.read.return_value = body
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+def _urlopen_listing_then_part(listing: dict, part_html: bytes):
+    listing_body = json.dumps(listing).encode()
+
+    def opener(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        if "fund-centre/" in url and "part?" not in url:
+            return _response(listing_body)
+        return _response(part_html, content_type="text/html")
+
+    return opener
+
+
+class TestLandGCountryHtml(unittest.TestCase):
+    def test_part_url_expands_all_ids(self) -> None:
+        from position.l_and_g_position import _part_url
+
+        url = _part_url(
+            {
+                "fund_id": 2137,
+                "share_class_id": 6908,
+                "audience": 148,
+                "route": 6696,
+                "language": 1,
+                "part_id": 12618,
+            }
+        )
+        self.assertIn("id=12618", url)
+        self.assertIn("route=6696", url)
+        self.assertIn("fund_id=2137", url)
+        self.assertIn("share_class_id=6908", url)
+        self.assertNotIn("{", url)
+
+    def test_sums_by_country_and_aliases(self) -> None:
+        rows = LAndGPosition._countries_from_portfolio_html(
+            _portfolio_html().decode()
+        )
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Australia", "weight_pct": 61.0},
+                {"name": "Hong Kong", "weight_pct": 15.0},
+                {"name": "Singapore", "weight_pct": 13.7},
+                {"name": "New Zealand", "weight_pct": 4.4},
+                {"name": "Cayman Islands", "weight_pct": 4.1},
+                {"name": "United States", "weight_pct": 1.2},
+                {"name": "Bermuda", "weight_pct": 0.6},
+                {"name": "Other", "weight_pct": 0.01},
+            ],
+        )
+
+    def test_skips_empty_country_tables(self) -> None:
+        self.assertEqual(
+            LAndGPosition._countries_from_portfolio_html("<html></html>"),
+            [],
+        )
+
+
+class TestLandGProductExists(unittest.TestCase):
+    def setUp(self) -> None:
+        _LANDG_PRODUCT_EXISTS.clear()
+        _LANDG_SHARECLASS.clear()
+
+    def tearDown(self) -> None:
+        _LANDG_PRODUCT_EXISTS.clear()
+        _LANDG_SHARECLASS.clear()
+
+    def test_exists_on_country_canvas(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_urlopen_listing_then_part(_LISTING, _portfolio_html()),
+        ) as opener:
+            self.assertTrue(landg_product_url_exists(_ISIN))
+        self.assertGreaterEqual(opener.call_count, 2)
+
+    def test_missing_country_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_urlopen_listing_then_part(_LISTING, b"<html></html>"),
+        ):
+            self.assertFalse(landg_product_url_exists(_ISIN))
+
+    def test_empty_isin_skips_network(self) -> None:
+        with patch("urllib.request.urlopen") as opener:
+            self.assertFalse(landg_product_url_exists(""))
+        opener.assert_not_called()
+
+    def test_http_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_http_error("https://fundcentres.landg.com/", 404),
+        ):
+            self.assertFalse(landg_product_url_exists(_ISIN))
+
+    def test_result_is_memoized(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_urlopen_listing_then_part(_LISTING, _portfolio_html()),
+        ) as opener:
+            self.assertTrue(landg_product_url_exists(_ISIN))
+            self.assertTrue(landg_product_url_exists(_ISIN))
+        self.assertGreaterEqual(opener.call_count, 2)
+        self.assertEqual(opener.call_count, 2)
+
+
+class TestLandGFactoryRouting(unittest.TestCase):
+    def setUp(self) -> None:
+        self._prices = get_fetch_prices()
+        self._geo = get_fetch_geosplit()
+        set_fetch_prices(False)
+        set_fetch_geosplit(True)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._cache = Path(self._tmpdir.name) / "cache.json"
+        self._cache.write_text("{}", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        set_fetch_prices(self._prices)
+        set_fetch_geosplit(self._geo)
+        self._tmpdir.cleanup()
+
+    def _factory(self, **kwargs):
+        defaults = {
+            "isin": _ISIN,
+            "name": "L&G Asia Pacific ex Japan ESG Paris Aligned UCITS ETF",
+            "shares": 1,
+            "price": 10.0,
+        }
+        defaults.update(kwargs)
+        with patch("utils.CACHE_FILENAME", str(self._cache)):
+            return factory(**defaults)
+
+    def _no_country_scrape(self):
+        return patch.object(
+            JustETFPosition, "_fetch_countries_with_retries", return_value=[]
+        )
+
+    def test_allowlisted_isin_and_existing_url_use_landg(self) -> None:
+        with patch("position.factory.landg_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory()
+        self.assertIsInstance(pos, LAndGPosition)
+
+    def test_allowlisted_isin_ignores_name(self) -> None:
+        with patch("position.factory.landg_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory(name="Asia Pacific ex Japan ESG Paris Aligned")
+        self.assertIsInstance(pos, LAndGPosition)
+
+    def test_lg_in_name_without_allowlist_still_probes(self) -> None:
+        with patch("position.factory.landg_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory(
+                    isin="IE00B3CNHJ55",
+                    name="L&G Russell 2000 US Small Cap UCITS ETF",
+                )
+        self.assertIsInstance(pos, LAndGPosition)
+
+    def test_missing_product_falls_back_to_justetf(self) -> None:
+        with patch("position.factory.landg_product_url_exists", return_value=False):
+            with self._no_country_scrape():
+                pos = self._factory()
+        self.assertIsInstance(pos, JustETFPosition)
+        self.assertNotIsInstance(pos, LAndGPosition)
+
+    def test_amundi_does_not_use_landg(self) -> None:
+        with patch("position.factory.landg_product_url_exists") as exists:
+            with patch("position.factory.amundi_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="IE000BI8OT95",
+                        name="Amundi Core MSCI World UCITS ETF (Acc)",
+                    )
+        exists.assert_not_called()
+        self.assertIsInstance(pos, AmundiPosition)
+        self.assertNotIsInstance(pos, LAndGPosition)
+
+    def test_without_fetch_geosplit_skips_landg_probe(self) -> None:
+        set_fetch_geosplit(False)
+        with patch("position.factory.landg_product_url_exists") as exists:
+            pos = self._factory()
+        exists.assert_not_called()
+        self.assertIsInstance(pos, JustETFPosition)
+        self.assertNotIsInstance(pos, LAndGPosition)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,7 +18,14 @@ from position.blackrock_position import (
     _ISHARES_PRODUCT_IDS,
     ishares_product_url_exists,
 )
+from position.invesco_position import InvescoPosition, invesco_product_url_exists
 from position.justetf_position import JustETFPosition
+from position.l_and_g_position import LAndGPosition, landg_product_url_exists
+from position.state_street_position import (
+    StateStreetPosition,
+    ssga_product_url_exists,
+)
+from position.ubs_position import UBSPosition, ubs_product_url_exists
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
@@ -33,6 +40,31 @@ attach_color_stderr_handler_for_module(logger)
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
+
+
+def _name_looks_like_ubs(name: str | None) -> bool:
+    return bool(name) and "ubs" in name.casefold()
+
+
+def _name_looks_like_invesco(name: str | None) -> bool:
+    return bool(name) and "invesco" in name.casefold()
+
+
+def _name_looks_like_landg(name: str | None) -> bool:
+    if not name:
+        return False
+    folded = name.casefold()
+    return any(
+        token in folded
+        for token in (
+            "l&g",
+            "l & g",
+            "lgim",
+            "landg",
+            "legal & general",
+            "legal and general",
+        )
+    )
 
 
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
@@ -138,6 +170,49 @@ def factory(
     ):
         logger.info("Factory: using AmundiPosition for %s", isin)
         position = AmundiPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in StateStreetPosition.ISINS
+        and ssga_product_url_exists(isin)
+    ):
+        logger.info("Factory: using StateStreetPosition for %s", isin)
+        position = StateStreetPosition(isin, **ctor_kwargs)
+    elif fetch_geosplit and isin in UBSPosition.ISINS:
+        logger.info("Factory: using UBSPosition for %s", isin)
+        position = UBSPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in InvescoPosition.ISINS
+        and invesco_product_url_exists(isin)
+    ):
+        logger.info("Factory: using InvescoPosition for %s", isin)
+        position = InvescoPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in LAndGPosition.ISINS
+        and landg_product_url_exists(isin)
+    ):
+        logger.info("Factory: using LAndGPosition for %s", isin)
+        position = LAndGPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and _name_looks_like_invesco(name)
+        and invesco_product_url_exists(isin)
+    ):
+        logger.info("Factory: using InvescoPosition for %s (dng-api)", isin)
+        position = InvescoPosition(isin, **ctor_kwargs)
+    elif fetch_geosplit and _name_looks_like_ubs(name) and ubs_product_url_exists(isin):
+        # Allowlist is the no-probe path. Other UBS-named ETFs still have HA4
+        # constituents when etfinstidfromisin returns an instId.
+        logger.info("Factory: using UBSPosition for %s (HA4 instId)", isin)
+        position = UBSPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and _name_looks_like_landg(name)
+        and landg_product_url_exists(isin)
+    ):
+        logger.info("Factory: using LAndGPosition for %s (fund-centre)", isin)
+        position = LAndGPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:
