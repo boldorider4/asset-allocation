@@ -1,6 +1,9 @@
 const GALLERY = document.getElementById("gallery");
 const STATUS = document.getElementById("status");
+const VERSION_LABEL = document.getElementById("version-label");
+const VERSION_TEXT = VERSION_LABEL ? VERSION_LABEL.textContent.trim() : "";
 const POLL_MS = 2000;
+const EQUITY_GROUP_COLOR = "#d4a574";
 
 let lastSignature = "";
 
@@ -32,6 +35,71 @@ async function scanRawFiles() {
   }
   const text = await response.text();
   return listRawHrefs(text).map((name) => `data/${encodeURIComponent(name)}`);
+}
+
+async function chartFileLastModified(url) {
+  const tryFetch = async (method) => {
+    const response = await fetch(url, { method, cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const header = response.headers.get("Last-Modified");
+    if (!header) {
+      return null;
+    }
+    const ts = Date.parse(header);
+    return Number.isNaN(ts) ? null : ts;
+  };
+  try {
+    const head = await tryFetch("HEAD");
+    if (head != null) {
+      return head;
+    }
+  } catch {
+    // Some static servers reject HEAD; fall through to GET.
+  }
+  try {
+    return await tryFetch("GET");
+  } catch {
+    return null;
+  }
+}
+
+async function readChartsLastModified(urls) {
+  const times = await Promise.all(urls.map(chartFileLastModified));
+  let latest = null;
+  for (const ts of times) {
+    if (ts == null) {
+      continue;
+    }
+    if (latest == null || ts > latest) {
+      latest = ts;
+    }
+  }
+  return latest == null ? null : new Date(latest);
+}
+
+function formatLastUpdated(date) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+function renderFooterLastUpdated(date) {
+  if (!VERSION_LABEL) {
+    return;
+  }
+  if (!date) {
+    VERSION_LABEL.textContent = VERSION_TEXT;
+    return;
+  }
+  VERSION_LABEL.textContent = `${VERSION_TEXT} - Last updated: ${formatLastUpdated(date)}`;
 }
 
 async function loadChart(url) {
@@ -162,6 +230,8 @@ function renderDonut(wedges) {
     const next = angle + share * Math.PI * 2;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     const span = next - angle;
+    const label = String(wedge.label || "");
+    const outlineEquity = isEquityLabel(label);
     if (span >= Math.PI * 2 - 1e-9) {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       ring.setAttribute("cx", String(cx));
@@ -171,12 +241,28 @@ function renderDonut(wedges) {
       ring.setAttribute("stroke", wedge.color || "#d4a574");
       ring.setAttribute("stroke-width", String(ringWidth));
       svg.appendChild(ring);
+      if (outlineEquity) {
+        for (const r of [rInner, rOuter]) {
+          const rim = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          rim.setAttribute("cx", String(cx));
+          rim.setAttribute("cy", String(cy));
+          rim.setAttribute("r", String(r));
+          rim.setAttribute("fill", "none");
+          rim.setAttribute("stroke", EQUITY_GROUP_COLOR);
+          rim.setAttribute("stroke-width", "1.75");
+          svg.appendChild(rim);
+        }
+      }
     } else if (span > 1e-9) {
       path.setAttribute("d", wedgePath(cx, cy, rOuter, rInner, angle, next));
       path.setAttribute("fill", wedge.color || "#d4a574");
+      if (outlineEquity) {
+        path.setAttribute("stroke", EQUITY_GROUP_COLOR);
+        path.setAttribute("stroke-width", "1.75");
+        path.setAttribute("stroke-linejoin", "round");
+      }
       svg.appendChild(path);
     }
-    const label = String(wedge.label || "");
     const fitted = label && span > 1e-9 ? fitWedgeLabel(label, span, rLabel, ringWidth) : null;
     if (fitted) {
       labels.push({ start: angle, end: next, ...fitted });
@@ -210,6 +296,84 @@ function renderDonut(wedges) {
   return svg;
 }
 
+function isEquityLabel(label) {
+  return String(label || "").startsWith("Equity");
+}
+
+function equityGroupWedge(wedges) {
+  const parts = wedges.filter((w) => isEquityLabel(w.label));
+  if (parts.length === 0) {
+    return null;
+  }
+  const weight = parts.reduce((sum, w) => sum + Number(w.weight || 0), 0);
+  const grouped = { label: "Equity", weight, grouped: true };
+  let valueSum = 0;
+  let hasValue = false;
+  let unit = "";
+  for (const wedge of parts) {
+    if (wedge.value == null || Number.isNaN(Number(wedge.value))) {
+      continue;
+    }
+    valueSum += Number(wedge.value);
+    hasValue = true;
+    if (!unit && wedge.unit) {
+      unit = wedge.unit;
+    }
+  }
+  if (hasValue) {
+    grouped.value = valueSum;
+    if (unit) {
+      grouped.unit = unit;
+    }
+  }
+  return grouped;
+}
+
+function legendEntries(wedges) {
+  const group = equityGroupWedge(wedges);
+  if (!group) {
+    return wedges;
+  }
+  const equity = wedges.filter((w) => isEquityLabel(w.label) && w.label !== "Equity");
+  const rest = wedges.filter((w) => !isEquityLabel(w.label));
+  return [...equity, group, ...rest];
+}
+
+function renderLegendRow(wedge, total) {
+  const row = document.createElement("tr");
+  if (wedge.grouped) {
+    row.className = "group-total";
+  }
+
+  const nameCell = document.createElement("td");
+  nameCell.className = "name";
+  const nameWrap = document.createElement("span");
+  nameWrap.className = "name-cell";
+  const swatch = document.createElement("span");
+  swatch.className = wedge.grouped ? "swatch grouped" : "swatch";
+  if (!wedge.grouped) {
+    swatch.style.background = wedge.color || "#d4a574";
+  } else {
+    swatch.style.background = EQUITY_GROUP_COLOR;
+  }
+  const label = document.createElement("span");
+  label.className = "label";
+  label.textContent = wedge.label;
+  nameWrap.append(swatch, label);
+  nameCell.appendChild(nameWrap);
+
+  const pct = document.createElement("td");
+  pct.className = "pct";
+  pct.textContent = formatPct(Number(wedge.weight || 0), total);
+
+  const val = document.createElement("td");
+  val.className = "val";
+  val.textContent = formatSegmentValue(wedge);
+
+  row.append(nameCell, pct, val);
+  return row;
+}
+
 function renderCard(chart) {
   const card = document.createElement("article");
   card.className = "card";
@@ -227,32 +391,8 @@ function renderCard(chart) {
   const legend = document.createElement("table");
   legend.className = "legend";
   const body = document.createElement("tbody");
-  for (const wedge of chart.wedges) {
-    const row = document.createElement("tr");
-
-    const nameCell = document.createElement("td");
-    nameCell.className = "name";
-    const nameWrap = document.createElement("span");
-    nameWrap.className = "name-cell";
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = wedge.color || "#d4a574";
-    const label = document.createElement("span");
-    label.className = "label";
-    label.textContent = wedge.label;
-    nameWrap.append(swatch, label);
-    nameCell.appendChild(nameWrap);
-
-    const pct = document.createElement("td");
-    pct.className = "pct";
-    pct.textContent = formatPct(Number(wedge.weight || 0), total);
-
-    const val = document.createElement("td");
-    val.className = "val";
-    val.textContent = formatSegmentValue(wedge);
-
-    row.append(nameCell, pct, val);
-    body.appendChild(row);
+  for (const wedge of legendEntries(chart.wedges)) {
+    body.appendChild(renderLegendRow(wedge, total));
   }
   legend.appendChild(body);
   card.appendChild(legend);
@@ -276,7 +416,9 @@ function renderEmpty() {
 async function refresh() {
   try {
     const files = await scanRawFiles();
-    const signature = files.join("|");
+    const lastUpdated = await readChartsLastModified(files);
+    renderFooterLastUpdated(lastUpdated);
+    const signature = `${files.join("|")}@${lastUpdated ? lastUpdated.getTime() : ""}`;
     if (signature === lastSignature) {
       STATUS.hidden = true;
       return;

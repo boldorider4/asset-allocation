@@ -109,6 +109,11 @@ code {
   border: none;
 }
 
+.legend tr.group-total td {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
 .legend .name {
   width: 50%;
 }
@@ -132,6 +137,13 @@ code {
   height: 0.7rem;
   border-radius: 999px;
   flex-shrink: 0;
+}
+
+.swatch.grouped {
+  height: 2px;
+  border-radius: 0;
+  background: var(--gold);
+  align-self: center;
 }
 
 .legend .label {
