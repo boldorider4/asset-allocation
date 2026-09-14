@@ -52,9 +52,9 @@ class RegionalPortfolio(Portfolio):
         # now let's look at regional split: us vs. ex-us vs. emerging markets
         # Scale us_within_developed by the developed_share so that US is proportional to the total_value
         self._regional_split_data = {
-            "US": us_within_developed * developed_share,
-            "Ex-US": (1.0 - us_within_developed) * developed_share,
-            "Emerging Markets": 1.0 - developed_share,
+            "Equity US": us_within_developed * developed_share,
+            "Equity Ex-US": (1.0 - us_within_developed) * developed_share,
+            "Equity Emrg. Markets": 1.0 - developed_share,
         }
         self._visualizer = get_plotter()(
             data=self._regional_split_data,
