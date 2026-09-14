@@ -298,16 +298,35 @@ class TestUbsFactoryRouting(unittest.TestCase):
             pos = self._factory(name="Core MSCI World UCITS ETF")
         self.assertIsInstance(pos, UBSPosition)
 
-    def test_ubs_in_name_alone_stays_justetf(self) -> None:
+    def test_allowlisted_small_cap_isin_uses_ubs(self) -> None:
         with patch("position.factory.ubs_product_url_exists") as exists:
+            with self._no_country_scrape():
+                pos = self._factory(
+                    isin="IE00BKSCBX74",
+                    name="UBS MSCI World Small Cap Socially Responsible UCITS ETF USD acc",
+                )
+        exists.assert_not_called()
+        self.assertIsInstance(pos, UBSPosition)
+
+    def test_ubs_in_name_alone_stays_justetf(self) -> None:
+        with patch("position.factory.ubs_product_url_exists", return_value=False) as exists:
             with self._no_country_scrape():
                 pos = self._factory(
                     isin="LU0290358497",
                     name="UBS ETF MSCI EMU UCITS ETF",
                 )
-        exists.assert_not_called()
+        exists.assert_called_once_with("LU0290358497")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, UBSPosition)
+
+    def test_ha4_resolved_ubs_name_uses_ubs_without_allowlist(self) -> None:
+        with patch("position.factory.ubs_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory(
+                    isin="IE00B3XXRP09",
+                    name="UBS Core MSCI USA UCITS ETF",
+                )
+        self.assertIsInstance(pos, UBSPosition)
 
     def test_amundi_does_not_use_ubs(self) -> None:
         with patch("position.factory.ubs_product_url_exists") as exists:
@@ -319,6 +338,17 @@ class TestUbsFactoryRouting(unittest.TestCase):
                     )
         exists.assert_not_called()
         self.assertIsInstance(pos, AmundiPosition)
+        self.assertNotIsInstance(pos, UBSPosition)
+
+    def test_invesco_allowlist_skips_ubs_ha4_probe(self) -> None:
+        with patch("position.factory.ubs_product_url_exists") as exists:
+            with patch("position.factory.invesco_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="IE00BKS7L097",
+                        name="Invesco S&P 500 Scored & Screened UCITS ETF Acc",
+                    )
+        exists.assert_not_called()
         self.assertNotIsInstance(pos, UBSPosition)
 
     def test_without_fetch_geosplit_skips_ubs_probe(self) -> None:

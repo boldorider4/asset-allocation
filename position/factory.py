@@ -37,6 +37,10 @@ JUSTETF = "justetf"
 POSITION_SOURCE = JUSTETF
 
 
+def _name_looks_like_ubs(name: str | None) -> bool:
+    return bool(name) and "ubs" in name.casefold()
+
+
 def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
     if value is None:
         return False
@@ -150,6 +154,11 @@ def factory(
     ):
         logger.info("Factory: using InvescoPosition for %s", isin)
         position = InvescoPosition(isin, **ctor_kwargs)
+    elif fetch_geosplit and _name_looks_like_ubs(name) and ubs_product_url_exists(isin):
+        # Allowlist is the no-probe path. Other UBS-named ETFs still have HA4
+        # constituents when etfinstidfromisin returns an instId.
+        logger.info("Factory: using UBSPosition for %s (HA4 instId)", isin)
+        position = UBSPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:

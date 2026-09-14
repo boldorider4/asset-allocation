@@ -230,6 +230,7 @@ class UBSPosition(JustETFPosition):
     ISINS: frozenset[str] = frozenset(
         {
             "IE00BD4TXV59",
+            "IE00BKSCBX74",
         }
     )
 
