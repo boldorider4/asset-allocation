@@ -88,6 +88,22 @@ def _ubs_api_headers(*, token: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _http_token(timeout_s: float) -> str:
+    req = urllib.request.Request(
+        _UBS_TOKEN_URL,
+        headers=_ubs_api_headers(),
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("UBS token JSON is not an object")
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("UBS token JSON has no token")
+    return token
+
+
 def _http_inst_id(isin: str, token: str, timeout_s: float) -> str | None:
     body = json.dumps(
         {
@@ -126,7 +142,7 @@ def ubs_product_url_exists(isin: str) -> bool:
         return False
     exists = False
     try:
-        token = UBSPosition._http_token(_UBS_EXISTS_TIMEOUT_S)
+        token = _http_token(_UBS_EXISTS_TIMEOUT_S)
         inst_id = _http_inst_id(isin, token, _UBS_EXISTS_TIMEOUT_S)
         exists = bool(inst_id)
     except urllib.error.HTTPError as e:
@@ -151,21 +167,21 @@ class UBSPosition(JustETFPosition):
         }
     )
 
-
-def _content_type_is_xlsx(content_type: str | None) -> bool:
-    if not content_type:
-        return False
-    lowered = content_type.lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "spreadsheet",
-            "excel",
-            "officedocument",
-            "octet-stream",
-            "zip",
+    @staticmethod
+    def _content_type_is_xlsx(content_type: str | None) -> bool:
+        if not content_type:
+            return False
+        lowered = content_type.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "spreadsheet",
+                "excel",
+                "officedocument",
+                "octet-stream",
+                "zip",
+            )
         )
-    )
 
     @staticmethod
     def _pycountry_name_candidates(record: object) -> list[str]:
@@ -343,22 +359,6 @@ def _content_type_is_xlsx(content_type: str | None) -> bool:
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])
         ]
 
-    @staticmethod
-    def _http_token(timeout_s: float) -> str:
-        req = urllib.request.Request(
-            _UBS_TOKEN_URL,
-            headers=_ubs_api_headers(),
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-        if not isinstance(payload, dict):
-            raise RuntimeError("UBS token JSON is not an object")
-        token = payload.get("token")
-        if not isinstance(token, str) or not token:
-            raise RuntimeError("UBS token JSON has no token")
-        return token
-
     def _http_constituents_xlsx(self, inst_id: str, token: str) -> bytes:
         query = urllib.parse.urlencode(
             {"locale": _UBS_LOCALE, "sgmtKey": _UBS_SEGMENT_KEY}
@@ -373,7 +373,7 @@ def _content_type_is_xlsx(content_type: str | None) -> bool:
         with urllib.request.urlopen(req, timeout=_UBS_FETCH_TIMEOUT_S) as resp:
             content_type = resp.headers.get("Content-Type") if resp.headers else None
             body = resp.read()
-        if body[:2] != b"PK" and not _content_type_is_xlsx(content_type):
+        if body[:2] != b"PK" and not UBSPosition._content_type_is_xlsx(content_type):
             raise RuntimeError(
                 f"UBS constituents for {self._isin} is not XLSX ({content_type})"
             )
@@ -381,7 +381,7 @@ def _content_type_is_xlsx(content_type: str | None) -> bool:
 
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
         try:
-            token = self._http_token(_UBS_FETCH_TIMEOUT_S)
+            token = _http_token(_UBS_FETCH_TIMEOUT_S)
             inst_id = _http_inst_id(self._isin, token, _UBS_FETCH_TIMEOUT_S)
             if not inst_id:
                 raise RuntimeError(f"UBS instId is unknown for {self._isin}")
