@@ -18,6 +18,7 @@ from position.blackrock_position import (
     _ISHARES_PRODUCT_IDS,
     ishares_product_url_exists,
 )
+from position.invesco_position import InvescoPosition, invesco_product_url_exists
 from position.justetf_position import JustETFPosition
 from position.ubs_position import UBSPosition, ubs_product_url_exists
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
@@ -146,6 +147,13 @@ def factory(
     ):
         logger.info("Factory: using UBSPosition for %s", isin)
         position = UBSPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in InvescoPosition.ISINS
+        and invesco_product_url_exists(isin)
+    ):
+        logger.info("Factory: using InvescoPosition for %s", isin)
+        position = InvescoPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:
