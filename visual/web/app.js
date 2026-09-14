@@ -1,6 +1,7 @@
 const GALLERY = document.getElementById("gallery");
 const STATUS = document.getElementById("status");
 const POLL_MS = 2000;
+const EQUITY_GROUP_COLOR = "#d4a574";
 
 let lastSignature = "";
 
@@ -162,6 +163,8 @@ function renderDonut(wedges) {
     const next = angle + share * Math.PI * 2;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     const span = next - angle;
+    const label = String(wedge.label || "");
+    const outlineEquity = isEquityLabel(label);
     if (span >= Math.PI * 2 - 1e-9) {
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       ring.setAttribute("cx", String(cx));
@@ -171,12 +174,28 @@ function renderDonut(wedges) {
       ring.setAttribute("stroke", wedge.color || "#d4a574");
       ring.setAttribute("stroke-width", String(ringWidth));
       svg.appendChild(ring);
+      if (outlineEquity) {
+        for (const r of [rInner, rOuter]) {
+          const rim = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          rim.setAttribute("cx", String(cx));
+          rim.setAttribute("cy", String(cy));
+          rim.setAttribute("r", String(r));
+          rim.setAttribute("fill", "none");
+          rim.setAttribute("stroke", EQUITY_GROUP_COLOR);
+          rim.setAttribute("stroke-width", "1.75");
+          svg.appendChild(rim);
+        }
+      }
     } else if (span > 1e-9) {
       path.setAttribute("d", wedgePath(cx, cy, rOuter, rInner, angle, next));
       path.setAttribute("fill", wedge.color || "#d4a574");
+      if (outlineEquity) {
+        path.setAttribute("stroke", EQUITY_GROUP_COLOR);
+        path.setAttribute("stroke-width", "1.75");
+        path.setAttribute("stroke-linejoin", "round");
+      }
       svg.appendChild(path);
     }
-    const label = String(wedge.label || "");
     const fitted = label && span > 1e-9 ? fitWedgeLabel(label, span, rLabel, ringWidth) : null;
     if (fitted) {
       labels.push({ start: angle, end: next, ...fitted });
@@ -267,6 +286,8 @@ function renderLegendRow(wedge, total) {
   swatch.className = wedge.grouped ? "swatch grouped" : "swatch";
   if (!wedge.grouped) {
     swatch.style.background = wedge.color || "#d4a574";
+  } else {
+    swatch.style.background = EQUITY_GROUP_COLOR;
   }
   const label = document.createElement("span");
   label.className = "label";
