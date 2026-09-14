@@ -19,6 +19,7 @@ from position.blackrock_position import (
     ishares_product_url_exists,
 )
 from position.justetf_position import JustETFPosition
+from position.ubs_position import UBSPosition, ubs_product_url_exists
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
@@ -138,6 +139,13 @@ def factory(
     ):
         logger.info("Factory: using AmundiPosition for %s", isin)
         position = AmundiPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in UBSPosition.ISINS
+        and ubs_product_url_exists(isin)
+    ):
+        logger.info("Factory: using UBSPosition for %s", isin)
+        position = UBSPosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
     elif POSITION_SOURCE == JUSTETF or use_broker_quote:

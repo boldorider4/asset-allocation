@@ -10,7 +10,7 @@ Personal portfolio reporter: load holdings from JSON, optionally fetch prices an
 make install
 ```
 
-Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `playwright`, and `pytr`.
+Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `playwright`, `pycountry`, and `pytr`.
 
 ## Holdings file
 
