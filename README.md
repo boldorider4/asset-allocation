@@ -89,7 +89,7 @@ The bind address, HTTP port, and directory come from `config.ini` (`[server] add
 | `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
 | `make serve` | Background HTTP server for the visualizer dir (from `config.ini`); fails if `asalloc` is not callable |
 | `make stop-serve` | Stop the background visualizer server |
-| `make service` | Linux: install systemd user units, enable serve + 6-hour update timer |
+| `make service` | Linux: install systemd user units, enable serve + 3-hour update timer |
 | `make stop-service` | Linux: stop and disable those user units |
 | `make web-clean` | Delete `~/.local/asalloc/visualizer` |
 

@@ -1,9 +1,9 @@
 [Unit]
-Description=Run asalloc update every 6 hours
+Description=Run asalloc update every 3 hours
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=6h
+OnCalendar=00/3:00
 Persistent=true
 
 [Install]
