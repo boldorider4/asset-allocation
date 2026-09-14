@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from common import PENDING_FETCHED_VALUES
+from portfolio.portfolio import Portfolio
 from position.factory import factory
 from position.justetf_position import JustETFPosition
 from position.yfinance_position import YFinancePosition
@@ -319,6 +320,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
     def test_oskar_does_not_estimate_shares_when_quote_missing(self) -> None:
         set_fetch_oskar(True)
         set_fetch_prices(True)
+        self._cache.write_text("{}", encoding="utf-8")
         with patch("utils.write_portfolio_to_file") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
                 pos = self._factory(
@@ -343,6 +345,30 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertIsNone(pos.shares)
         write.assert_not_called()
 
+    def test_fetch_prices_oskar_falls_back_to_cached_quote_when_live_missing(self) -> None:
+        set_fetch_oskar(False)
+        set_fetch_prices(True)
+        global_portfolio.clear()
+        global_portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 2,
+                "value": 140.0,
+                "broker": "oskar",
+            }
+        ]
+        with patch("utils.write_portfolio_to_file") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
+                pos = self._factory(
+                    broker="oskar", value=140.0, shares=2, price=None
+                )
+            persist_fetched_values_in_portfolio()
+        self.assertEqual(pos.price, 10.0)
+        self.assertEqual(pos.value, 20.0)
+        self.assertEqual(global_portfolio["equity_portfolio"][0]["value"], 20.0)
+        write.assert_called_once()
+
     def test_fetch_prices_without_oskar_updates_asset_value_from_shares(self) -> None:
         set_fetch_oskar(False)
         set_fetch_prices(True)
@@ -363,6 +389,35 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 )
             persist_fetched_values_in_portfolio()
         self.assertEqual(pos.value, 199.0)
+        self.assertEqual(global_portfolio["equity_portfolio"][0]["value"], 199.0)
+        write.assert_called_once()
+
+    def test_fetch_prices_without_oskar_portfolio_persists_estimated_shares(self) -> None:
+        set_fetch_oskar(False)
+        set_fetch_prices(True)
+        global_portfolio.clear()
+        global_portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 199.0 / 99.5,
+                "value": 140,
+                "broker": "oskar",
+                "dmem": 1,
+                "dmem_other": 1,
+                "usavn": 0.5,
+            }
+        ]
+        with patch("utils.CACHE_FILENAME", str(self._cache)):
+            with patch("utils.write_portfolio_to_file") as write:
+                with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                    port = Portfolio(
+                        "equity",
+                        positions=global_portfolio["equity_portfolio"],
+                    )
+                persist_oskar_shares_in_portfolio()
+                persist_fetched_values_in_portfolio()
+        self.assertEqual(port.value, 199.0)
         self.assertEqual(global_portfolio["equity_portfolio"][0]["value"], 199.0)
         write.assert_called_once()
 

@@ -29,6 +29,6 @@ DEFAULT_ISIN_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
 PENDING_OSKAR_SHARES: dict[tuple[str, float], float] = {}
 
 # ``--fetch-prices`` holdings values (shares × quote) for rows whose broker
-# was not live-scraped this run. Keyed by ISIN, broker, previous value, shares.
-PENDING_FETCHED_VALUES: dict[tuple[str, str | None, float | None, float | None], float] = {}
+# was not live-scraped this run. Keyed by ISIN and broker.
+PENDING_FETCHED_VALUES: dict[tuple[str, str | None], float] = {}
 

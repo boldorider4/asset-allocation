@@ -82,9 +82,9 @@ def factory(
     # Scalable / Trade Republic quotes live in cache.json (never the assets file).
     if use_broker_quote:
         ctor_price = price if price is not None else cached_price
-    elif fetch_prices:
-        ctor_price = None
     else:
+        # Cached/asset quote is used as-is without ``--fetch-prices``, and only
+        # as fallback when ``--fetch-prices`` scrapes JustETF/Yahoo.
         ctor_price = cached_price if cached_price is not None else price
     if ctor_price is None and not fetch_prices:
         logger.warning(

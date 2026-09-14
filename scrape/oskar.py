@@ -1046,7 +1046,6 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
                 )
                 if isin_match or tagesgeld_match:
                     position["value"] = oskar_etf.value_eur
-                    position["shares"] = None
                     matched = True
                     if pos_isin is not None:
                         scanned_oskar_isins.add(pos_isin)
