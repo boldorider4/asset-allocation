@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import io
 import json
 import logging
-import re
-import urllib.error
-import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
-import zipfile
+from typing import Any
 
 import ccy
-import pycountry
 
 from logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
@@ -27,20 +20,27 @@ attach_color_stderr_handler_for_module(logger)
 _UBS_API_BASE = "https://www.ubs.com/app/HA4/api"
 _UBS_TOKEN_URL = f"{_UBS_API_BASE}/api/token-service/get-token"
 _UBS_INST_ID_URL = f"{_UBS_API_BASE}/api/etf-funddetail-services/etfinstidfromisin"
-_UBS_CONSTITUENTS_URL = (
-    f"{_UBS_API_BASE}/api/etf-funddetail-services/{{inst_id}}"
-    "/download-constituents-to-excel"
-)
+_UBS_GRAPHQL_URL = f"{_UBS_API_BASE}/graphql/"
 _UBS_LOCALE = "en_CH_RETL"
 _UBS_SEGMENT_KEY = "etf.emwh"
 _UBS_EXISTS_TIMEOUT_S = 10
 _UBS_FETCH_TIMEOUT_S = 30
 
-_XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-_COL_REF_RE = re.compile(r"^([A-Z]+)")
+_CONSTITUENTS_QUERY = """
+query GetConstituentsExcelv2($instId: String!, $sgmtKey: String!, $locale: String!) {
+  getConstituentsExcel(instId: $instId, sgmtKey: $sgmtKey, locale: $locale) {
+    etfFundHoldingsLargestConstituents {
+      row {
+        type
+        cell { id data }
+      }
+    }
+  }
+}
+"""
 
 # Non-country ISIN prefixes (ISO 6166 / ANNA): Euroclear/Clearstream, CINS
-# substitutes, and reserved/test codes. Withdrawn ISO countries are historic.
+# substitutes, and reserved/test codes.
 _ISIN_SPECIAL_PREFIXES: frozenset[str] = frozenset(
     {
         "QS",
@@ -62,46 +62,94 @@ _MARKET_NAMES: tuple[str, ...] = tuple(
 )
 _MARKET_BY_LOWER: dict[str, str] = {name.casefold(): name for name in _MARKET_NAMES}
 
-# pycountry spellings that are the same market as a DMEM/USAVN list entry.
-_PYCOUNTRY_NAME_ALIASES: dict[str, str] = {
+_CCY_NAME_ALIASES: dict[str, str] = {
     "macao": "Macau",
+    "eurozone": "European Union",
 }
 
-# ISIN prefixes that are not ISO 3166-1 alpha-2 but still appear on securities.
 _ISIN_PREFIX_TO_MARKET: dict[str, str] = {
     "EU": "European Union",
     "UK": "United Kingdom",
 }
 
-# Offshore yuan is not in ISO 4217 / ccy; treat it as CNY -> China.
 _CURRENCY_ALIASES: dict[str, str] = {
     "CNH": "CNY",
 }
 
+_UBS_PRODUCT_PAGE = (
+    "https://www.ubs.com/ch/en/assetmanagement/funds/etf/{isin}-pd001.html"
+)
 _UBS_PRODUCT_EXISTS: dict[str, bool] = {}
 
 
-def _ubs_api_headers(*, token: str | None = None) -> dict[str, str]:
+class _Ha4HttpError(RuntimeError):
+    def __init__(self, status: int, url: str) -> None:
+        self.status = status
+        super().__init__(f"UBS HTTP {status} for {url}")
+
+
+def _ubs_product_page_url(isin: str) -> str:
+    return _UBS_PRODUCT_PAGE.format(isin=isin.lower())
+
+
+def _ha4_headers(*, token: str | None = None, referer: str | None = None) -> dict[str, str]:
     headers = {
-        **JustETFPosition._HEADERS,
-        "Accept": "*/*",
+        "Accept": "application/json, text/plain, */*",
         "locale": _UBS_LOCALE,
         "Origin": "https://www.ubs.com",
-        "Referer": "https://www.ubs.com/ch/en/assetmanagement/funds/etf/",
+        "Referer": referer
+        or "https://www.ubs.com/ch/en/assetmanagement/funds/etf/",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
-def _http_token(timeout_s: float) -> str:
-    req = urllib.request.Request(
-        _UBS_TOKEN_URL,
-        headers=_ubs_api_headers(),
-        method="GET",
+def _new_ha4_session():
+    try:
+        from curl_cffi import requests
+    except ImportError as e:
+        raise RuntimeError(
+            "curl_cffi is required to fetch UBS constituents"
+        ) from e
+    return requests.Session(impersonate="chrome")
+
+
+def _ha4_request(
+    session,
+    method: str,
+    url: str,
+    timeout_s: float,
+    *,
+    headers: dict[str, str],
+    json_body: dict[str, Any] | None = None,
+):
+    response = session.request(
+        method,
+        url,
+        headers=headers,
+        json=json_body,
+        timeout=timeout_s,
     )
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if response.status_code >= 400:
+        raise _Ha4HttpError(response.status_code, url)
+    return response
+
+
+def _http_token(
+    timeout_s: float,
+    *,
+    session,
+    referer: str | None = None,
+) -> str:
+    response = _ha4_request(
+        session,
+        "GET",
+        _UBS_TOKEN_URL,
+        timeout_s,
+        headers=_ha4_headers(referer=referer),
+    )
+    payload = response.json()
     if not isinstance(payload, dict):
         raise RuntimeError("UBS token JSON is not an object")
     token = payload.get("token")
@@ -110,25 +158,30 @@ def _http_token(timeout_s: float) -> str:
     return token
 
 
-def _http_inst_id(isin: str, token: str, timeout_s: float) -> str | None:
-    body = json.dumps(
-        {
+def _http_inst_id(
+    isin: str,
+    token: str,
+    timeout_s: float,
+    *,
+    session,
+    referer: str | None = None,
+) -> str | None:
+    response = _ha4_request(
+        session,
+        "POST",
+        _UBS_INST_ID_URL,
+        timeout_s,
+        headers={
+            **_ha4_headers(token=token, referer=referer),
+            "Content-Type": "application/json",
+        },
+        json_body={
             "isin": isin,
             "locale": _UBS_LOCALE,
             "sgmtKey": _UBS_SEGMENT_KEY,
-        }
-    ).encode()
-    req = urllib.request.Request(
-        _UBS_INST_ID_URL,
-        data=body,
-        headers={
-            **_ubs_api_headers(token=token),
-            "Content-Type": "application/json",
         },
-        method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    payload = response.json()
     if not isinstance(payload, dict):
         return None
     inst_id = payload.get("instId")
@@ -136,6 +189,14 @@ def _http_inst_id(isin: str, token: str, timeout_s: float) -> str | None:
         return None
     text = str(inst_id).strip()
     return text or None
+
+
+def _seed_ubs_product_page(session, isin: str, timeout_s: float) -> None:
+    url = _ubs_product_page_url(isin)
+    try:
+        session.get(url, timeout=timeout_s)
+    except Exception as e:
+        logger.info("UBS product page seed for %s failed (%s)", isin, e)
 
 
 def ubs_product_url_exists(isin: str) -> bool:
@@ -148,24 +209,23 @@ def ubs_product_url_exists(isin: str) -> bool:
         return False
     exists = False
     try:
-        token = _http_token(_UBS_EXISTS_TIMEOUT_S)
-        inst_id = _http_inst_id(isin, token, _UBS_EXISTS_TIMEOUT_S)
+        session = _new_ha4_session()
+        _seed_ubs_product_page(session, isin, _UBS_EXISTS_TIMEOUT_S)
+        token = _http_token(_UBS_EXISTS_TIMEOUT_S, session=session)
+        inst_id = _http_inst_id(isin, token, _UBS_EXISTS_TIMEOUT_S, session=session)
         exists = bool(inst_id)
-    except urllib.error.HTTPError as e:
+    except _Ha4HttpError as e:
         exists = False
-        logger.info("UBS HA4 lookup for %s returned HTTP %s", isin, e.code)
-    except urllib.error.URLError as e:
+        logger.info("UBS HA4 lookup for %s returned HTTP %s", isin, e.status)
+    except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, OSError) as e:
         exists = False
         logger.warning("UBS HA4 lookup failed for %s (%s)", isin, e)
-    except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
-        exists = False
-        logger.warning("UBS HA4 lookup parse failed for %s (%s)", isin, e)
     _UBS_PRODUCT_EXISTS[isin] = exists
     return exists
 
 
 class UBSPosition(JustETFPosition):
-    """JustETF quotes with country weights from the UBS ETF constituents workbook."""
+    """JustETF quotes with country weights from UBS HA4 constituents JSON."""
 
     ISINS: frozenset[str] = frozenset(
         {
@@ -174,23 +234,7 @@ class UBSPosition(JustETFPosition):
     )
 
     @staticmethod
-    def _content_type_is_xlsx(content_type: str | None) -> bool:
-        if not content_type:
-            return False
-        lowered = content_type.lower()
-        return any(
-            marker in lowered
-            for marker in (
-                "spreadsheet",
-                "excel",
-                "officedocument",
-                "octet-stream",
-                "zip",
-            )
-        )
-
-    @staticmethod
-    def _pycountry_name_candidates(record: object) -> list[str]:
+    def _ccy_name_candidates(record: object) -> list[str]:
         names: list[str] = []
         for attr in ("common_name", "name", "official_name"):
             value = getattr(record, attr, None)
@@ -200,33 +244,25 @@ class UBSPosition(JustETFPosition):
 
     @staticmethod
     def _name_for_market_lists(record: object) -> str:
-        candidates = UBSPosition._pycountry_name_candidates(record)
+        candidates = UBSPosition._ccy_name_candidates(record)
         for candidate in candidates:
             listed = _MARKET_BY_LOWER.get(candidate.casefold())
             if listed:
                 return listed
-            aliased = _PYCOUNTRY_NAME_ALIASES.get(candidate.casefold())
+            aliased = _CCY_NAME_ALIASES.get(candidate.casefold())
             if aliased is not None:
                 return aliased
         return candidates[0] if candidates else _OTHER_MARKET_NAME
 
     @staticmethod
-    def _country_record_for_prefix(code: str) -> object | None:
-        current = pycountry.countries.get(alpha_2=code)
-        if current is not None:
-            return current
-        return pycountry.historic_countries.get(alpha_2=code)
-
-    @staticmethod
-    def _col_index(cell_ref: str) -> int:
-        match = _COL_REF_RE.match(cell_ref.upper())
-        if not match:
-            return 0
-        letters = match.group(1)
-        index = 0
-        for char in letters:
-            index = index * 26 + (ord(char) - 64)
-        return index - 1
+    def _name_from_alpha2(code: str) -> str | None:
+        if code == "EU":
+            return "European Union"
+        try:
+            record = ccy.country(code)
+        except (KeyError, ValueError, TypeError):
+            return None
+        return UBSPosition._name_for_market_lists(record)
 
     @staticmethod
     def _parse_weight_pct(raw: str) -> float | None:
@@ -239,28 +275,6 @@ class UBSPosition(JustETFPosition):
             return None
 
     @staticmethod
-    def _is_disclaimer_row(record: list[str]) -> bool:
-        if not record:
-            return True
-        first = next((cell.strip() for cell in record if cell.strip()), "")
-        if not first:
-            return True
-        if len(first) > 100:
-            return True
-        lowered = first.lower()
-        return any(
-            marker in lowered
-            for marker in (
-                "source:",
-                "for marketing",
-                "©",
-                "http://",
-                "https://",
-                "www.",
-            )
-        )
-
-    @staticmethod
     def _country_from_isin(raw_isin: str) -> str | None:
         """Map ISIN prefix to economic-home country; special/unknown -> Other."""
         code = raw_isin.strip()[:2].upper()
@@ -271,14 +285,12 @@ class UBSPosition(JustETFPosition):
         aliased = _ISIN_PREFIX_TO_MARKET.get(code)
         if aliased is not None:
             return aliased
-        record = UBSPosition._country_record_for_prefix(code)
-        if record is None:
-            return _OTHER_MARKET_NAME
-        return UBSPosition._name_for_market_lists(record)
+        name = UBSPosition._name_from_alpha2(code)
+        return name if name else _OTHER_MARKET_NAME
 
     @staticmethod
     def _country_from_currency(raw_currency: str) -> str | None:
-        """Map a unique listing currency to a market name; ambiguous -> None."""
+        """Map listing currency to a market name; unknown currency -> None."""
         code = raw_currency.strip().upper()
         code = _CURRENCY_ALIASES.get(code, code)
         if not code:
@@ -288,115 +300,77 @@ class UBSPosition(JustETFPosition):
         except (KeyError, ValueError, TypeError):
             return None
         alpha2 = getattr(currency, "default_country", None)
-        # EUR's default is the EU pseudo-country; split those rows via ISIN.
-        if not isinstance(alpha2, str) or not alpha2 or alpha2 == "EU":
+        if not isinstance(alpha2, str) or not alpha2:
             return None
-        record = UBSPosition._country_record_for_prefix(alpha2)
-        if record is None:
-            return None
-        return UBSPosition._name_for_market_lists(record)
+        return UBSPosition._name_from_alpha2(alpha2)
 
     @staticmethod
     def _country_from_holding(raw_isin: str, raw_currency: str) -> str | None:
-        """Prefer unique listing currency; else ISIN prefix (EUR and unknowns)."""
+        """Prefer listing currency; else ISIN prefix."""
         name = UBSPosition._country_from_currency(raw_currency)
         if name:
             return name
         return UBSPosition._country_from_isin(raw_isin)
 
     @staticmethod
-    def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
-        if "xl/sharedStrings.xml" not in archive.namelist():
-            return []
-        root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
-        strings: list[str] = []
-        for item in root.findall("m:si", _XLSX_NS):
-            strings.append(
-                "".join(node.text or "" for node in item.findall(".//m:t", _XLSX_NS))
-            )
-        return strings
-
-    @staticmethod
-    def _cell_text(cell: ET.Element, shared: list[str]) -> str:
-        cell_type = cell.attrib.get("t")
-        if cell_type == "inlineStr":
-            return "".join(
-                node.text or "" for node in cell.findall(".//m:t", _XLSX_NS)
-            )
-        value = cell.find("m:v", _XLSX_NS)
-        if value is None or value.text is None:
-            return ""
-        if cell_type == "s":
-            try:
-                return shared[int(value.text)]
-            except (ValueError, IndexError):
-                return ""
-        return value.text
-
-    @staticmethod
-    def _sheet_rows(archive: zipfile.ZipFile) -> list[list[str]]:
-        shared = UBSPosition._shared_strings(archive)
-        sheet = ET.fromstring(archive.read("xl/worksheets/sheet1.xml"))
-        rows: list[list[str]] = []
-        for row in sheet.findall("m:sheetData/m:row", _XLSX_NS):
-            values: dict[int, str] = {}
-            max_i = -1
-            for cell in row.findall("m:c", _XLSX_NS):
-                index = UBSPosition._col_index(cell.attrib.get("r", "A"))
-                values[index] = UBSPosition._cell_text(cell, shared)
-                if index > max_i:
-                    max_i = index
-            record = [values.get(i, "") for i in range(max_i + 1)] if max_i >= 0 else []
-            rows.append(record)
-        return rows
-
-    @staticmethod
-    def _countries_from_holdings_xlsx(data: bytes) -> list[dict[str, float | str]]:
-        """Sum constituent rows by listing currency, with ISIN fallback."""
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                rows = UBSPosition._sheet_rows(archive)
-        except zipfile.BadZipFile:
-            return []
-        header: list[str] | None = None
-        header_i = -1
-        for index, record in enumerate(rows):
-            if "ISIN" in record and any(col.startswith("Weight") for col in record):
-                header = record
-                header_i = index
-                break
-        if header is None:
-            return []
-        try:
-            isin_i = header.index("ISIN")
-            weight_i = next(
-                i for i, col in enumerate(header) if col.startswith("Weight")
-            )
-        except (ValueError, StopIteration):
-            return []
-        currency_i = next(
-            (
-                i
-                for i, col in enumerate(header)
-                if col.casefold().startswith("curr")
-            ),
-            None,
-        )
-        needed = max(isin_i, weight_i, currency_i if currency_i is not None else 0)
-        weights: dict[str, float] = {}
-        for record in rows[header_i + 1 :]:
-            if UBSPosition._is_disclaimer_row(record):
-                break
-            if len(record) <= needed:
+    def _cell_map(row: object) -> dict[str, str]:
+        if not isinstance(row, dict):
+            return {}
+        cells = row.get("cell")
+        if not isinstance(cells, list):
+            return {}
+        mapped: dict[str, str] = {}
+        for cell in cells:
+            if not isinstance(cell, dict):
                 continue
-            raw_isin = record[isin_i].strip()
-            raw_currency = (
-                record[currency_i].strip() if currency_i is not None else ""
+            cell_id = cell.get("id")
+            data = cell.get("data")
+            if isinstance(cell_id, str) and cell_id:
+                mapped[cell_id] = data if isinstance(data, str) else ""
+        return mapped
+
+    @staticmethod
+    def _records_from_constituents_payload(
+        payload: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        data = payload.get("data")
+        root = data if isinstance(data, dict) else payload
+        excel = root.get("getConstituentsExcel")
+        if not isinstance(excel, dict):
+            return []
+        block = excel.get("etfFundHoldingsLargestConstituents")
+        if not isinstance(block, dict):
+            return []
+        rows = block.get("row")
+        if not isinstance(rows, list):
+            return []
+        records: list[dict[str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("type") != "data":
+                continue
+            cells = UBSPosition._cell_map(row)
+            records.append(
+                {
+                    "isin": cells.get("P_ISIN", "").strip(),
+                    "currency": cells.get("Currency", "").strip(),
+                    "weight": cells.get("Weight", "").strip(),
+                }
             )
-            name = UBSPosition._country_from_holding(raw_isin, raw_currency)
+        return records
+
+    @staticmethod
+    def _countries_from_holding_records(
+        records: list[dict[str, str]],
+    ) -> list[dict[str, float | str]]:
+        weights: dict[str, float] = {}
+        for record in records:
+            name = UBSPosition._country_from_holding(
+                record.get("isin", ""),
+                record.get("currency", ""),
+            )
             if not name:
                 continue
-            weight = UBSPosition._parse_weight_pct(record[weight_i])
+            weight = UBSPosition._parse_weight_pct(record.get("weight", ""))
             if weight is None or weight <= 0:
                 continue
             weights[name] = weights.get(name, 0.0) + weight
@@ -405,47 +379,78 @@ class UBSPosition(JustETFPosition):
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])
         ]
 
-    def _http_constituents_xlsx(self, inst_id: str, token: str) -> bytes:
-        query = urllib.parse.urlencode(
-            {"locale": _UBS_LOCALE, "sgmtKey": _UBS_SEGMENT_KEY}
+    @staticmethod
+    def _countries_from_constituents_payload(
+        payload: dict[str, Any],
+    ) -> list[dict[str, float | str]]:
+        records = UBSPosition._records_from_constituents_payload(payload)
+        return UBSPosition._countries_from_holding_records(records)
+
+    def _http_constituents_payload(
+        self,
+        inst_id: str,
+        token: str,
+        *,
+        session,
+        referer: str | None = None,
+    ) -> dict[str, Any]:
+        logger.info(
+            "UBS: fetching constituents JSON from %s for instId %s",
+            _UBS_GRAPHQL_URL,
+            inst_id,
         )
-        url = f"{_UBS_CONSTITUENTS_URL.format(inst_id=inst_id)}?{query}"
-        req = urllib.request.Request(
-            url,
-            headers=_ubs_api_headers(token=token),
-            method="GET",
+        response = _ha4_request(
+            session,
+            "POST",
+            _UBS_GRAPHQL_URL,
+            _UBS_FETCH_TIMEOUT_S,
+            headers={
+                **_ha4_headers(token=token, referer=referer),
+                "Content-Type": "application/json",
+            },
+            json_body={
+                "query": _CONSTITUENTS_QUERY,
+                "variables": {
+                    "instId": inst_id,
+                    "sgmtKey": _UBS_SEGMENT_KEY,
+                    "locale": _UBS_LOCALE,
+                },
+            },
         )
-        logger.info("UBS: fetching constituents workbook from %s", url)
-        with urllib.request.urlopen(req, timeout=_UBS_FETCH_TIMEOUT_S) as resp:
-            content_type = resp.headers.get("Content-Type") if resp.headers else None
-            body = resp.read()
-        if body[:2] != b"PK" and not UBSPosition._content_type_is_xlsx(content_type):
-            raise RuntimeError(
-                f"UBS constituents for {self._isin} is not XLSX ({content_type})"
-            )
-        return body
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("UBS constituents JSON is not an object")
+        errors = payload.get("errors")
+        if errors:
+            raise RuntimeError(f"UBS GraphQL errors for {self._isin}: {errors}")
+        return payload
 
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
+        referer = _ubs_product_page_url(self._isin)
+        session = _new_ha4_session()
+        _seed_ubs_product_page(session, self._isin, _UBS_FETCH_TIMEOUT_S)
         try:
-            token = _http_token(_UBS_FETCH_TIMEOUT_S)
-            inst_id = _http_inst_id(self._isin, token, _UBS_FETCH_TIMEOUT_S)
+            token = _http_token(
+                _UBS_FETCH_TIMEOUT_S, session=session, referer=referer
+            )
+            inst_id = _http_inst_id(
+                self._isin,
+                token,
+                _UBS_FETCH_TIMEOUT_S,
+                session=session,
+                referer=referer,
+            )
             if not inst_id:
                 raise RuntimeError(f"UBS instId is unknown for {self._isin}")
-            body = self._http_constituents_xlsx(inst_id, token)
-            rows = UBSPosition._countries_from_holdings_xlsx(body)
-        except urllib.error.HTTPError as e:
+            payload = self._http_constituents_payload(
+                inst_id, token, session=session, referer=referer
+            )
+            rows = UBSPosition._countries_from_constituents_payload(payload)
+        except _Ha4HttpError as e:
             raise RuntimeError(
-                f"UBS HTTP {e.code} while fetching countries for {self._isin}"
+                f"UBS HTTP {e.status} while fetching countries for {self._isin}"
             ) from e
-        except (
-            json.JSONDecodeError,
-            zipfile.BadZipFile,
-            ET.ParseError,
-            TypeError,
-            ValueError,
-            UnicodeError,
-            KeyError,
-        ) as e:
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
             raise RuntimeError(
                 f"UBS constituents parse failed for {self._isin}: {e}"
             ) from e

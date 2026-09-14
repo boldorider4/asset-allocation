@@ -12,7 +12,7 @@ dependencies = [
     "numpy",
     "playwright>=1.40",
     "ccy",
-    "pycountry",
+    "curl_cffi",
     "pytr",
     "yfinance",
 ]

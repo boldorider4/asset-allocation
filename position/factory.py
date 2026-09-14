@@ -140,11 +140,7 @@ def factory(
     ):
         logger.info("Factory: using AmundiPosition for %s", isin)
         position = AmundiPosition(isin, **ctor_kwargs)
-    elif (
-        fetch_geosplit
-        and isin in UBSPosition.ISINS
-        and ubs_product_url_exists(isin)
-    ):
+    elif fetch_geosplit and isin in UBSPosition.ISINS:
         logger.info("Factory: using UBSPosition for %s", isin)
         position = UBSPosition(isin, **ctor_kwargs)
     elif (

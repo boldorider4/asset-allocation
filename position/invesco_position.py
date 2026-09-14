@@ -6,8 +6,6 @@ import re
 import urllib.error
 import urllib.request
 
-import pycountry
-
 from logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
 from position.position import (
@@ -34,7 +32,7 @@ _MARKET_NAMES: tuple[str, ...] = tuple(
     _LIST_OF_DEVELOPED_MARKETS + _LIST_OF_EMERGING_MARKETS
 )
 _MARKET_BY_LOWER: dict[str, str] = {name.casefold(): name for name in _MARKET_NAMES}
-_PYCOUNTRY_NAME_ALIASES: dict[str, str] = {
+_NAME_ALIASES: dict[str, str] = {
     "macao": "Macau",
 }
 _NON_COUNTRY_LABELS: frozenset[str] = frozenset(
@@ -125,27 +123,6 @@ class InvescoPosition(JustETFPosition):
         return isinstance(weights, list)
 
     @staticmethod
-    def _pycountry_name_candidates(record: object) -> list[str]:
-        names: list[str] = []
-        for attr in ("common_name", "name", "official_name"):
-            value = getattr(record, attr, None)
-            if isinstance(value, str) and value and value not in names:
-                names.append(value)
-        return names
-
-    @staticmethod
-    def _name_for_market_lists(record: object) -> str:
-        candidates = InvescoPosition._pycountry_name_candidates(record)
-        for candidate in candidates:
-            listed = _MARKET_BY_LOWER.get(candidate.casefold())
-            if listed:
-                return listed
-            aliased = _PYCOUNTRY_NAME_ALIASES.get(candidate.casefold())
-            if aliased is not None:
-                return aliased
-        return candidates[0] if candidates else _OTHER_MARKET_NAME
-
-    @staticmethod
     def _display_country(raw_name: str) -> str:
         spaced = _CAMEL_BOUNDARY.sub(" ", raw_name.strip())
         if not spaced or spaced.casefold() in _NON_COUNTRY_LABELS:
@@ -153,12 +130,9 @@ class InvescoPosition(JustETFPosition):
         listed = _MARKET_BY_LOWER.get(spaced.casefold())
         if listed:
             return listed
-        try:
-            record = pycountry.countries.lookup(spaced)
-        except LookupError:
-            record = None
-        if record is not None:
-            return InvescoPosition._name_for_market_lists(record)
+        aliased = _NAME_ALIASES.get(spaced.casefold())
+        if aliased is not None:
+            return aliased
         return spaced
 
     @staticmethod
