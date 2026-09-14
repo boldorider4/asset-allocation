@@ -250,7 +250,7 @@ function legendEntries(wedges) {
   }
   const equity = wedges.filter((w) => isEquityLabel(w.label) && w.label !== "Equity");
   const rest = wedges.filter((w) => !isEquityLabel(w.label));
-  return [group, ...equity, ...rest];
+  return [...equity, group, ...rest];
 }
 
 function renderLegendRow(wedge, total) {
