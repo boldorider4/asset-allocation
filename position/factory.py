@@ -20,6 +20,10 @@ from position.blackrock_position import (
 )
 from position.invesco_position import InvescoPosition, invesco_product_url_exists
 from position.justetf_position import JustETFPosition
+from position.state_street_position import (
+    StateStreetPosition,
+    ssga_product_url_exists,
+)
 from position.ubs_position import UBSPosition, ubs_product_url_exists
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
@@ -148,6 +152,13 @@ def factory(
     ):
         logger.info("Factory: using AmundiPosition for %s", isin)
         position = AmundiPosition(isin, **ctor_kwargs)
+    elif (
+        fetch_geosplit
+        and isin in StateStreetPosition.ISINS
+        and ssga_product_url_exists(isin)
+    ):
+        logger.info("Factory: using StateStreetPosition for %s", isin)
+        position = StateStreetPosition(isin, **ctor_kwargs)
     elif fetch_geosplit and isin in UBSPosition.ISINS:
         logger.info("Factory: using UBSPosition for %s", isin)
         position = UBSPosition(isin, **ctor_kwargs)
