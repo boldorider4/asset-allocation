@@ -63,11 +63,65 @@ class RegionalPortfolio(Portfolio):
             factor={"value": self._value, "unit": "Euro"},
         )
 
+        # sector breakdown
+        self._sectors = self._consolidate_sectors()
+
     def plot_dmem(self) -> None:
         self._dmem_visualizer.plot()
 
     def plot_usavn(self) -> None:
         self._usavn_visualizer.plot()
+
+    def _consolidate_sectors(self) -> dict[str, float]:
+        """Value-weighted sector fractions (0–1) across positions with sector data."""
+        consolidated: dict[str, float] = {}
+        if self._value <= 0:
+            return consolidated
+        for position in self._positions:
+            rows = position.sectors()
+            value = position.value
+            if not rows or value is None:
+                continue
+            share = float(value) / self._value
+            for row in rows:
+                name = str(row["name"])
+                consolidated[name] = (
+                    consolidated.get(name, 0.0)
+                    + share * float(row["weight_pct"]) / 100.0
+                )
+        return consolidated
+
+    @property
+    def sectors(self) -> dict[str, float]:
+        return self._sectors
+
+    def __add__(self, other: 'Portfolio') -> 'Portfolio':
+        if not isinstance(other, RegionalPortfolio):
+            return super().__add__(other)
+        merged = object.__new__(RegionalPortfolio)
+        merged._name = f"{self._name} + {other._name}"
+        merged._positions = self._positions + other._positions
+        merged._value = self._value + other._value
+        merged._dmem = list(self._dmem or []) + list(other._dmem or [])
+        merged._usavn = list(self._usavn or []) + list(other._usavn or [])
+        merged._sectors = merged._consolidate_sectors()
+        total = merged._value
+        keys = self._regional_split_data.keys() | other._regional_split_data.keys()
+        merged._regional_split_data = {
+            k: (
+                self._value * self._regional_split_data.get(k, 0.0)
+                + other._value * other._regional_split_data.get(k, 0.0)
+            ) / total
+            if total > 0 else 0.0
+            for k in keys
+        }
+        for attr in ("_dmem_visualizer", "_usavn_visualizer", "_visualizer"):
+            sv, ov = getattr(self, attr, None), getattr(other, attr, None)
+            if sv is not None and ov is not None:
+                setattr(merged, attr, sv + ov)
+            else:
+                setattr(merged, attr, sv if sv is not None else ov)
+        return merged
 
     def __str__(self):
         return super().__str__()
