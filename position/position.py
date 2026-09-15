@@ -378,9 +378,11 @@ class Position(ABC):
             elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
                 emerging_markets += _row["weight_pct"]
             elif self._dmem_other is not None:
+                logger.warning("position isin %s contains country %s".format(self._isin, _row["name"]))
                 developed_markets += _row["weight_pct"] * self._dmem_other
                 emerging_markets += _row["weight_pct"] * (1 - self._dmem_other)
             else:
+                logger.warning("position isin %s contains country %s".format(self._isin, _row["name"]))
                 developed_markets += _row["weight_pct"] * .5
                 emerging_markets += _row["weight_pct"] * .5
 
@@ -406,7 +408,8 @@ class Position(ABC):
                 us += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 non_us += _row["weight_pct"]
-            elif _row["name"] == _OTHER_MARKET_NAME:
+            elif _row["name"] == _OTHER_MARKET_NAME or _row["name"] not in _LIST_OF_EMERGING_MARKETS:
+                logger.warning("position isin %s contains country %s".format(self._isin, _row["name"]))
                 if self._dmem_other is not None:
                     non_us += _row["weight_pct"] * self._dmem_other
                 else:
