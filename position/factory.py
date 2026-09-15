@@ -9,6 +9,7 @@ from utils import (
     get_fetch_oskar,
     get_fetch_prices,
     get_fetch_scalable,
+    get_fetch_sectorsplit,
     get_fetch_traderepublic,
     get_incognito_value_factor,
 )
@@ -102,9 +103,10 @@ def factory(
         logger.info("Factory: no value scale provided, using default value")
         value_scale = get_incognito_value_factor()
     cache = load_cache()
-    cached_price, cached_countries = parse_cache_entry(cache.get(isin))
+    cached_price, cached_countries, cached_sectors = parse_cache_entry(cache.get(isin))
     fetch_prices = get_fetch_prices()
     fetch_geosplit = get_fetch_geosplit()
+    fetch_sectorsplit = get_fetch_sectorsplit()
     use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
     prefer_scrape_value = _scrape_holdings_value_prevails(broker, value)
     logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
@@ -132,6 +134,14 @@ def factory(
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
+    scrape_sectorsplit = fetch_sectorsplit and not (
+        POSITION_SOURCE == YFINANCE and not use_broker_quote
+    )
+    if scrape_sectorsplit:
+        sectors_arg: dict[str, float] | None = None
+    else:
+        sectors_arg = cached_sectors if cached_sectors is not None else {}
+
     ctor_kwargs = {
         "name": name,
         "short_name": short_name,
@@ -142,6 +152,7 @@ def factory(
         "usavn": usavn,
         "dmem_other": dmem_other,
         "cached_countries": countries_arg,
+        "cached_sectors": sectors_arg,
         "value_scale": value_scale,
         "price": ctor_price,
         "prefer_scrape_value": prefer_scrape_value,
@@ -228,14 +239,21 @@ def factory(
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
-    if update_price or update_countries:
+    update_sectors = (
+        scrape_sectorsplit
+        and isin is not None
+        and isinstance(position, JustETFPosition)
+    )
+    if update_price or update_countries or update_sectors:
         save_position_in_cache(
             cache,
             isin,
             price=position.price,
             countries=position.countries() if update_countries else None,
+            sectors=position.sectors() if update_sectors else None,
             update_price=update_price,
             update_countries=update_countries,
+            update_sectors=update_sectors,
         )
 
     # OSKAR cockpit has no share count or unit price. After a live scrape,

@@ -56,6 +56,34 @@ class JustETFPosition(Position):
         r'([\d.,]+)\s*%</span>',
         re.DOTALL,
     )
+    # Holdings > Sectors: same profile page; the full table behind "Show more"
+    # is served by the Wicket ``loadMoreSectors`` AJAX URL (the seed HTML only
+    # carries the first rows). Markers/testids mirror the countries block.
+    _SECTOR_PROFILE_FRAGMENT = "holdingsSection-sectors-loadMoreSectors"
+    _SECTOR_SECTION_MARKERS = (
+        "holdingsSection-sectors",
+        "etf-holdings_sectors_table",
+    )
+    _SECTOR_DIST_WICKET = "0-1.0-holdingsSection-sectors-loadMoreSectors"
+    _SECTOR_DIST_PARAMS = {"_wicket": "1"}
+    _SECTOR_ROW_RE = re.compile(
+        r'data-testid="tl_etf-holdings_sectors_value_name"\s*>([^<]+)</td>'
+        r'.*?data-testid="tl_etf-holdings_sectors_value_percentage"\s*>'
+        r'([\d.,]+)\s*%</span>',
+        re.DOTALL,
+    )
+    # Raw JustETF sector labels -> canonical staple names (see
+    # ``position.position._LIST_OF_STAPLE_SECTORS``). Unlisted labels pass
+    # through unchanged so new variants surface via the base-class warning.
+    _SECTOR_CANONICAL_NAMES = {
+        "Financials": "Finance",
+        "Communication Services": "Telecommunication",
+        "Consumer Non-Cyclicals": "Consumer",
+        "Consumer Staples": "Consumer",
+        "Consumer Cyclicals": "Consumer",
+        "Consumer Discretionary": "Consumer",
+        "Consumer Services": "Consumer",
+    }
     _RETRIES = 10
     _DELAY_S = 0.1
 
@@ -70,6 +98,7 @@ class JustETFPosition(Position):
         usavn: float | None = None,
         dmem_other: float | None = None,
         cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
@@ -86,6 +115,7 @@ class JustETFPosition(Position):
             usavn=usavn,
             dmem_other=dmem_other,
             cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
             value_scale=value_scale,
             price=price,
             prefer_scrape_value=prefer_scrape_value,
@@ -232,6 +262,138 @@ class JustETFPosition(Position):
                 )
         return self._countries
 
+    @classmethod
+    def _canonical_sector_name(cls, raw: str) -> str:
+        """Aggregate a raw JustETF sector label to its canonical staple name."""
+        stripped = raw.strip()
+        return cls._SECTOR_CANONICAL_NAMES.get(stripped, stripped)
+
+    def _sectors_from_html_table(self, html: str) -> list[dict[str, float | str]]:
+        weights: dict[str, float] = {}
+        for name, pct_s in self._SECTOR_ROW_RE.findall(html):
+            canonical = self._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + float(
+                pct_s.replace(",", "")
+            )
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
+
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        """
+        Load sector weights from justETF (profile page cookie + Wicket AJAX).
+
+        Mirrors :meth:`_http_country_dist_json`: the seed HTML only carries the
+        first sector rows, while the Wicket ``loadMoreSectors`` AJAX payload
+        (XML with an HTML table in CDATA) holds the full table.
+
+        If the profile has no sector-holdings block (e.g. some bond or commodity
+        products), returns an empty list and does not call the Wicket URL.
+        """
+        params = dict(self._SECTOR_DIST_PARAMS, isin=self._isin)
+        dist_query = urllib.parse.urlencode(params)
+        dist_url = f"{self._COUNTRY_PAGE_URL}?{self._SECTOR_DIST_WICKET}&{dist_query}"
+        seed_query = urllib.parse.urlencode({"isin": self._isin})
+        seed_base = f"{self._COUNTRY_PAGE_URL}?{seed_query}"
+        seed_url = f"{seed_base}#{self._SECTOR_PROFILE_FRAGMENT}"
+
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        seed_headers = {
+            **self._HEADERS,
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        }
+        logger.info("JustETF: fetching seed HTML from %s", seed_url)
+        req_seed = urllib.request.Request(seed_url, headers=seed_headers, method="GET")
+        with opener.open(req_seed, timeout=30) as resp:
+            seed_html = resp.read().decode("utf-8", errors="replace")
+
+        if not any(m in seed_html for m in self._SECTOR_SECTION_MARKERS):
+            logger.warning("JustETF: no sector section markers found in seed HTML")
+            return []
+
+        wicket_headers = {
+            **self._HEADERS,
+            "Accept": "application/xml, text/xml, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "Wicket-Ajax": "true",
+            "Wicket-Ajax-BaseURL": f"en/etf-profile.html?isin={self._isin}",
+            # Referer omits the fragment (typical for browsers; RFC 7231).
+            "Referer": seed_base,
+        }
+        req_dist = urllib.request.Request(dist_url, headers=wicket_headers, method="GET")
+        try:
+            with opener.open(req_dist, timeout=30) as resp:
+                xml_text = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            logger.warning(
+                "JustETF sector Wicket request failed for %s (HTTP %s); using profile HTML",
+                self._isin,
+                e.code,
+            )
+            logger.warning("JustETF: using profile HTML to parse sectors")
+            return self._sectors_from_html_table(seed_html)
+
+        logger.info("JustETF: XML text parsed successfully")
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            logger.warning(
+                "JustETF sector XML parse failed for %s; using profile HTML",
+                self._isin,
+            )
+            logger.warning("JustETF: using profile HTML to parse sectors")
+            return self._sectors_from_html_table(seed_html)
+        for comp in root.findall(".//component"):
+            fragment = comp.text or ""
+            if "etf-holdings_sectors_table" in fragment:
+                logger.info("JustETF: found sectors in fragment")
+                parsed = self._sectors_from_html_table(fragment)
+                if parsed:
+                    return parsed
+        logger.info("JustETF: no sectors found in fragment, using profile HTML")
+        return self._sectors_from_html_table(seed_html)
+
+    def _fetch_sectors_with_retries(self) -> list[dict[str, float | str]]:
+        logger.info("JustETF: fetching sectors with retries %d", self._RETRIES)
+        for attempt in range(self._RETRIES):
+            try:
+                logger.info("JustETF: attempt %d", attempt)
+                return self._http_sector_dist_json()
+            except urllib.error.HTTPError as e:
+                if (e.code == 429 or e.code >= 500) and attempt + 1 < self._RETRIES:
+                    time.sleep(self._DELAY_S)
+                    continue
+                logger.error("JustETF: HTTP error %d", e.code)
+                raise RuntimeError(
+                    f"JustETF HTTP {e.code} while fetching sector dist for {self._isin}"
+                ) from e
+            except urllib.error.URLError:
+                if attempt + 1 < self._RETRIES:
+                    time.sleep(self._DELAY_S)
+                    continue
+                logger.error("JustETF: URL error")
+                raise
+        logger.error("JustETF: sector fetch failed after %d attempts", self._RETRIES)
+        raise RuntimeError(
+            f"JustETF sector fetch failed for {self._isin} after {self._RETRIES} attempts"
+        )
+
+    def sectors(self) -> list[dict[str, float | str]] | None:
+        """Sector allocation (name + weight_pct) from the Holdings section."""
+        if self._sectors is None and self._isin is not None:
+            try:
+                self._sectors = self._fetch_sectors_with_retries()
+            except (RuntimeError, urllib.error.URLError) as e:
+                self._sectors = []
+                logger.warning(
+                    "JustETF: sector fetch failed for %s (%s); using empty sector list",
+                    self._isin,
+                    e,
+                )
+        return self._sectors
+
     def _fetch_chart_with_retries(self) -> dict:
         for attempt in range(self._RETRIES):
             try:
@@ -323,6 +485,9 @@ if __name__ == "__main__":
         print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
     print(f"Developed markets vs. emerging markets allocation: {_j._compute_dev_vs_em_market()*100:.2f}%")
     print(f"US vs. non-US allocation within developed markets: {_j._compute_us_vs_exus_market()*100:.2f}%")
+    sectors = _j.sectors()
+    for _row in sectors or []:
+        print(f"  {_row['name']}: {_row['weight_pct']:.2f}%")
 
     # Xtrackers MSCI World ex-USA UCITS ETF
     print("*************** Xtrackers MSCI World ex-USA UCITS ETF ***************")

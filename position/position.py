@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from common import PENDING_FETCHED_VALUES
 from logger import attach_color_stderr_handler_for_module
 from scrape.oskar import _OSKAR
-from utils import get_fetch_geosplit, get_fetch_prices, get_incognito
+from utils import get_fetch_geosplit, get_fetch_prices, get_fetch_sectorsplit, get_incognito
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -62,6 +62,23 @@ _LIST_OF_DEVELOPED_MARKETS = [
     "United Kingdom",
 ]
 
+# Definitive sector labels. Raw JustETF variants (e.g. "Financials",
+# "Consumer Cyclicals", "Communication Services") are aggregated to these
+# canonical names by the scraper (see JustETFPosition); matching here is exact.
+_LIST_OF_STAPLE_SECTORS = [
+    "Technology",
+    "Finance",
+    "Non-Energy Materials",
+    "Consumer",
+    "Business Services",
+    "Industrials",
+    "Energy",
+    "Healthcare",
+    "Telecommunication",
+    "Utilities",
+    "Real Estate",
+    "Other",
+]
 # MSCI EM core + common broad-EM / frontier names; English labels as on JustETF / feeds.
 # Aliases (e.g. UAE, Czechia) are separate strings because matching is exact.
 _LIST_OF_EMERGING_MARKETS = [
@@ -138,6 +155,7 @@ class Position(ABC):
         usavn: float | None = None,
         dmem_other: float | None = None,
         cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
@@ -154,6 +172,7 @@ class Position(ABC):
         self._usavn = usavn
         self._prefer_scrape_value = prefer_scrape_value
         self._countries: list[dict[str, float | str]] | None = None
+        self._sectors: list[dict[str, float | str]] | None = None
         self._price: float | None = None
         logger.info("Position: initializing with isin: %s, name: %s, broker: %s, dmem: %s, usavn: %s, dmem_other: %s",
             isin,
@@ -194,6 +213,26 @@ class Position(ABC):
         logger.info("Position: DMEM: %s", self._dmem)
         self._usavn = self._compute_us_vs_exus_market()
         logger.info("Position: USAVN: %s", self._usavn)
+
+        cached_sector_rows = self._cached_sectors_to_rows(cached_sectors)
+        if get_fetch_sectorsplit():
+            self._sectors = self._fetch_sectors_for_sectorsplit()
+        elif cached_sector_rows is not None:
+            if self._isin:
+                logger.warning("Position: cached sectors for ISIN %s: %s", self._isin, cached_sectors)
+            else:
+                logger.warning("Position: cached sectors for asset %s: %s", self._name, cached_sectors)
+            self._sectors = cached_sector_rows
+        else:
+            logger.warning(
+                "Position: fetch-sectorsplit disabled and no cached sectors for %s",
+                self._isin or self._name,
+            )
+        logger.info("Position: sectors: %s", self._sectors)
+        for _row in self._sectors or []:
+            if _row["name"] not in _LIST_OF_STAPLE_SECTORS:
+                logger.warning("position isin %s contains sector %s", self._isin, _row["name"])
+
 
         # check if fetch-prices is enabled, which attempts to fetch a price from the ISIN
         if get_fetch_prices():
@@ -292,6 +331,9 @@ class Position(ABC):
     def countries(self) -> list[dict[str, float | str]]:
         return self._countries
 
+    def sectors(self) -> list[dict[str, float | str]] | None:
+        return self._sectors
+
     def __str__(self) -> str:
         countries_list = self._countries
         countries_str = ""
@@ -302,6 +344,13 @@ class Position(ABC):
             )
         dmem_str = f"{self.dmem*100:.2f}%" if self.dmem is not None else "None"
         usavn_str = f"{self.usavn*100:.2f}%" if self.usavn is not None else "None"
+        sectors_list = self._sectors
+        sectors_str = ""
+        if sectors_list:
+            sectors_str = (
+                "Sectors: \n" +
+                "".join(f"{_row['name']}: {_row['weight_pct']:.2f}%\n" for _row in sectors_list)
+            )
         return (
             f"*************** ISIN: {self.isin} ***************\n"
             f"Name: {self._name} \n"
@@ -309,6 +358,7 @@ class Position(ABC):
             f"DMEM: {dmem_str} \n"
             f"USAVN: {usavn_str} \n"
             f"{countries_str}"
+            f"{sectors_str}"
         )
 
     def __repr__(self) -> str:
@@ -325,6 +375,35 @@ class Position(ABC):
             {"name": name, "weight_pct": float(w) * 100.0}
             for name, w in cached_countries.items()
         ]
+
+    @staticmethod
+    def _cached_sectors_to_rows(
+        cached_sectors: dict[str, float] | None,
+    ) -> list[dict[str, float | str]] | None:
+        # Sector weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        if cached_sectors is None:
+            return None
+        return [
+            {"name": name, "weight_pct": float(w) * 100.0}
+            for name, w in cached_sectors.items()
+        ]
+
+    def _fetch_sectors_for_sectorsplit(
+        self,
+    ) -> list[dict[str, float | str]] | None:
+        if not self._isin:
+            logger.warning(
+                "Position: fetch-sectorsplit requested but no ISIN for asset %s; "
+                "skipping sector lookup",
+                self._name,
+            )
+            return None
+        logger.info("Position: fetch-sectorsplit enabled, fetching sectors from ISIN %s", self._isin)
+        try:
+            return self.sectors()
+        except NotImplementedError:
+            logger.warning("Position: could not fetch sectors for ISIN %s", self._isin)
+            return None
 
     def _fetch_countries_for_geosplit(
         self,

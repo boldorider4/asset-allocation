@@ -16,6 +16,7 @@ from utils import (
     set_fetch_oskar,
     set_fetch_prices,
     set_fetch_scalable,
+    set_fetch_sectorsplit,
     set_fetch_traderepublic,
     set_incognito,
 )
@@ -83,6 +84,8 @@ def cmd_update(args: argparse.Namespace) -> None:
         set_fetch_prices(True)
     if args.fetch_geosplit:
         set_fetch_geosplit(True)
+    if args.fetch_sectorsplit:
+        set_fetch_sectorsplit(True)
     if args.fetch_oskar:
         set_fetch_oskar(True)
     if args.fetch_scalable:
@@ -150,6 +153,14 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         help=(
             "Scrape country allocations (JustETF) and write them to cache.json. "
             "Without this flag, country weights are read from cache."
+        ),
+    )
+    update.add_argument(
+        "--fetch-sectorsplit",
+        action="store_true",
+        help=(
+            "Scrape sector allocations (JustETF) and write them to cache.json. "
+            "Without this flag, sector weights are read from cache."
         ),
     )
     update.add_argument(
