@@ -28,6 +28,7 @@ _DWS_COUNTRY_ALIASES: dict[str, str] = {
     "USA": "United States",
     "Russian Federation": "Russia",
     "Czechia": "Czech Republic",
+    "Macao": "Macau",
     # DWS uses "--" for residual / unclassified holdings (the "Other" bucket).
     "--": "Other",
 }
