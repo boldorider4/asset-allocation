@@ -92,7 +92,6 @@ _LIST_OF_EMERGING_MARKETS = [
     "Kuwait",
     "Latvia",
     "Lithuania",
-    "Macau",
     "Malaysia",
     "Mexico",
     "Morocco",
