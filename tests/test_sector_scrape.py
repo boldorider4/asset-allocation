@@ -90,13 +90,13 @@ class TestSectorTableParsing(unittest.TestCase):
         rows = self._pos()._sectors_from_html_table(html)
         self.assertEqual(
             [r["name"] for r in rows],
-            ["Technology", "Consumer", "Finance", "Telecommunications"],
+            ["Technology", "Consumer", "Finance", "Telecommunication"],
         )
         by_name = {str(r["name"]): float(r["weight_pct"]) for r in rows}
         self.assertAlmostEqual(by_name["Technology"], 43.04)
         self.assertAlmostEqual(by_name["Consumer"], 3.92 + 6.21)
         self.assertAlmostEqual(by_name["Finance"], 5.00)
-        self.assertAlmostEqual(by_name["Telecommunications"], 3.00)
+        self.assertAlmostEqual(by_name["Telecommunication"], 3.00)
 
     def test_unknown_sector_passes_through(self) -> None:
         self.assertEqual(
