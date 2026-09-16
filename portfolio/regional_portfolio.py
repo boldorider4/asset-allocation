@@ -86,6 +86,13 @@ class RegionalPortfolio(Portfolio):
         merged._sector_visualizer = merged._make_sector_visualizer(
             merged._name, merged._value, merged._sector_chart_data()
         )
+        logger.debug(
+            "RegionalPortfolio %r + %r: merged sectors: %r; breakdowns: %r",
+            self._name,
+            other._name,
+            merged._sectors,
+            merged._sector_breakdowns,
+        )
         total = merged._value
         keys = self._geosplit_data.keys() | other._geosplit_data.keys()
         merged._geosplit_data = {

@@ -161,6 +161,7 @@ class Portfolio:
         chart = self._filter_sector_wedges(self._sectors)
         for name, weight in self._sector_breakdowns.items():
             chart[name] = chart.get(name, 0.0) + weight
+        logger.info("Portfolio %r: sector chart data: %r", self._name, chart)
         return chart
 
     def plot_sectors(
@@ -195,6 +196,10 @@ class Portfolio:
         """
         breakdown: dict[str, float] = {}
         if self._value <= 0:
+            logger.warning(
+                "Portfolio %r: zero total value; constituent breakdown is empty",
+                self._name,
+            )
             return breakdown
         for position in self._positions:
             value = position.value
@@ -202,6 +207,11 @@ class Portfolio:
                 continue
             label = position._short_name or self._name
             breakdown[label] = breakdown.get(label, 0.0) + float(value) / self._value
+        logger.info(
+            "Portfolio %r: constituent breakdown (sector-uninformative side): %r",
+            self._name,
+            breakdown,
+        )
         return breakdown
 
     def _has_informative_sectors(self) -> bool:
@@ -225,10 +235,21 @@ class Portfolio:
         union: dict[str, float] = {}
         for side in (self, other):
             if not side._has_informative_sectors():
+                logger.warning(
+                    "Sector union: side %r has no informative sectors; "
+                    "its mass goes to breakdowns instead",
+                    side._name,
+                )
                 continue
             share = float(side._value) / merged_total if merged_total > 0 else 0.0
+            logger.debug(
+                "Sector union: side %r contributes share %.4f",
+                side._name,
+                share,
+            )
             for name, weight in side._sectors.items():
                 union[name] = union.get(name, 0.0) + share * float(weight)
+        logger.info("Sector union (merged-relative): %r", union)
         return union
 
     def _merged_sector_breakdowns(
@@ -238,11 +259,31 @@ class Portfolio:
         breakdowns: dict[str, float] = {}
         for side in (self, other):
             share = float(side._value) / merged_total if merged_total > 0 else 0.0
-            for name, weight in side._sector_breakdowns.items():
-                breakdowns[name] = breakdowns.get(name, 0.0) + share * float(weight)
+            carried = {
+                name: share * float(weight)
+                for name, weight in side._sector_breakdowns.items()
+            }
+            if carried:
+                logger.debug(
+                    "Sector breakdowns: carrying over from side %r: %r",
+                    side._name,
+                    carried,
+                )
+                for name, weight in carried.items():
+                    breakdowns[name] = breakdowns.get(name, 0.0) + weight
             if not side._has_informative_sectors():
-                for name, weight in side._constituent_breakdown().items():
-                    breakdowns[name] = breakdowns.get(name, 0.0) + share * float(weight)
+                fresh = {
+                    name: share * float(weight)
+                    for name, weight in side._constituent_breakdown().items()
+                }
+                logger.debug(
+                    "Sector breakdowns: fresh wedges from side %r: %r",
+                    side._name,
+                    fresh,
+                )
+                for name, weight in fresh.items():
+                    breakdowns[name] = breakdowns.get(name, 0.0) + weight
+        logger.info("Sector breakdowns (merged-relative): %r", breakdowns)
         return breakdowns
 
     @property
