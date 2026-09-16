@@ -115,7 +115,7 @@ code {
 }
 
 .legend .name {
-  width: 50%;
+  width: 40%;
 }
 
 .legend .name-cell {
@@ -126,7 +126,7 @@ code {
 
 .legend .pct,
 .legend .val {
-  width: 25%;
+  width: 30%;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -153,8 +153,12 @@ code {
 .legend .pct {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
-  text-align: right;
+  text-align: center;
   white-space: nowrap;
+}
+
+.legend .val {
+  padding-left: 1.25rem;
 }
 
 .closing-title {
