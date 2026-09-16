@@ -105,4 +105,10 @@ def main():
         label_fontsize=7,
         autopct_fontsize=7,
     )
+    total_growth_portfolio.plot_sectors(
+        title="Portfolio Sectors",
+        closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
     get_plotter().finish_plots()

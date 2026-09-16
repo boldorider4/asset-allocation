@@ -5,7 +5,7 @@ import numpy as np
 from position.factory import factory as _factory
 from position.position import Position
 from logger import attach_color_stderr_handler_for_module
-from visual import Visual
+from visual import Visual, get_plotter
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -33,7 +33,40 @@ DMEM_OTHER = "dmem_other"
 USAVN = "usavn"
 
 
+# Sector chart prep: wedges below this fraction (0–1) fold into "Other".
+_SECTOR_MIN_WEIGHT = 0.02
+# At most this many sector wedges are kept; the rest fold into "Other".
+_SECTOR_MAX_WEDGES = 25
+# Wedge label collecting filtered-out sector mass.
+_SECTOR_OTHER_LABEL = "Other"
+
+
 class Portfolio:
+    @staticmethod
+    def _filter_sector_wedges(sectors: dict[str, float]) -> dict[str, float]:
+        """Keep the largest N wedges ≥ floor; fold the rest into "Other"."""
+        ranked = sorted(sectors.items(), key=lambda item: -item[1])
+        head, tail = ranked[:_SECTOR_MAX_WEDGES], ranked[_SECTOR_MAX_WEDGES:]
+        kept: dict[str, float] = {}
+        dropped = sum(weight for _, weight in tail)
+        for name, weight in head:
+            if weight >= _SECTOR_MIN_WEIGHT:
+                kept[name] = kept.get(name, 0.0) + weight
+            else:
+                dropped += weight
+        if dropped > 0:
+            kept[_SECTOR_OTHER_LABEL] = kept.get(_SECTOR_OTHER_LABEL, 0.0) + dropped
+        return kept
+
+    @staticmethod
+    def _make_sector_visualizer(name: str, value: float, data: dict[str, float]) -> Visual:
+        return get_plotter()(
+            data=data,
+            title="{}: Sector Split: {:.2f} Euro".format(name, value),
+            closing_title="Value: {:.2f}".format(value),
+            factor={"value": value, "unit": "Euro"},
+        )
+
     def __init__(self, name: str, positions: list[dict] | None = None):
         self._name = name
         self._positions: list[Position] = list()
@@ -58,6 +91,10 @@ class Portfolio:
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
         self._sectors = self._calculate_sectors()
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
+        self._sector_data = self._filter_sector_wedges(self._sectors)
+        self._sector_visualizer = self._make_sector_visualizer(
+            name, self._value, self._sector_data
+        )
         self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
 
     def _calculate_value(self) -> float:
@@ -109,6 +146,64 @@ class Portfolio:
             autopct_fontsize=autopct_fontsize,
         )
 
+    def plot_sectors(
+        self,
+        title: str | None = None,
+        closing_title: str | None = None,
+        *,
+        label_fontsize: float | None = None,
+        autopct_fontsize: float | None = None,
+    ) -> None:
+        if self._sector_visualizer is None or not self._sector_data:
+            logger.warning(
+                "No sector data for portfolio %r; skipping sector plot", self._name
+            )
+            return
+        if title is not None:
+            self._sector_visualizer.title = title
+        if closing_title is not None:
+            self._sector_visualizer.closing_title = closing_title
+        self._sector_visualizer.plot(
+            label_fontsize=label_fontsize,
+            autopct_fontsize=autopct_fontsize,
+        )
+
+    def _constituent_breakdown(self) -> dict[str, float]:
+        """Side-relative fractions by short_name for a sector-less portfolio.
+
+        Positions with a short_name get their own wedge; all others fold into
+        one wedge named by the portfolio. Exempt from chart filtering.
+        """
+        breakdown: dict[str, float] = {}
+        if self._value <= 0:
+            return breakdown
+        for position in self._positions:
+            value = position.value
+            if value is None:
+                continue
+            label = position._short_name or self._name
+            breakdown[label] = breakdown.get(label, 0.0) + float(value) / self._value
+        return breakdown
+
+    def _merged_sector_chart_data(
+        self, other: 'Portfolio', merged_total: float
+    ) -> dict[str, float]:
+        """Filtered sector wedges plus unfiltered breakdown wedges of sector-less sides."""
+        union: dict[str, float] = {}
+        breakdowns: dict[str, float] = {}
+        for side in (self, other):
+            share = float(side._value) / merged_total if merged_total > 0 else 0.0
+            if side._sectors:
+                for name, weight in side._sectors.items():
+                    union[name] = union.get(name, 0.0) + share * float(weight)
+            else:
+                for name, weight in side._constituent_breakdown().items():
+                    breakdowns[name] = breakdowns.get(name, 0.0) + share * float(weight)
+        filtered = self._filter_sector_wedges(union)
+        for name, weight in breakdowns.items():
+            filtered[name] = filtered.get(name, 0.0) + weight
+        return filtered
+
     @property
     def value(self) -> float:
         return self._value
@@ -155,6 +250,10 @@ class Portfolio:
         merged._dmem = None
         merged._usavn = None
         merged._sectors = merged._calculate_sectors()
+        merged._sector_data = self._merged_sector_chart_data(other, merged._value)
+        merged._sector_visualizer = merged._make_sector_visualizer(
+            merged._name, merged._value, merged._sector_data
+        )
         sv, ov = self._visualizer, other._visualizer
         if sv is not None and ov is not None:
             merged._visualizer = sv + ov

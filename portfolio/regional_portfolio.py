@@ -79,6 +79,10 @@ class RegionalPortfolio(Portfolio):
         merged._dmem = list(self._dmem or []) + list(other._dmem or [])
         merged._usavn = list(self._usavn or []) + list(other._usavn or [])
         merged._sectors = merged._calculate_sectors()
+        merged._sector_data = self._merged_sector_chart_data(other, merged._value)
+        merged._sector_visualizer = merged._make_sector_visualizer(
+            merged._name, merged._value, merged._sector_data
+        )
         total = merged._value
         keys = self._regional_split_data.keys() | other._regional_split_data.keys()
         merged._regional_split_data = {
