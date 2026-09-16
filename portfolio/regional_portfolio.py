@@ -79,10 +79,13 @@ class RegionalPortfolio(Portfolio):
         merged._dmem = list(self._dmem or []) + list(other._dmem or [])
         merged._usavn = list(self._usavn or []) + list(other._usavn or [])
         # Informative-side mass only; uninformative mass lives in _sector_breakdowns
-        # so chained merges never double-count it. The chart dict itself is
-        # derived on demand in _sector_chart_data().
+        # so chained merges never double-count it. Filtered once into the
+        # persistent visualizer so repeat plot_sectors() calls reuse it.
         merged._sectors = self._merged_sector_union(other, merged._value)
         merged._sector_breakdowns = self._merged_sector_breakdowns(other, merged._value)
+        merged._sector_visualizer = merged._make_sector_visualizer(
+            merged._name, merged._value, merged._sector_chart_data()
+        )
         total = merged._value
         keys = self._regional_split_data.keys() | other._regional_split_data.keys()
         merged._regional_split_data = {

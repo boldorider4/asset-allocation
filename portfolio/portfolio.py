@@ -59,7 +59,11 @@ class Portfolio:
         return kept
 
     @staticmethod
-    def _make_sector_visualizer(name: str, value: float, data: dict[str, float]) -> Visual:
+    def _make_sector_visualizer(
+        name: str, value: float, data: dict[str, float]
+    ) -> Visual | None:
+        if not data:
+            return None
         return get_plotter()(
             data=data,
             title="{}: Sector Split: {:.2f} Euro".format(name, value),
@@ -93,9 +97,11 @@ class Portfolio:
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
         self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
         # Keep history of sector mass that is exempt from chart filtering, e.g. uninformative sides and constituent breakdowns.
-        # The chart dict itself is derived on demand in _sector_chart_data().
         self._sector_breakdowns: dict[str, float] = {}
-        self._sector_visualizer: Visual | None = None
+        # Filtered once here so repeat plot_sectors() calls reuse it.
+        self._sector_visualizer = self._make_sector_visualizer(
+            name, self._value, self._sector_chart_data()
+        )
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
@@ -149,8 +155,8 @@ class Portfolio:
     def _sector_chart_data(self) -> dict[str, float]:
         """Final chart wedges: filtered sectors plus exempt breakdowns.
 
-        The single place where the Other aggregation happens, evaluated on
-        demand so merges only ever carry unfiltered state.
+        Evaluated when the persistent visualizer is built (construction and
+        merges) so repeat plot_sectors() calls never re-run the filters.
         """
         chart = self._filter_sector_wedges(self._sectors)
         for name, weight in self._sector_breakdowns.items():
@@ -166,15 +172,11 @@ class Portfolio:
         autopct_fontsize: float | None = None,
     ) -> None:
         if self._sector_visualizer is None:
-            logger.warning("No sector visualizer set for portfolio %r; skipping sector plot", self._name)
-            return
-        data = self._sector_chart_data()
-        if not data:
             logger.warning(
-                "No sector data for portfolio %r; skipping sector plot", self._name
+                "No sector visualizer set for portfolio %r; skipping sector plot",
+                self._name,
             )
             return
-        self._sector_visualizer = self._make_sector_visualizer(self._name, self._value, data)
         if title is not None:
             self._sector_visualizer.title = title
         if closing_title is not None:
@@ -288,10 +290,14 @@ class Portfolio:
         merged._dmem = None
         merged._usavn = None
         # Informative-side mass only; uninformative mass lives in _sector_breakdowns
-        # so chained merges never double-count it. The chart dict itself is
-        # derived on demand in _sector_chart_data().
+        # so chained merges never double-count it. Filtered once into the
+        # persistent visualizer so repeat plot_sectors() calls reuse it.
         merged._sectors = self._merged_sector_union(other, merged._value)
         merged._sector_breakdowns = self._merged_sector_breakdowns(other, merged._value)
+        # Filtered once here so repeat plot_sectors() calls reuse it.
+        merged._sector_visualizer = merged._make_sector_visualizer(
+            merged._name, merged._value, merged._sector_chart_data()
+        )
         sv, ov = self._visualizer, other._visualizer
         if sv is not None and ov is not None:
             merged._visualizer = sv + ov
