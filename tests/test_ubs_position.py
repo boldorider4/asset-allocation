@@ -15,12 +15,7 @@ from position.ubs_position import (
     _UBS_PRODUCT_EXISTS,
     ubs_product_url_exists,
 )
-from utils import (
-    get_fetch_geosplit,
-    get_fetch_prices,
-    set_fetch_geosplit,
-    set_fetch_prices,
-)
+from context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BD4TXV59"
 _INST_ID = "1694907"
@@ -220,14 +215,19 @@ class TestUbsProductExists(unittest.TestCase):
 
 class TestUbsCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        self._prices = get_fetch_prices()
-        set_fetch_geosplit(True)
-        set_fetch_prices(False)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
-        set_fetch_prices(self._prices)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def test_aggregates_constituents_json(self) -> None:
         with patch("position.ubs_position._new_ha4_session", return_value=MagicMock()):
@@ -245,7 +245,7 @@ class TestUbsCountryFetch(unittest.TestCase):
                                 UBSPosition, "_fast_info_price", return_value=12.0
                             ):
                                 pos = UBSPosition(
-                                    _ISIN, name="UBS Core MSCI World", shares=1
+                                    _ISIN, name="UBS Core MSCI World", shares=1, ctx=self.ctx
                                 )
         self.assertEqual(
             pos.countries(),
@@ -259,18 +259,19 @@ class TestUbsCountryFetch(unittest.TestCase):
 
 class TestUbsFactoryRouting(unittest.TestCase):
     def setUp(self) -> None:
-        self._prices = get_fetch_prices()
-        self._geo = get_fetch_geosplit()
-        set_fetch_prices(False)
-        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._cache = Path(self._tmpdir.name) / "cache.json"
-        self._cache.write_text("{}", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        set_fetch_geosplit(self._geo)
-        self._tmpdir.cleanup()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _factory(self, **kwargs):
         defaults = {
@@ -280,8 +281,8 @@ class TestUbsFactoryRouting(unittest.TestCase):
             "price": 10.0,
         }
         defaults.update(kwargs)
-        with patch("utils.CACHE_FILENAME", str(self._cache)):
-            return factory(**defaults)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
 
     def _no_country_scrape(self):
         return patch.object(
@@ -352,7 +353,7 @@ class TestUbsFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, UBSPosition)
 
     def test_without_fetch_geosplit_skips_ubs_probe(self) -> None:
-        set_fetch_geosplit(False)
+        self.ctx.config.fetch_geosplit = False
         with patch("position.factory.ubs_product_url_exists") as exists:
             pos = self._factory()
         exists.assert_not_called()

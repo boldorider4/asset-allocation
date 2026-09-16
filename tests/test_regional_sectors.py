@@ -19,12 +19,19 @@ def _stub(*, value, sectors, dmem=1.0, usavn=0.5):
         sectors=lambda: sectors,
         _short_name=None,
         _name="stub",
+        _isin="XX000STUB00",
     )
+
+
+def _ctx():
+    from context import AppConfig, RuntimeContext
+
+    return RuntimeContext(config=AppConfig(plotter="web"))
 
 
 def _regional(name, stubs) -> RegionalPortfolio:
     with patch("portfolio.portfolio._factory", side_effect=list(stubs)):
-        return RegionalPortfolio(name, [{} for _ in stubs])
+        return RegionalPortfolio(name, [{} for _ in stubs], ctx=_ctx())
 
 
 class TestConsolidateSectors(unittest.TestCase):
@@ -98,7 +105,7 @@ class TestRegionalAdd(unittest.TestCase):
             [_stub(value=100.0, sectors=[{"name": "Technology", "weight_pct": 100.0}])],
         )
         with patch("portfolio.portfolio._factory", side_effect=[_stub(value=50.0, sectors=None, dmem=None, usavn=None)]):
-            other = NonRegionalPortfolio("N", [{}])
+            other = NonRegionalPortfolio("N", [{}], ctx=_ctx())
         merged = regional + other
         self.assertNotIsInstance(merged, RegionalPortfolio)
         self.assertIsInstance(merged, Portfolio)

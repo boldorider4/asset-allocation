@@ -1,15 +1,21 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from portfolio.portfolio import Portfolio
-from visual import get_plotter
 from logger import attach_color_stderr_handler_for_module
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
 class NonRegionalPortfolio(Portfolio):
-    def __init__(self, name: str, positions: list[dict], consolidate: bool = False):
-        super().__init__(name, positions)
+    def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None, consolidate: bool = False):
+        super().__init__(name, positions, ctx=ctx)
+        plotter = self._ctx.plotter_class()
 
         if self._value <= 0 and self._positions:
             logger.warning(
@@ -40,7 +46,7 @@ class NonRegionalPortfolio(Portfolio):
                 self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
 
 
-        self._geosplit_visualizer = get_plotter()(
+        self._geosplit_visualizer = plotter(
             data=self._visualizer_data,
             title="{}: {:.2f} Euro".format(name, self._value),
             closing_title="Value: {:.2f}".format(self._value),

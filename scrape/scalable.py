@@ -9,11 +9,14 @@ import logging
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from common import CASH_PORTFOLIO
 from logger import attach_color_stderr_handler_for_module
-from utils import bucket_for_isin, cache_broker_quotes, portfolio as global_portfolio
+from utils import bucket_for_isin, cache_broker_quotes
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -39,8 +42,7 @@ class ScalableHolding:
     is_tagesgeld: bool = False
 
 
-global global_scalable_holdings
-global_scalable_holdings: dict[str, ScalableHolding] = {}
+
 
 
 class Scalable:
@@ -360,10 +362,9 @@ def _is_portfolio_position_scalable_tagesgeld(position: dict[str, Any]) -> bool:
     return pos_name == _TAGESGELD_NAME and pos_broker == _SCALABLE
 
 
-def update_scalable_etfs_in_portfolio() -> None:
-    global global_scalable_holdings
-    global_scalable_holdings = fetch_scalable_etfs()
-    fetched = global_scalable_holdings
+def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
+    ctx.scalable_holdings = fetch_scalable_etfs()
+    fetched = ctx.scalable_holdings
     if not fetched:
         logger.warning(
             "update_scalable_etfs_in_portfolio: no Scalable holdings fetched; "
@@ -381,7 +382,7 @@ def update_scalable_etfs_in_portfolio() -> None:
     matched_isins: set[str] = set()
     tagesgeld_matched = False
 
-    for bucket, positions in global_portfolio.items():
+    for bucket, positions in ctx.portfolio.items():
         for position in positions:
             pos_broker = position.get("broker") or position.get("Broker")
             if pos_broker != _SCALABLE:
@@ -414,7 +415,7 @@ def update_scalable_etfs_in_portfolio() -> None:
             matched_isins.add(holding.isin)
 
     if fetched_tagesgeld is not None and not tagesgeld_matched:
-        global_portfolio.setdefault(CASH_PORTFOLIO, []).append(
+        ctx.portfolio.setdefault(CASH_PORTFOLIO, []).append(
             {
                 "name": _TAGESGELD_NAME,
                 "ISIN": None,
@@ -436,7 +437,7 @@ def update_scalable_etfs_in_portfolio() -> None:
         if holding.isin in matched_isins:
             continue
         bucket = bucket_for_isin(holding.isin)
-        global_portfolio.setdefault(bucket, []).append(
+        ctx.portfolio.setdefault(bucket, []).append(
             {
                 "name": holding.name,
                 "ISIN": holding.isin,
@@ -456,8 +457,9 @@ def update_scalable_etfs_in_portfolio() -> None:
         )
 
     cache_broker_quotes(
+        ctx,
         {holding.isin: holding.price for holding in fetched_by_isin.values()}
     )
 
     for bucket, position in to_remove:
-        global_portfolio[bucket].remove(position)
+        ctx.portfolio[bucket].remove(position)

@@ -11,9 +11,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from typing import TYPE_CHECKING
+
 from common import CASH_PORTFOLIO
 from logger import attach_color_stderr_handler_for_module
-from utils import bucket_for_isin, cache_broker_quotes, portfolio as global_portfolio
+from utils import bucket_for_isin, cache_broker_quotes
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -59,8 +64,7 @@ class TradeRepublicHolding:
     is_cash: bool = False
 
 
-global global_traderepublic_holdings
-global_traderepublic_holdings: dict[str, TradeRepublicHolding] = {}
+
 
 
 def _import_pytr():
@@ -287,10 +291,9 @@ def _is_portfolio_position_traderepublic_cash(position: dict[str, Any]) -> bool:
     return pos_name == _CASH_NAME and pos_broker == _TRADEREPUBLIC
 
 
-def update_traderepublic_etfs_in_portfolio() -> None:
-    global global_traderepublic_holdings
-    global_traderepublic_holdings = fetch_traderepublic_etfs()
-    fetched = global_traderepublic_holdings
+def update_traderepublic_etfs_in_portfolio(ctx: RuntimeContext) -> None:
+    ctx.traderepublic_holdings = fetch_traderepublic_etfs()
+    fetched = ctx.traderepublic_holdings
     if not fetched:
         logger.warning(
             "update_traderepublic_etfs_in_portfolio: no Trade Republic holdings fetched; "
@@ -308,7 +311,7 @@ def update_traderepublic_etfs_in_portfolio() -> None:
     matched_isins: set[str] = set()
     cash_matched = False
 
-    for bucket, positions in global_portfolio.items():
+    for bucket, positions in ctx.portfolio.items():
         for position in positions:
             pos_broker = position.get("broker") or position.get("Broker")
             if pos_broker != _TRADEREPUBLIC:
@@ -341,7 +344,7 @@ def update_traderepublic_etfs_in_portfolio() -> None:
             matched_isins.add(holding.isin)
 
     if fetched_cash is not None and not cash_matched:
-        global_portfolio.setdefault(CASH_PORTFOLIO, []).append(
+        ctx.portfolio.setdefault(CASH_PORTFOLIO, []).append(
             {
                 "name": _CASH_NAME,
                 "ISIN": None,
@@ -363,7 +366,7 @@ def update_traderepublic_etfs_in_portfolio() -> None:
         if holding.isin in matched_isins:
             continue
         bucket = bucket_for_isin(holding.isin)
-        global_portfolio.setdefault(bucket, []).append(
+        ctx.portfolio.setdefault(bucket, []).append(
             {
                 "name": holding.name,
                 "ISIN": holding.isin,
@@ -383,8 +386,9 @@ def update_traderepublic_etfs_in_portfolio() -> None:
         )
 
     cache_broker_quotes(
+        ctx,
         {holding.isin: holding.price for holding in fetched_by_isin.values()}
     )
 
     for bucket, position in to_remove:
-        global_portfolio[bucket].remove(position)
+        ctx.portfolio[bucket].remove(position)

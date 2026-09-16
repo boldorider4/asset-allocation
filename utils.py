@@ -6,136 +6,16 @@ from typing import Any
 from common import (
     DEFAULT_ISIN_PORTFOLIO_BUCKET,
     ISIN_TO_PORTFOLIO,
-    PENDING_FETCHED_VALUES,
-    PENDING_OSKAR_SHARES,
 )
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-
-global portfolio
-portfolio: dict[str, list[dict]] = {}
-
-# Set True (e.g. via ``--fetch-prices``) to skip reading cache.json for quotes; fresh price is then written back.
-IGNORE_CACHE = False
-FETCH_PRICES = False
-FETCH_GEOSPLIT = False
-FETCH_SECTORSPLIT = False
-FETCH_OSKAR = False
-FETCH_SCALABLE = False
-FETCH_TRADEREPUBLIC = False
-INCOGNITO = False
-# Applied by ``apply_incognito_scaling``; ``Position`` / ``factory`` multiply monetary amounts by this.
-INCOGNITO_VALUE_FACTOR: float = 1.0
-# Optional override path for the assets JSON file; ``None`` means use the default location.
-ASSETS_FILE: Path | None = None
-
-CACHE_FILENAME = "cache.json"
-# Per-ISIN value in ``cache.json`` (written by ``save_position_in_cache``).
+# Per-ISIN value in the cache (written by ``save_position_in_cache``).
 _CACHE_PRICE = "price"
 _CACHE_COUNTRIES = "countries"
 _CACHE_SECTORS = "sectors"
-
-
-def get_ignore_cache() -> bool:
-    return get_fetch_prices()
-
-
-def set_ignore_cache(ignore_cache: bool) -> None:
-    set_fetch_prices(ignore_cache)
-
-
-def get_fetch_prices() -> bool:
-    global FETCH_PRICES
-    return FETCH_PRICES
-
-
-def set_fetch_prices(fetch_prices: bool) -> None:
-    global FETCH_PRICES, IGNORE_CACHE
-    FETCH_PRICES = fetch_prices
-    IGNORE_CACHE = fetch_prices
-
-
-def get_fetch_geosplit() -> bool:
-    global FETCH_GEOSPLIT
-    return FETCH_GEOSPLIT
-
-
-def set_fetch_geosplit(fetch_geosplit: bool) -> None:
-    global FETCH_GEOSPLIT
-    FETCH_GEOSPLIT = fetch_geosplit
-
-
-def get_fetch_sectorsplit() -> bool:
-    global FETCH_SECTORSPLIT
-    return FETCH_SECTORSPLIT
-
-
-def set_fetch_sectorsplit(fetch_sectorsplit: bool) -> None:
-    global FETCH_SECTORSPLIT
-    FETCH_SECTORSPLIT = fetch_sectorsplit
-
-
-def get_fetch_oskar() -> bool:
-    global FETCH_OSKAR
-    return FETCH_OSKAR
-
-
-def set_fetch_oskar(fetch_oskar: bool) -> None:
-    global FETCH_OSKAR
-    FETCH_OSKAR = fetch_oskar
-
-
-def get_fetch_scalable() -> bool:
-    global FETCH_SCALABLE
-    return FETCH_SCALABLE
-
-
-def set_fetch_scalable(fetch_scalable: bool) -> None:
-    global FETCH_SCALABLE
-    FETCH_SCALABLE = fetch_scalable
-
-
-def get_fetch_traderepublic() -> bool:
-    global FETCH_TRADEREPUBLIC
-    return FETCH_TRADEREPUBLIC
-
-
-def set_fetch_traderepublic(fetch_traderepublic: bool) -> None:
-    global FETCH_TRADEREPUBLIC
-    FETCH_TRADEREPUBLIC = fetch_traderepublic
-
-
-def get_assets_file() -> Path | None:
-    global ASSETS_FILE
-    return ASSETS_FILE
-
-
-def set_assets_file(assets_file: Path) -> None:
-    global ASSETS_FILE
-    ASSETS_FILE = assets_file
-
-
-def get_incognito() -> bool:
-    global INCOGNITO
-    return INCOGNITO
-
-
-def set_incognito(incognito: bool) -> None:
-    global INCOGNITO
-    INCOGNITO = incognito
-
-
-def get_incognito_value_factor() -> float:
-    global INCOGNITO_VALUE_FACTOR
-    return INCOGNITO_VALUE_FACTOR
-
-
-def set_incognito_value_factor(factor: float) -> None:
-    global INCOGNITO_VALUE_FACTOR
-    INCOGNITO_VALUE_FACTOR = factor
 
 
 def parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None, dict[str, float] | None]:
@@ -157,18 +37,6 @@ def parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None
     return price, cached_countries, cached_sectors
 
 
-def load_cache() -> dict[str, Any]:
-    logger.info("loading cache from %s", CACHE_FILENAME)
-    try:
-        with open(CACHE_FILENAME, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.info("cache file not found, creating empty cache")
-        with open(CACHE_FILENAME, "w") as f:
-            json.dump({}, f, indent=2)
-        return {}
-
-
 def countries_to_cache_fractions(
     rows: list[dict[str, float | str]] | None,
 ) -> dict[str, float]:
@@ -186,7 +54,7 @@ def sectors_to_cache_fractions(
 
 
 def save_position_in_cache(
-    cache: dict[str, Any],
+    ctx: Any,
     isin: str,
     *,
     price: float | None = None,
@@ -196,8 +64,10 @@ def save_position_in_cache(
     update_countries: bool = False,
     update_sectors: bool = False,
 ) -> None:
+    """Stage a cache update in ``ctx.cache`` (in-memory; flushed at end of run)."""
     if not update_price and not update_countries and not update_sectors:
         return
+    cache = ctx.ensure_cache_loaded()
     row = cache.get(isin)
     if not isinstance(row, dict):
         row = {}
@@ -210,16 +80,15 @@ def save_position_in_cache(
     if update_sectors:
         row[_CACHE_SECTORS] = sectors_to_cache_fractions(sectors)
     cache[isin] = row
-    with open(CACHE_FILENAME, "w") as f:
-        json.dump(cache, f, indent=2)
+    ctx.mark_cache_dirty()
 
 
-def cache_broker_quotes(quotes: dict[str, float | None]) -> None:
-    """Write Scalable / Trade Republic unit prices to ``cache.json``.
+def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
+    """Stage Scalable / Trade Republic unit prices in ``ctx.cache``.
 
     No-op unless ``--fetch-prices`` is set.
     """
-    if not get_fetch_prices():
+    if not ctx.config.fetch_prices:
         return
     to_write = {
         str(isin): float(price)
@@ -228,56 +97,54 @@ def cache_broker_quotes(quotes: dict[str, float | None]) -> None:
     }
     if not to_write:
         return
-    cache = load_cache()
+    cache = ctx.ensure_cache_loaded()
     for isin, price in to_write.items():
         row = cache.get(isin)
         row = dict(row) if isinstance(row, dict) else {}
         row[_CACHE_PRICE] = price
         cache[isin] = row
-    with open(CACHE_FILENAME, "w") as f:
-        json.dump(cache, f, indent=2)
-    logger.info("wrote %d broker quote(s) to cache", len(to_write))
+    ctx.mark_cache_dirty()
+    logger.info("staged %d broker quote(s) in cache", len(to_write))
 
 
-def _incognito_cached_price(isin: str | None) -> float | None:
+def _incognito_cached_price(ctx: Any, isin: str | None) -> float | None:
     """
-    ``price`` from ``cache.json`` for incognito totals only.
+    ``price`` from the in-memory cache for incognito totals only.
 
     Returns ``None`` when there is no cache row or the row has no ``price``;
     otherwise ``float(cached)``.
     """
     if not isin:
         return None
-    cached, _, _ = parse_cache_entry(load_cache().get(isin))
+    cached, _, _ = parse_cache_entry(ctx.ensure_cache_loaded().get(isin))
     return None if cached is None else float(cached)
 
 
-def apply_incognito_scaling() -> None:
+def apply_incognito_scaling(ctx: Any) -> None:
     """
-    Pick a random total in ``[10001, 54999]`` and set ``INCOGNITO_VALUE_FACTOR`` so that
-    (when positions use cached prices / explicit JSON values) portfolio totals match that
-    target. Does **not** mutate the ``portfolio`` dict; scaling is applied when building
-    ``Position`` instances via ``factory`` (see ``get_incognito_value_factor``).
+    Pick a random total in ``[10001, 54999]`` and set
+    ``ctx.config.incognito_value_factor`` so that (when positions use cached
+    prices / explicit JSON values) portfolio totals match that target. Does
+    **not** mutate the portfolio dict; scaling is applied when building
+    ``Position`` instances via ``factory``.
 
-    Totals use explicit JSON ``value`` when set. Otherwise uses **cache.json only**
+    Totals use explicit JSON ``value`` when set. Otherwise uses **cache only**
     (``shares`` × cached ``price``); missing cache entry or missing price → **0**
     for that line (no network / no ``factory``).
     """
-    global portfolio
-
     import random
 
     from portfolio.portfolio import ISIN, SHARES, VALUE
 
     total = 0.0
-    for positions in portfolio.values():
+    for positions in ctx.portfolio.values():
         for pos in positions:
             raw = pos.get(VALUE)
             # Explicit JSON ``value`` is authoritative; do not mix in shares × cache here.
             if raw is not None:
                 total += float(raw)
             else:
-                cached_price = _incognito_cached_price(pos.get(ISIN))
+                cached_price = _incognito_cached_price(ctx, pos.get(ISIN))
                 sh = pos.get(SHARES)
                 if cached_price is not None and sh is not None:
                     total += float(sh) * float(cached_price)
@@ -286,18 +153,12 @@ def apply_incognito_scaling() -> None:
         return
 
     target = float(random.randint(10001, 54999))
-    factor = target / total
-    set_incognito_value_factor(factor)
+    ctx.config.incognito_value_factor = target / total
 
 
-def _default_assets_path() -> Path:
-    return Path(__file__).resolve().parent / "assets.json"
-
-
-def load_portfolio(path: Path | None = None) -> dict[str, list[dict]]:
-    """Load portfolio buckets from a JSON file (default: assets.json next to this module)."""
-    assets_path = path or _default_assets_path()
-    with assets_path.open(encoding="utf-8") as f:
+def load_portfolio(path: Path) -> dict[str, list[dict]]:
+    """Load portfolio buckets from a JSON file."""
+    with Path(path).open(encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError("assets root must be a JSON object")
@@ -310,73 +171,73 @@ def load_portfolio(path: Path | None = None) -> dict[str, list[dict]]:
     return data
 
 
-def write_portfolio_to_file(path: Path | None = None) -> None:
-    """Overwrite the assets JSON file (default: assets.json next to this module) with the current global ``portfolio``."""
-    assets_path = path or _default_assets_path()
+def write_portfolio(path: Path, data: dict[str, list[dict]]) -> None:
+    """Overwrite the assets JSON file at ``path`` with ``data``."""
+    assets_path = Path(path)
     with assets_path.open("w", encoding="utf-8") as f:
-        json.dump(portfolio, f, indent=2, ensure_ascii=False)
+        json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
 
-def persist_oskar_shares_in_portfolio() -> None:
-    """Apply all fresh OSKAR share estimates and write ``assets.json`` once."""
-    if not PENDING_OSKAR_SHARES:
+def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
+    """Apply all fresh OSKAR share estimates and write the assets file once."""
+    if not ctx.pending_oskar_shares:
         return
-    # Lazy import: ``scrape.oskar`` imports ``utils.portfolio``.
+    # Lazy import: ``scrape.oskar`` imports portfolio constants only.
     from scrape.oskar import _OSKAR as OSKAR
 
     updated_count = 0
     try:
-        for positions in portfolio.values():
+        for positions in ctx.portfolio.values():
             for position in positions:
                 pos_broker = position.get("broker") or position.get("Broker")
                 pos_isin = position.get("ISIN") or position.get("isin")
                 pos_value = position.get("value")
                 if pos_broker != OSKAR or not pos_isin or pos_value is None:
                     continue
-                shares = PENDING_OSKAR_SHARES.get(
+                shares = ctx.pending_oskar_shares.get(
                     (str(pos_isin), float(pos_value))
                 )
                 if shares is not None:
                     position["shares"] = shares
                     updated_count += 1
         if updated_count:
-            write_portfolio_to_file(get_assets_file())
+            ctx.flush_portfolio()
             logger.info(
                 "wrote %d OSKAR share estimate(s) to portfolio file",
                 updated_count,
             )
     finally:
-        PENDING_OSKAR_SHARES.clear()
+        ctx.pending_oskar_shares.clear()
 
 
-def persist_fetched_values_in_portfolio() -> None:
-    """Write shares × quote into the assets file for unsraped broker rows."""
-    if not PENDING_FETCHED_VALUES:
+def persist_fetched_values_in_portfolio(ctx: Any) -> None:
+    """Write shares × quote into the assets file for unscraped broker rows."""
+    if not ctx.pending_fetched_values:
         return
 
     updated_count = 0
     try:
-        for positions in portfolio.values():
+        for positions in ctx.portfolio.values():
             for position in positions:
                 pos_isin = position.get("ISIN") or position.get("isin")
                 if not pos_isin:
                     continue
                 pos_broker = position.get("broker") or position.get("Broker")
-                new_value = PENDING_FETCHED_VALUES.get(
+                new_value = ctx.pending_fetched_values.get(
                     (str(pos_isin), pos_broker)
                 )
                 if new_value is not None:
                     position["value"] = new_value
                     updated_count += 1
         if updated_count:
-            write_portfolio_to_file(get_assets_file())
+            ctx.flush_portfolio()
             logger.info(
                 "wrote %d fetch-prices value(s) to portfolio file",
                 updated_count,
             )
     finally:
-        PENDING_FETCHED_VALUES.clear()
+        ctx.pending_fetched_values.clear()
 
 
 def bucket_for_isin(isin: str) -> str:
@@ -390,4 +251,3 @@ def bucket_for_isin(isin: str) -> str:
         )
         return DEFAULT_ISIN_PORTFOLIO_BUCKET
     return bucket
-

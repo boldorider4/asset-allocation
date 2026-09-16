@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import tempfile
 import unittest
@@ -20,20 +19,24 @@ from scrape.scalable import (
     _TAGESGELD_FETCH_KEY,
     update_scalable_etfs_in_portfolio,
 )
-from utils import (
-    get_fetch_prices,
-    portfolio as global_portfolio,
-    set_fetch_prices,
-    write_portfolio_to_file,
-)
+from context import AppConfig, RuntimeContext
+from utils import write_portfolio
 
 
 class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
     def setUp(self) -> None:
-        self._saved = copy.deepcopy(dict(global_portfolio))
-        self._prices = get_fetch_prices()
-        global_portfolio.clear()
-        global_portfolio.update(
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
+        self.ctx.portfolio.update(
             {
                 EQUITY_PORTFOLIO: [
                     {
@@ -60,10 +63,6 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
             }
         )
 
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        global_portfolio.clear()
-        global_portfolio.update(copy.deepcopy(self._saved))
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_updates_shares_value_and_price(self, mock_fetch) -> None:
@@ -84,12 +83,12 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 is_tagesgeld=True,
             ),
         }
-        update_scalable_etfs_in_portfolio()
-        pos = global_portfolio[EQUITY_PORTFOLIO][0]
+        update_scalable_etfs_in_portfolio(self.ctx)
+        pos = self.ctx.portfolio[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
         self.assertNotIn("price", pos)
-        self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 40.32)
+        self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO][0]["value"], 40.32)
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_writes_assets_file_shares_and_value(self, mock_fetch) -> None:
@@ -102,10 +101,10 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        update_scalable_etfs_in_portfolio()
+        update_scalable_etfs_in_portfolio(self.ctx)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "assets.json"
-            write_portfolio_to_file(path)
+            write_portfolio(path, self.ctx.portfolio)
             written = json.loads(path.read_text(encoding="utf-8"))
         pos = written[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
@@ -130,13 +129,13 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=10.0,
             ),
         }
-        update_scalable_etfs_in_portfolio()
-        self.assertEqual(global_portfolio[COMMODITY_PORTFOLIO][0]["ISIN"], "DE000EWG2LD7")
+        update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(self.ctx.portfolio[COMMODITY_PORTFOLIO][0]["ISIN"], "DE000EWG2LD7")
         self.assertEqual(
-            global_portfolio[FIXED_MATURITY_BOND_PORTFOLIO][0]["ISIN"],
+            self.ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO][0]["ISIN"],
             "LU2233156582",
         )
-        self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 0)
+        self.assertEqual(len(self.ctx.portfolio[EQUITY_PORTFOLIO]), 0)
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_unknown_isin_falls_back_to_equity(self, mock_fetch) -> None:
@@ -150,12 +149,12 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
             ),
         }
         with self.assertLogs("utils", level="WARNING"):
-            update_scalable_etfs_in_portfolio()
-        self.assertEqual(global_portfolio[EQUITY_PORTFOLIO][0]["ISIN"], "XX000UNKNOWN1")
+            update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(self.ctx.portfolio[EQUITY_PORTFOLIO][0]["ISIN"], "XX000UNKNOWN1")
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_removes_stale_and_keeps_non_scalable(self, mock_fetch) -> None:
-        global_portfolio[EQUITY_PORTFOLIO].append(
+        self.ctx.portfolio[EQUITY_PORTFOLIO].append(
             {
                 "name": "Oskar leftover",
                 "ISIN": "IE00OSTALE01",
@@ -173,8 +172,8 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=10.0,
             ),
         }
-        update_scalable_etfs_in_portfolio()
-        isins = [p["ISIN"] for p in global_portfolio[EQUITY_PORTFOLIO]]
+        update_scalable_etfs_in_portfolio(self.ctx)
+        isins = [p["ISIN"] for p in self.ctx.portfolio[EQUITY_PORTFOLIO]]
         self.assertIn("IE000BI8OT95", isins)
         self.assertIn("IE00OSTALE01", isins)
         self.assertNotIn("IE0006WW1TQ4", isins)
@@ -190,16 +189,16 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        update_scalable_etfs_in_portfolio()
-        self.assertEqual(global_portfolio[CASH_PORTFOLIO], [])
+        update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO], [])
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_empty_fetch_leaves_portfolio_unchanged(self, mock_fetch) -> None:
         mock_fetch.return_value = {}
         with self.assertLogs("scrape.scalable", level="WARNING"):
-            update_scalable_etfs_in_portfolio()
-        self.assertEqual(len(global_portfolio[EQUITY_PORTFOLIO]), 1)
-        self.assertEqual(global_portfolio[CASH_PORTFOLIO][0]["value"], 1.0)
+            update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(len(self.ctx.portfolio[EQUITY_PORTFOLIO]), 1)
+        self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO][0]["value"], 1.0)
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_fetch_prices_writes_broker_quote_to_cache(self, mock_fetch) -> None:
@@ -212,15 +211,11 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        set_fetch_prices(True)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache_path = Path(tmpdir) / "cache.json"
-            cache_path.write_text("{}", encoding="utf-8")
-            with patch("utils.CACHE_FILENAME", str(cache_path)):
-                update_scalable_etfs_in_portfolio()
-            saved = json.loads(cache_path.read_text(encoding="utf-8"))
-        self.assertEqual(saved["IE0006WW1TQ4"]["price"], 40.315)
-        self.assertNotIn("price", global_portfolio[EQUITY_PORTFOLIO][0])
+        self.ctx.config.fetch_prices = True
+        update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(self.ctx.cache["IE0006WW1TQ4"]["price"], 40.315)
+        self.assertTrue(self.ctx.cache_dirty)
+        self.assertNotIn("price", self.ctx.portfolio[EQUITY_PORTFOLIO][0])
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_without_fetch_prices_does_not_write_cache(self, mock_fetch) -> None:
@@ -233,13 +228,10 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
                 price=40.315,
             ),
         }
-        set_fetch_prices(False)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache_path = Path(tmpdir) / "cache.json"
-            cache_path.write_text("{}", encoding="utf-8")
-            with patch("utils.CACHE_FILENAME", str(cache_path)):
-                update_scalable_etfs_in_portfolio()
-            self.assertEqual(cache_path.read_text(encoding="utf-8"), "{}")
+        self.ctx.config.fetch_prices = False
+        update_scalable_etfs_in_portfolio(self.ctx)
+        self.assertEqual(self.ctx.cache, {})
+        self.assertFalse(self.ctx.cache_dirty)
 
 
 if __name__ == "__main__":

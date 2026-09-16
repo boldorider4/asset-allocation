@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from common import PENDING_FETCHED_VALUES
 from logger import attach_color_stderr_handler_for_module
 from scrape.oskar import _OSKAR
-from utils import get_fetch_geosplit, get_fetch_prices, get_fetch_sectorsplit, get_incognito
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -171,7 +173,11 @@ class Position(ABC):
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
+        ctx: RuntimeContext | None = None,
     ) -> None:
+        if ctx is None:
+            raise TypeError("Position requires an explicit RuntimeContext (ctx=...)")
+        self._ctx = ctx
         self._name = name
         self._short_name = short_name
         self._shares = shares
@@ -198,7 +204,7 @@ class Position(ABC):
         logger.info("Position: short_name: %s", short_name)
 
         cached_rows = self._cached_countries_to_rows(cached_countries)
-        if get_fetch_geosplit():
+        if ctx.config.fetch_geosplit:
             self._countries = self._fetch_countries_for_geosplit()
         elif cached_rows is not None:
             if self._isin:
@@ -227,7 +233,7 @@ class Position(ABC):
         logger.info("Position: USAVN: %s", self._usavn)
 
         cached_sector_rows = self._cached_sectors_to_rows(cached_sectors)
-        if get_fetch_sectorsplit():
+        if ctx.config.fetch_sectorsplit:
             self._sectors = self._fetch_sectors_for_sectorsplit()
         elif cached_sector_rows is not None:
             if self._isin:
@@ -247,7 +253,7 @@ class Position(ABC):
 
 
         # check if fetch-prices is enabled, which attempts to fetch a price from the ISIN
-        if get_fetch_prices():
+        if ctx.config.fetch_prices:
             self._price = self._fetch_fast_info_price(price)
         # if fetch-prices is disabled, use the supplied price from previous scrapes
         elif price is not None:
@@ -299,14 +305,14 @@ class Position(ABC):
         if (
             not from_quote
             or base is None
-            or not get_fetch_prices()
+            or not self._ctx.config.fetch_prices
             or self._prefer_scrape_value
-            or get_incognito()
+            or self._ctx.config.incognito
             or not self._isin
             or self._shares is None
         ):
             return
-        PENDING_FETCHED_VALUES[(str(self._isin), self._broker)] = float(base)
+        self._ctx.pending_fetched_values[(str(self._isin), self._broker)] = float(base)
 
     @property
     def value(self) -> float | None:

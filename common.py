@@ -22,13 +22,3 @@ ISIN_TO_PORTFOLIO: dict[str, str] = {
     "LU2233156582": FIXED_MATURITY_BOND_PORTFOLIO,
 }
 DEFAULT_ISIN_PORTFOLIO_BUCKET = EQUITY_PORTFOLIO
-
-# Fresh estimates collected while portfolio Position objects are constructed.
-# Keying by ISIN and scraped value distinguishes the same ETF held in multiple
-# OSKAR entries without involving non-OSKAR positions.
-PENDING_OSKAR_SHARES: dict[tuple[str, float], float] = {}
-
-# ``--fetch-prices`` holdings values (shares × quote) for rows whose broker
-# was not live-scraped this run. Keyed by ISIN and broker.
-PENDING_FETCHED_VALUES: dict[tuple[str, str | None], float] = {}
-

@@ -1,29 +1,13 @@
 import argparse
-import configparser
 import logging
-import os
 import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import NamedTuple
 
 from allocation import main as run_update
+from context import AppConfig, RuntimeContext, ServerConfig
 from logger import attach_color_stderr_handler_for_module, configure_cli_logging
-from utils import (
-    set_assets_file,
-    set_fetch_geosplit,
-    set_fetch_oskar,
-    set_fetch_prices,
-    set_fetch_scalable,
-    set_fetch_sectorsplit,
-    set_fetch_traderepublic,
-    set_incognito,
-)
-from visual import set_plotter
-
-REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = REPO_ROOT / "config.ini"
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -44,35 +28,11 @@ __version__ = _package_version()
 
 
 def config_path() -> Path:
-    env = os.environ.get("ASALLOC_CONFIG")
-    if env:
-        return Path(env).expanduser()
-    return DEFAULT_CONFIG_PATH
-
-
-class ServerConfig(NamedTuple):
-    port: int
-    address: str
-    directory: Path
+    return AppConfig.config_path()
 
 
 def load_server_config(path: Path | None = None) -> ServerConfig:
-    cfg_path = path or config_path()
-    parser = configparser.ConfigParser()
-    if not cfg_path.is_file():
-        raise FileNotFoundError(f"config file not found: {cfg_path}")
-    parser.read(cfg_path, encoding="utf-8")
-    port = parser.getint("server", "port")
-    address = parser.get("server", "address", fallback="localhost").strip() or "localhost"
-    raw = parser.get(
-        "server",
-        "directory",
-        fallback=str(Path.home() / ".local" / "asalloc" / "visualizer"),
-    )
-    directory = Path(raw).expanduser()
-    if not directory.is_absolute():
-        directory = (cfg_path.parent / directory).resolve()
-    return ServerConfig(port=port, address=address, directory=directory)
+    return AppConfig.server_from_ini(path)
 
 
 def server_port(path: Path | None = None) -> int:
@@ -80,24 +40,9 @@ def server_port(path: Path | None = None) -> int:
 
 
 def cmd_update(args: argparse.Namespace) -> None:
-    if args.fetch_prices:
-        set_fetch_prices(True)
-    if args.fetch_geosplit:
-        set_fetch_geosplit(True)
-    if args.fetch_sectorsplit:
-        set_fetch_sectorsplit(True)
-    if args.fetch_oskar:
-        set_fetch_oskar(True)
-    if args.fetch_scalable:
-        set_fetch_scalable(True)
-    if args.fetch_tr:
-        set_fetch_traderepublic(True)
-    if args.assets_file:
-        set_assets_file(args.assets_file)
-    if args.incognito:
-        set_incognito(True)
-    set_plotter(args.plot)
-    run_update()
+    config = AppConfig.from_cli(args)
+    ctx = RuntimeContext(config=config)
+    run_update(ctx)
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
@@ -167,7 +112,21 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         "--assets-file",
         type=Path,
         dest="assets_file",
-        help="Path to the assets JSON file.",
+        default=None,
+        help="Path to the assets JSON file (default: assets.json next to the package).",
+    )
+    update.add_argument(
+        "--cache-file",
+        type=Path,
+        dest="cache_file",
+        default=None,
+        help="Path to the cache JSON file (default: cache.json next to the package).",
+    )
+    update.add_argument(
+        "--position-source",
+        choices=("justetf", "yfinance"),
+        default="justetf",
+        help="Price/split source for positions (default: justetf).",
     )
     update.add_argument(
         "--fetch-oskar",

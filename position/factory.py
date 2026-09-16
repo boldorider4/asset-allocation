@@ -1,17 +1,11 @@
-import logging
+from __future__ import annotations
 
-from common import PENDING_OSKAR_SHARES
+import logging
+from typing import TYPE_CHECKING
+
 from utils import (
-    load_cache,
     parse_cache_entry,
     save_position_in_cache,
-    get_fetch_geosplit,
-    get_fetch_oskar,
-    get_fetch_prices,
-    get_fetch_scalable,
-    get_fetch_sectorsplit,
-    get_fetch_traderepublic,
-    get_incognito_value_factor,
 )
 from position.amundi_position import AmundiPosition, amundi_product_url_exists
 from position.blackrock_position import (
@@ -34,13 +28,15 @@ from scrape.scalable import _SCALABLE as SCALABLE
 from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
 from logger import attach_color_stderr_handler_for_module
 
+if TYPE_CHECKING:
+    from context import RuntimeContext
+
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-# "yfinance" | "justetf"
+# Valid ``AppConfig.position_source`` values.
 YFINANCE = "yfinance"
 JUSTETF = "justetf"
-POSITION_SOURCE = JUSTETF
 
 
 def _name_looks_like_ubs(name: str | None) -> bool:
@@ -68,21 +64,23 @@ def _name_looks_like_landg(name: str | None) -> bool:
     )
 
 
-def _scrape_holdings_value_prevails(broker: str | None, value: float | None) -> bool:
+def _scrape_holdings_value_prevails(
+    broker: str | None, value: float | None, ctx: RuntimeContext
+) -> bool:
     if value is None:
         return False
     if broker == OSKAR:
-        fresh_scrape = get_fetch_oskar()
+        fresh_scrape = ctx.config.fetch_oskar
     elif broker == SCALABLE:
-        fresh_scrape = get_fetch_scalable()
+        fresh_scrape = ctx.config.fetch_scalable
     elif broker == TRADEREPUBLIC:
-        fresh_scrape = get_fetch_traderepublic()
+        fresh_scrape = ctx.config.fetch_traderepublic
     else:
         return False
     # A live ``--fetch-<broker>`` scrape always wins over shares × quote.
     # Without ``--fetch-prices``, an earlier scrape (or a previous
     # ``--fetch-prices`` write) in the assets file stays authoritative.
-    return fresh_scrape or not get_fetch_prices()
+    return fresh_scrape or not ctx.config.fetch_prices
 
 
 def factory(
@@ -96,19 +94,21 @@ def factory(
     usavn: float | None = None,
     dmem_other: float | None = None,
     *,
+    ctx: RuntimeContext,
     value_scale: float | None = None,
     price: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
     if value_scale is None:
         logger.info("Factory: no value scale provided, using default value")
-        value_scale = get_incognito_value_factor()
-    cache = load_cache()
+        value_scale = ctx.config.incognito_value_factor
+    cache = ctx.ensure_cache_loaded()
     cached_price, cached_countries, cached_sectors = parse_cache_entry(cache.get(isin))
-    fetch_prices = get_fetch_prices()
-    fetch_geosplit = get_fetch_geosplit()
-    fetch_sectorsplit = get_fetch_sectorsplit()
+    fetch_prices = ctx.config.fetch_prices
+    fetch_geosplit = ctx.config.fetch_geosplit
+    fetch_sectorsplit = ctx.config.fetch_sectorsplit
+    position_source = ctx.config.position_source
     use_broker_quote = broker == SCALABLE or broker == TRADEREPUBLIC
-    prefer_scrape_value = _scrape_holdings_value_prevails(broker, value)
+    prefer_scrape_value = _scrape_holdings_value_prevails(broker, value, ctx)
     logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
 
     # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
@@ -127,7 +127,7 @@ def factory(
         )
 
     scrape_geosplit = fetch_geosplit and not (
-        POSITION_SOURCE == YFINANCE and not use_broker_quote
+        position_source == YFINANCE and not use_broker_quote
     )
     if scrape_geosplit:
         countries_arg: dict[str, float] | None = None
@@ -135,7 +135,7 @@ def factory(
         countries_arg = cached_countries if cached_countries is not None else {}
 
     scrape_sectorsplit = fetch_sectorsplit and not (
-        POSITION_SOURCE == YFINANCE and not use_broker_quote
+        position_source == YFINANCE and not use_broker_quote
     )
     if scrape_sectorsplit:
         sectors_arg: dict[str, float] | None = None
@@ -156,6 +156,7 @@ def factory(
         "value_scale": value_scale,
         "price": ctor_price,
         "prefer_scrape_value": prefer_scrape_value,
+        "ctx": ctx,
     }
     position: JustETFPosition | YFinancePosition
     # DWS reachability GET and holdings scrape are only needed when refreshing
@@ -224,15 +225,15 @@ def factory(
     ):
         logger.info("Factory: using LAndGPosition for %s (fund-centre)", isin)
         position = LAndGPosition(isin, **ctor_kwargs)
-    elif POSITION_SOURCE == YFINANCE:
+    elif position_source == YFINANCE:
         position = YFinancePosition(isin, **ctor_kwargs)
-    elif POSITION_SOURCE == JUSTETF or use_broker_quote:
+    elif position_source == JUSTETF or use_broker_quote:
         position = JustETFPosition(isin, **ctor_kwargs)
     else:
-        raise ValueError(f"Unknown POSITION_SOURCE: {POSITION_SOURCE!r}")
+        raise ValueError(f"Unknown position_source: {position_source!r}")
 
     # ``--fetch-prices`` always refreshes the cached quote; the assets file
-    # never stores a price.
+    # never stores a price. Staged in-memory; flushed once at end of run.
     update_price = fetch_prices and isin is not None and position.price is not None
     update_countries = (
         scrape_geosplit
@@ -246,7 +247,7 @@ def factory(
     )
     if update_price or update_countries or update_sectors:
         save_position_in_cache(
-            cache,
+            ctx,
             isin,
             price=position.price,
             countries=position.countries() if update_countries else None,
@@ -271,5 +272,5 @@ def factory(
                 value,
                 position.price,
             )
-            PENDING_OSKAR_SHARES[(isin, float(value))] = estimated_shares
+            ctx.pending_oskar_shares[(isin, float(value))] = estimated_shares
     return position

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from common import (
     BOND_PORTFOLIO,
@@ -17,59 +20,54 @@ from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 from utils import (
     persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
-    portfolio,
-    load_portfolio,
-    write_portfolio_to_file,
-    get_assets_file,
-    get_fetch_oskar,
-    get_fetch_scalable,
-    get_fetch_traderepublic,
-    get_incognito,
     apply_incognito_scaling,
 )
-from visual import get_plotter
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
 
-def main():
-    # Populate the module-level ``utils.portfolio`` in place so other modules
-    # (e.g. ``position.factory``) that imported it see the loaded data.
-    assets_path = get_assets_file()
-    logger.info("Loading portfolio from %s", assets_path)
-    portfolio.clear()
-    portfolio.update(load_portfolio(assets_path))
-    if get_fetch_oskar():
+def main(ctx: RuntimeContext) -> None:
+    """Run the update pipeline against an explicit ``RuntimeContext``."""
+    if ctx is None:
+        raise TypeError("allocation.main requires an explicit RuntimeContext (ctx)")
+    ctx.load_portfolio()
+    ctx.ensure_cache_loaded()
+    ctx.configure_web_output()
+    logger.info("Loading portfolio from %s", ctx.config.assets_file)
+    if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
-        update_oskar_etfs_in_portfolio()
-        write_portfolio_to_file(assets_path)
-        logger.info("Wrote updated portfolio to %s", assets_path)
+        update_oskar_etfs_in_portfolio(ctx)
+        ctx.flush_portfolio()
+        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
-    if get_fetch_scalable():
+    if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
-        update_scalable_etfs_in_portfolio()
-        write_portfolio_to_file(assets_path)
-        logger.info("Wrote updated portfolio to %s", assets_path)
+        update_scalable_etfs_in_portfolio(ctx)
+        ctx.flush_portfolio()
+        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
-    if get_fetch_traderepublic():
+    if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
-        update_traderepublic_etfs_in_portfolio()
-        write_portfolio_to_file(assets_path)
-        logger.info("Wrote updated portfolio to %s", assets_path)
+        update_traderepublic_etfs_in_portfolio(ctx)
+        ctx.flush_portfolio()
+        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
-    if get_incognito():
+    if ctx.config.incognito:
         logger.info("Incognito mode: scaling display values")
-        apply_incognito_scaling()
+        apply_incognito_scaling(ctx)
 
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio[EQUITY_PORTFOLIO])
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio[CASH_PORTFOLIO], consolidate=True)
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=portfolio[BOND_PORTFOLIO], consolidate=True)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
-    persist_oskar_shares_in_portfolio()
-    persist_fetched_values_in_portfolio()
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True, ctx=ctx)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], consolidate=True, ctx=ctx)
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], consolidate=True, ctx=ctx)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
+    persist_oskar_shares_in_portfolio(ctx)
+    persist_fetched_values_in_portfolio(ctx)
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
@@ -90,4 +88,5 @@ def main():
         label_fontsize=7,
         autopct_fontsize=7,
     )
-    get_plotter().finish_plots()
+    ctx.flush_cache()
+    ctx.plotter_class().finish_plots()

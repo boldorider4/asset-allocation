@@ -10,8 +10,12 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 from position.position import Position, fold_unknown_sector_label
 from logger import attach_color_stderr_handler_for_module
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -109,6 +113,7 @@ class JustETFPosition(Position):
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
+        ctx: RuntimeContext | None = None,
     ) -> None:
         self._chart: dict | None = None
         super().__init__(
@@ -126,6 +131,7 @@ class JustETFPosition(Position):
             value_scale=value_scale,
             price=price,
             prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
         )
 
     def _http_chart_json(self, *, currency: str) -> dict:

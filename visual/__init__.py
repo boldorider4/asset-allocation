@@ -2,25 +2,21 @@ from .visual import SECTOR_PALETTE, Visual
 from .web_chart import WebChart
 from .pie_chart import PieChart
 
-PLOT_CHOICES = {
+PLOTTERS = {
     "web": WebChart,
     "pie-chart": PieChart,
 }
 
-DEFAULT_VISUALIZER = WebChart
+# Back-compat alias (same keys as RuntimeContext plotter names).
+PLOT_CHOICES = PLOTTERS
 
 
-def set_plotter(kind: str) -> None:
-    """Select the default chart class (`web` or `pie-chart`)."""
-    global DEFAULT_VISUALIZER
+def plotter_class(kind: str):
+    """Resolve a plotter name to its chart class (no module-global selection)."""
     try:
-        DEFAULT_VISUALIZER = PLOT_CHOICES[kind]
+        return PLOTTERS[kind]
     except KeyError as exc:
         raise ValueError(f"unknown plotter {kind!r}") from exc
-
-
-def get_plotter():
-    return DEFAULT_VISUALIZER
 
 
 __all__ = [
@@ -28,8 +24,7 @@ __all__ = [
     "SECTOR_PALETTE",
     "WebChart",
     "PieChart",
-    "DEFAULT_VISUALIZER",
+    "PLOTTERS",
     "PLOT_CHOICES",
-    "set_plotter",
-    "get_plotter",
+    "plotter_class",
 ]

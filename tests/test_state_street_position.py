@@ -19,12 +19,7 @@ from position.state_street_position import (
     _SSGA_PRODUCT_EXISTS,
     ssga_product_url_exists,
 )
-from utils import (
-    get_fetch_geosplit,
-    get_fetch_prices,
-    set_fetch_geosplit,
-    set_fetch_prices,
-)
+from context import AppConfig, RuntimeContext
 
 _ISIN = "IE00B4YBJ215"
 _GEO = {
@@ -165,14 +160,19 @@ class TestSsgaProductExists(unittest.TestCase):
 
 class TestSsgaCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        self._prices = get_fetch_prices()
-        set_fetch_geosplit(True)
-        set_fetch_prices(False)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
-        set_fetch_prices(self._prices)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def test_parses_geo_html(self) -> None:
         with patch(
@@ -185,7 +185,7 @@ class TestSsgaCountryFetch(unittest.TestCase):
                 pos = StateStreetPosition(
                     _ISIN,
                     name="State Street SPDR S&P 400 U.S. Mid Cap",
-                    shares=1,
+                    shares=1, ctx=self.ctx
                 )
         self.assertEqual(
             pos.countries(),
@@ -200,18 +200,19 @@ class TestSsgaCountryFetch(unittest.TestCase):
 
 class TestSsgaFactoryRouting(unittest.TestCase):
     def setUp(self) -> None:
-        self._prices = get_fetch_prices()
-        self._geo = get_fetch_geosplit()
-        set_fetch_prices(False)
-        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._cache = Path(self._tmpdir.name) / "cache.json"
-        self._cache.write_text("{}", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        set_fetch_geosplit(self._geo)
-        self._tmpdir.cleanup()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _factory(self, **kwargs):
         defaults = {
@@ -221,8 +222,8 @@ class TestSsgaFactoryRouting(unittest.TestCase):
             "price": 10.0,
         }
         defaults.update(kwargs)
-        with patch("utils.CACHE_FILENAME", str(self._cache)):
-            return factory(**defaults)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
 
     def _no_country_scrape(self):
         return patch.object(
@@ -272,7 +273,7 @@ class TestSsgaFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, StateStreetPosition)
 
     def test_without_fetch_geosplit_skips_ssga_probe(self) -> None:
-        set_fetch_geosplit(False)
+        self.ctx.config.fetch_geosplit = False
         with patch("position.factory.ssga_product_url_exists") as exists:
             pos = self._factory()
         exists.assert_not_called()

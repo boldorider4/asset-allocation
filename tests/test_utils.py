@@ -1,4 +1,4 @@
-"""Tests for ``utils.load_portfolio`` and ``utils.write_portfolio_to_file``.
+"""Tests for ``utils.load_portfolio`` and ``utils.write_portfolio``.
 
 Run from repo root::
 
@@ -11,7 +11,6 @@ not silently confirm a bug shared by the loader.
 
 from __future__ import annotations
 
-import copy
 import json
 import sys
 import tempfile
@@ -26,14 +25,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from unittest.mock import patch  # noqa: E402
 
+from context import AppConfig, RuntimeContext  # noqa: E402
 from utils import (  # noqa: E402
     apply_incognito_scaling,
-    get_incognito_value_factor,
     load_portfolio,
-    set_incognito_value_factor,
-    write_portfolio_to_file,
+    write_portfolio,
 )
-from utils import portfolio as global_portfolio  # noqa: E402
 
 SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
 
@@ -81,27 +78,30 @@ class TestLoadPortfolio(unittest.TestCase):
 
 class TestWritePortfolioToFile(unittest.TestCase):
     def setUp(self) -> None:
-        # Snapshot module-level global so test runs don't leak state.
-        self._saved_portfolio = {k: list(v) for k, v in global_portfolio.items()}
-        global_portfolio.clear()
-        global_portfolio.update(load_portfolio(SAMPLE_ASSETS))
-
-    def tearDown(self) -> None:
-        global_portfolio.clear()
-        global_portfolio.update(self._saved_portfolio)
+        # Fresh isolated context per test: no shared module state.
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.portfolio.update(load_portfolio(SAMPLE_ASSETS))
 
     def test_mutations_round_trip_through_disk(self) -> None:
         mutated_value = 12345.67
         mutated_shares = 555
 
-        global_portfolio["equity_portfolio"][0]["value"] = mutated_value
-        global_portfolio["equity_portfolio"][0]["shares"] = None
-        global_portfolio["bond_portfolio"][0]["shares"] = mutated_shares
-        global_portfolio["commodity_portfolio"][0]["short_name"] = "TestGold"
+        self.ctx.portfolio["equity_portfolio"][0]["value"] = mutated_value
+        self.ctx.portfolio["equity_portfolio"][0]["shares"] = None
+        self.ctx.portfolio["bond_portfolio"][0]["shares"] = mutated_shares
+        self.ctx.portfolio["commodity_portfolio"][0]["short_name"] = "TestGold"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = Path(tmpdir) / "assets.json"
-            write_portfolio_to_file(out_path)
+            write_portfolio(out_path, self.ctx.portfolio)
 
             self.assertTrue(out_path.exists())
 
@@ -121,31 +121,32 @@ class TestWritePortfolioToFile(unittest.TestCase):
 
 class TestIncognitoScaling(unittest.TestCase):
     def test_sets_factor_from_explicit_values_without_mutating_dict(self) -> None:
-        saved = copy.deepcopy(dict(global_portfolio))
-        saved_factor = get_incognito_value_factor()
-        try:
-            global_portfolio.clear()
-            global_portfolio.update(
-                {
-                    "a": [{"value": 40.0}],
-                    "b": [{"value": 60.0}],
-                }
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        tmp = Path(holder.name)
+        ctx = RuntimeContext(
+            config=AppConfig(
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
             )
-            with patch("random.randint", return_value=25000):
-                apply_incognito_scaling()
-            self.assertEqual(get_incognito_value_factor(), 250.0)
-            self.assertAlmostEqual(global_portfolio["a"][0]["value"], 40.0)
-            self.assertAlmostEqual(global_portfolio["b"][0]["value"], 60.0)
-            raw_total = sum(
-                float(p["value"])
-                for positions in global_portfolio.values()
-                for p in positions
-            )
-            self.assertEqual(raw_total, 100.0)
-        finally:
-            global_portfolio.clear()
-            global_portfolio.update(copy.deepcopy(saved))
-            set_incognito_value_factor(saved_factor)
+        )
+        ctx.portfolio.update(
+            {
+                "a": [{"value": 40.0}],
+                "b": [{"value": 60.0}],
+            }
+        )
+        with patch("random.randint", return_value=25000):
+            apply_incognito_scaling(ctx)
+        self.assertEqual(ctx.config.incognito_value_factor, 250.0)
+        self.assertAlmostEqual(ctx.portfolio["a"][0]["value"], 40.0)
+        self.assertAlmostEqual(ctx.portfolio["b"][0]["value"], 60.0)
+        raw_total = sum(
+            float(p["value"])
+            for positions in ctx.portfolio.values()
+            for p in positions
+        )
+        self.assertEqual(raw_total, 100.0)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from visual import DEFAULT_VISUALIZER, SECTOR_PALETTE
+from visual import PLOTTERS, SECTOR_PALETTE
 from visual.pie_chart import PieChart
 from visual.web_chart import WebChart, _TAB10
 
@@ -30,7 +30,10 @@ class TestWebChart(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_default_visualizer_is_web_chart(self) -> None:
-        self.assertIs(DEFAULT_VISUALIZER, WebChart)
+        from context import AppConfig, RuntimeContext
+
+        self.assertIs(PLOTTERS["web"], WebChart)
+        self.assertIs(RuntimeContext(config=AppConfig(plotter="web")).plotter_class(), WebChart)
 
     def test_plot_writes_raw_json_wedges(self) -> None:
         chart = WebChart(

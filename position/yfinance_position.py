@@ -3,7 +3,12 @@ from __future__ import annotations
 import time
 import yfinance as yf
 
+from typing import TYPE_CHECKING
+
 from position.position import Position
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 
 class YFinancePosition(Position):
@@ -33,6 +38,7 @@ class YFinancePosition(Position):
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
+        ctx: RuntimeContext | None = None,
     ) -> None:
         self._ticker: yf.Ticker | None = None
         self._listing_currency: str | None = None
@@ -52,6 +58,7 @@ class YFinancePosition(Position):
             value_scale=value_scale,
             price=price,
             prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
         )
 
     def countries(self) -> list[dict[str, float | str]]:
@@ -83,7 +90,7 @@ class YFinancePosition(Position):
         """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
         from position.factory import factory as _factory
 
-        fx = _factory(self._EURUSD_SYMBOL, value_scale=1.0)
+        fx = _factory(self._EURUSD_SYMBOL, value_scale=1.0, ctx=self._ctx)
         return fx.price
 
     def _init_eur_scaling(self) -> None:

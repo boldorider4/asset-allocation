@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from position.factory import factory as _factory
 from position.position import Position
 from logger import attach_color_stderr_handler_for_module
-from visual import SECTOR_PALETTE, Visual, get_plotter
+from visual import SECTOR_PALETTE, Visual
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -61,22 +67,26 @@ class Portfolio:
             kept[_SECTOR_OTHER_LABEL] = kept.get(_SECTOR_OTHER_LABEL, 0.0) + dropped
         return kept
 
-    @staticmethod
     def _make_sector_visualizer(
-        name: str, value: float, data: dict[str, float]
+        self, name: str, value: float, data: dict[str, float]
     ) -> Visual | None:
         if not data:
             return None
-        return get_plotter()(
+        return self._ctx.plotter_class()(
             data=data,
             title="{}: Sector Split: {:.2f} Euro".format(name, value),
             factor={"value": value, "unit": "Euro"},
         )
 
-    def __init__(self, name: str, positions: list[dict] | None = None):
+    def __init__(
+        self, name: str, positions: list[dict] | None = None, ctx: RuntimeContext | None = None
+    ):
+        if ctx is None:
+            raise TypeError("Portfolio requires an explicit RuntimeContext (ctx=...)")
+        self._ctx = ctx
         self._name = name
         self._positions: list[Position] = list()
-        for position in positions:
+        for position in positions or []:
             self._positions.append(_factory(
                 isin=position.get(ISIN),
                 name=position.get(NAME),
@@ -88,6 +98,7 @@ class Portfolio:
                 usavn=position.get(USAVN),
                 dmem_other=position.get(DMEM_OTHER),
                 price=position.get(PRICE),
+                ctx=ctx,
             ))
         self._value = self._calculate_value()
         logger.info("Portfolio %r: built total value %.2f from %d position(s)", name, self._value, len(self._positions))
@@ -97,7 +108,7 @@ class Portfolio:
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
         self._sectors = self._calculate_sectors()
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
-        self._geosplit_visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
+        self._geosplit_visualizer: Visual | None = None  # subclasses set via ctx.plotter_class()
         # Filtered once here so repeat plot_sectors() calls reuse it.
         self._sector_visualizer = self._make_sector_visualizer(
             name, self._value, self._sector_chart_data()
@@ -264,6 +275,7 @@ class Portfolio:
         if not isinstance(other, Portfolio):
             return NotImplemented
         merged = object.__new__(Portfolio)
+        merged._ctx = self._ctx
         merged._name = f"{self._name} + {other._name}"
         merged._positions = self._positions + other._positions
         merged._value = self._value + other._value
@@ -286,7 +298,11 @@ class Portfolio:
 
 
 if __name__ == "__main__":
-    portfolio = Portfolio(name="portfolio", positions=[
+    from context import RuntimeContext
+
+    _ctx = RuntimeContext()
+    _ctx.ensure_cache_loaded()
+    portfolio = Portfolio(name="portfolio", ctx=_ctx, positions=[
         # Amundi Equity World UCITS ETF (Acc)
         {
             ISIN: "IE000BI8OT95",

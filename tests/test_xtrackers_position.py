@@ -18,12 +18,7 @@ from position.xtrackers_position import (
     _DWS_PRODUCT_EXISTS,
     dws_product_url_exists,
 )
-from utils import (
-    get_fetch_geosplit,
-    get_fetch_prices,
-    set_fetch_geosplit,
-    set_fetch_prices,
-)
+from context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BTJRMP35"
 _SLUG = "IE00BTJRMP35-msci-emerging-markets-ucits-etf-1c"
@@ -148,14 +143,19 @@ class TestDwsProductUrl(unittest.TestCase):
 
 class TestXtrackersCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        self._prices = get_fetch_prices()
-        set_fetch_geosplit(True)
-        set_fetch_prices(False)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
-        set_fetch_prices(self._prices)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def test_aggregates_holdings_json(self) -> None:
         product = MagicMock()
@@ -171,7 +171,7 @@ class TestXtrackersCountryFetch(unittest.TestCase):
             "urllib.request.urlopen", side_effect=[product, holdings]
         ):
             with patch.object(XtrackersPosition, "_fast_info_price", return_value=12.0):
-                pos = XtrackersPosition(_ISIN, name="Xtrackers EM", shares=1)
+                pos = XtrackersPosition(_ISIN, name="Xtrackers EM", shares=1, ctx=self.ctx)
         self.assertEqual(
             pos.countries(),
             [
@@ -184,18 +184,19 @@ class TestXtrackersCountryFetch(unittest.TestCase):
 
 class TestXtrackersFactoryRouting(unittest.TestCase):
     def setUp(self) -> None:
-        self._prices = get_fetch_prices()
-        self._geo = get_fetch_geosplit()
-        set_fetch_prices(False)
-        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._cache = Path(self._tmpdir.name) / "cache.json"
-        self._cache.write_text("{}", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        set_fetch_geosplit(self._geo)
-        self._tmpdir.cleanup()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _factory(self, **kwargs):
         defaults = {
@@ -205,8 +206,8 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
             "price": 10.0,
         }
         defaults.update(kwargs)
-        with patch("utils.CACHE_FILENAME", str(self._cache)):
-            return factory(**defaults)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
 
     def _no_country_scrape(self):
         return patch.object(
@@ -267,7 +268,7 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_without_fetch_geosplit_skips_dws_probe(self) -> None:
-        set_fetch_geosplit(False)
+        self.ctx.config.fetch_geosplit = False
         with patch("position.factory.dws_product_url_exists") as exists:
             pos = self._factory()
         exists.assert_not_called()

@@ -12,8 +12,11 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 from logger import attach_color_stderr_handler_for_module
 from common import (
@@ -22,13 +25,9 @@ from common import (
     COMMODITY_PORTFOLIO,
     EQUITY_PORTFOLIO,
 )
-from utils import portfolio as global_portfolio
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
-
-global global_oskar_etfs
-global_oskar_etfs: dict[str, OskarEtf] = {}
 
 _OSKAR = "oskar"
 
@@ -988,7 +987,7 @@ def fetch_oskar_etfs(
     return rows
 
 
-def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
+def update_oskar_etfs_in_portfolio(ctx: RuntimeContext, *, headless_after_login: bool = True):
     def _is_oskar_position_tagesgeld(oskar_etf: OskarEtf) -> bool:
         return oskar_etf.name == _OSKAR_CATEGORY_TAGESGELD
 
@@ -997,10 +996,9 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
         pos_broker = position.get("broker") or position.get("Broker")
         return pos_name == _OSKAR_CATEGORY_TAGESGELD and pos_broker == _OSKAR
 
-    global global_oskar_etfs
-    global_oskar_etfs = fetch_oskar_etfs(headless_after_login=headless_after_login)
+    ctx.oskar_etfs = fetch_oskar_etfs(headless_after_login=headless_after_login)
     # unique set of ISINs from OSKAR
-    fetched_oskar_isins = set(global_oskar_etfs)
+    fetched_oskar_isins = set(ctx.oskar_etfs)
     # unique set of ISINs that have been scanned, including those in the portfolio that are not freshly fetched from OSKAR
     scanned_oskar_isins: set[str | None] = set()
     # list of positions to remove from the portfolio because missing from OSKAR
@@ -1012,9 +1010,9 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
         )
         return
 
-    for oskar_etf in global_oskar_etfs.values():
+    for oskar_etf in ctx.oskar_etfs.values():
         matched = False
-        for bucket, positions in global_portfolio.items():
+        for bucket, positions in ctx.portfolio.items():
             for position in positions:
                 pos_isin = position.get("ISIN") or position.get("isin")
                 pos_broker = position.get("broker") or position.get("Broker")
@@ -1053,7 +1051,7 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
             continue
         # this oskar position is not in the global portfolio, so add it
         bucket = _OSKAR_CATEGORY_TO_PORTFOLIO.get(oskar_etf.category, _DEFAULT_OSKAR_PORTFOLIO_BUCKET)
-        global_portfolio.setdefault(bucket, []).append(
+        ctx.portfolio.setdefault(bucket, []).append(
             {
                 "name": oskar_etf.name,
                 "ISIN": None if _is_oskar_position_tagesgeld(oskar_etf) else oskar_etf.isin,
@@ -1076,4 +1074,4 @@ def update_oskar_etfs_in_portfolio(*, headless_after_login: bool = True):
 
     # remove the positions that have been marked for removal
     for bucket, position in to_remove:
-        global_portfolio[bucket].remove(position)
+        ctx.portfolio[bucket].remove(position)

@@ -18,12 +18,7 @@ from position.invesco_position import (
     invesco_product_url_exists,
 )
 from position.justetf_position import JustETFPosition
-from utils import (
-    get_fetch_geosplit,
-    get_fetch_prices,
-    set_fetch_geosplit,
-    set_fetch_prices,
-)
+from context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BKS7L097"
 _HOLDINGS_ISIN = "IE000PJL7R74"
@@ -162,20 +157,25 @@ class TestInvescoProductExists(unittest.TestCase):
 
 class TestInvescoCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        self._prices = get_fetch_prices()
-        set_fetch_geosplit(True)
-        set_fetch_prices(False)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
-        set_fetch_prices(self._prices)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def test_parses_country_json(self) -> None:
         with patch("urllib.request.urlopen", return_value=_json_response(_HOLDINGS)):
             with patch.object(InvescoPosition, "_fast_info_price", return_value=12.0):
                 pos = InvescoPosition(
-                    _ISIN, name="Invesco S&P 500 Scored & Screened", shares=1
+                    _ISIN, name="Invesco S&P 500 Scored & Screened", shares=1, ctx=self.ctx
                 )
         self.assertEqual(
             pos.countries(),
@@ -200,7 +200,7 @@ class TestInvescoCountryFetch(unittest.TestCase):
                 pos = InvescoPosition(
                     _HOLDINGS_ISIN,
                     name="Invesco MSCI Emerging Markets ESG Climate Paris Aligned",
-                    shares=1,
+                    shares=1, ctx=self.ctx
                 )
         self.assertEqual(
             pos.countries(),
@@ -215,18 +215,19 @@ class TestInvescoCountryFetch(unittest.TestCase):
 
 class TestInvescoFactoryRouting(unittest.TestCase):
     def setUp(self) -> None:
-        self._prices = get_fetch_prices()
-        self._geo = get_fetch_geosplit()
-        set_fetch_prices(False)
-        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._cache = Path(self._tmpdir.name) / "cache.json"
-        self._cache.write_text("{}", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        set_fetch_geosplit(self._geo)
-        self._tmpdir.cleanup()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _factory(self, **kwargs):
         defaults = {
@@ -236,8 +237,8 @@ class TestInvescoFactoryRouting(unittest.TestCase):
             "price": 10.0,
         }
         defaults.update(kwargs)
-        with patch("utils.CACHE_FILENAME", str(self._cache)):
-            return factory(**defaults)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
 
     def _no_country_scrape(self):
         return patch.object(
@@ -305,7 +306,7 @@ class TestInvescoFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, InvescoPosition)
 
     def test_without_fetch_geosplit_skips_invesco_probe(self) -> None:
-        set_fetch_geosplit(False)
+        self.ctx.config.fetch_geosplit = False
         with patch("position.factory.invesco_product_url_exists") as exists:
             pos = self._factory()
         exists.assert_not_called()

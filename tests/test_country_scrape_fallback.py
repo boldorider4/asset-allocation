@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import patch
 
+from context import AppConfig, RuntimeContext
 from position.justetf_position import JustETFPosition
-from utils import get_fetch_geosplit, set_fetch_geosplit
 
 _ISIN = "LU1547515137"
 _HTTP_403 = urllib.error.HTTPError(
@@ -17,18 +19,27 @@ _HTTP_403 = urllib.error.HTTPError(
 
 class TestJustETFCountryScrapeFailure(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        set_fetch_geosplit(True)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _position(self, error: Exception) -> JustETFPosition:
         with patch.object(
             JustETFPosition, "_fetch_countries_with_retries", side_effect=error
         ):
             with patch.object(JustETFPosition, "_fast_info_price", return_value=12.0):
-                return JustETFPosition(_ISIN, name="Bond ETF", shares=10)
+                return JustETFPosition(
+                    _ISIN, name="Bond ETF", shares=10, ctx=self.ctx
+                )
 
     def test_http_error_returns_empty_countries(self) -> None:
         self.assertEqual(self._position(_HTTP_403).countries(), [])

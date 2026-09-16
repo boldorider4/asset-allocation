@@ -18,12 +18,7 @@ from position.blackrock_position import (
 )
 from position.factory import factory
 from position.justetf_position import JustETFPosition
-from utils import (
-    get_fetch_geosplit,
-    get_fetch_prices,
-    set_fetch_geosplit,
-    set_fetch_prices,
-)
+from context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BKM4GZ66"
 _HOLDINGS_CSV = """Fund Holdings as of,10/Sept/2026
@@ -158,14 +153,19 @@ class TestIsharesProductUrl(unittest.TestCase):
 
 class TestBlackRockCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
-        self._geo = get_fetch_geosplit()
-        self._prices = get_fetch_prices()
-        set_fetch_geosplit(True)
-        set_fetch_prices(False)
-
-    def tearDown(self) -> None:
-        set_fetch_geosplit(self._geo)
-        set_fetch_prices(self._prices)
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def test_aggregates_holdings_csv(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()):
@@ -173,7 +173,7 @@ class TestBlackRockCountryFetch(unittest.TestCase):
                 BlackRockPosition, "_fast_info_price", return_value=12.0
             ):
                 pos = BlackRockPosition(
-                    _ISIN, name="iShares Core MSCI EM IMI", shares=1
+                    _ISIN, name="iShares Core MSCI EM IMI", shares=1, ctx=self.ctx
                 )
         self.assertEqual(
             pos.countries(),
@@ -187,18 +187,19 @@ class TestBlackRockCountryFetch(unittest.TestCase):
 
 class TestBlackRockFactoryRouting(unittest.TestCase):
     def setUp(self) -> None:
-        self._prices = get_fetch_prices()
-        self._geo = get_fetch_geosplit()
-        set_fetch_prices(False)
-        set_fetch_geosplit(True)
         self._tmpdir = tempfile.TemporaryDirectory()
-        self._cache = Path(self._tmpdir.name) / "cache.json"
-        self._cache.write_text("{}", encoding="utf-8")
-
-    def tearDown(self) -> None:
-        set_fetch_prices(self._prices)
-        set_fetch_geosplit(self._geo)
-        self._tmpdir.cleanup()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
 
     def _factory(self, **kwargs):
         defaults = {
@@ -208,8 +209,8 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
             "price": 10.0,
         }
         defaults.update(kwargs)
-        with patch("utils.CACHE_FILENAME", str(self._cache)):
-            return factory(**defaults)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
 
     def _no_country_scrape(self):
         return patch.object(
@@ -259,7 +260,7 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_without_fetch_geosplit_skips_ishares_probe(self) -> None:
-        set_fetch_geosplit(False)
+        self.ctx.config.fetch_geosplit = False
         with patch("position.factory.ishares_product_url_exists") as exists:
             pos = self._factory()
         exists.assert_not_called()
