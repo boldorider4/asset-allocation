@@ -250,15 +250,15 @@ class TestSectorVisualizer(unittest.TestCase):
                     value=100.0,
                     sectors=[
                         {"name": "Technology", "weight_pct": 50.0},
-                        {"name": "Sovereign", "weight_pct": 50.0},
+                        {"name": "Government", "weight_pct": 50.0},
                     ],
                 )
             ],
         )
         self.assertTrue(mixed._has_informative_sectors())
         merged = equity + mixed
-        # Sovereign passes through the union (≥2%) instead of triggering breakdown.
-        self.assertAlmostEqual(merged._sector_chart_data()["Sovereign"], 0.05)
+        # Government passes through the union (≥2%) instead of triggering breakdown.
+        self.assertAlmostEqual(merged._sector_chart_data()["Government"], 0.05)
         self.assertNotIn("Mixed", merged._sector_chart_data())
 
     def test_plot_sectors_skips_empty_data(self) -> None:

@@ -78,6 +78,7 @@ _LIST_OF_STAPLE_SECTORS = [
     "Telecommunication",
     "Utilities",
     "Real Estate",
+    "Government",
     "Other",
 ]
 

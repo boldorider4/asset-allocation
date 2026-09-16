@@ -74,8 +74,8 @@ class JustETFPosition(Position):
         re.DOTALL,
     )
     # Raw JustETF sector labels -> canonical staple names (see
-    # ``position.position._LIST_OF_STAPLE_SECTORS``). Unlisted labels pass
-    # through unchanged so new variants surface via the base-class warning.
+    # ``position.position._LIST_OF_STAPLE_SECTORS``). Labels outside the
+    # taxonomy fold into "Other" via _fold_unknown_sector_label.
     _SECTOR_CANONICAL_NAMES = {
         "Financials": "Finance",
         "Communication Services": "Telecommunication",
@@ -84,6 +84,10 @@ class JustETFPosition(Position):
         "Consumer Cyclicals": "Consumer",
         "Consumer Discretionary": "Consumer",
         "Consumer Services": "Consumer",
+        "Sovereign": "Government",
+        "Non-Corporate": "Government",
+        "Government Agencies": "Government",
+        "Municipal": "Government",
     }
     _RETRIES = 10
     _DELAY_S = 0.1

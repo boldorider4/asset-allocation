@@ -104,16 +104,19 @@ class TestSectorTableParsing(unittest.TestCase):
             JustETFPosition._canonical_sector_name("Unobtanium"), "Other"
         )
         self.assertEqual(
-            JustETFPosition._canonical_sector_name("Sovereign"), "Other"
-        )
-        self.assertEqual(
             JustETFPosition._canonical_sector_name("  Finance  "), "Finance"
         )
+
+    def test_government_family_maps_to_government(self) -> None:
+        for raw in ("Sovereign", "Non-Corporate", "Government Agencies", "Municipal"):
+            self.assertEqual(
+                JustETFPosition._canonical_sector_name(raw), "Government"
+            )
 
     def test_html_table_folds_unknown_labels(self) -> None:
         html = """
         <table data-testid="etf-holdings_sectors_table"><tbody>
-        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Sovereign</td>
+        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Unobtanium</td>
         <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">99.81%</span></div></td></tr>
         <tr><td data-testid="tl_etf-holdings_sectors_value_name">Other</td>
         <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">0.19%</span></div></td></tr>
@@ -122,6 +125,20 @@ class TestSectorTableParsing(unittest.TestCase):
         rows = self._pos()._sectors_from_html_table(html)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["name"], "Other")
+        self.assertAlmostEqual(float(rows[0]["weight_pct"]), 100.0)
+
+    def test_html_table_aggregates_government_family(self) -> None:
+        html = """
+        <table data-testid="etf-holdings_sectors_table"><tbody>
+        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Sovereign</td>
+        <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">80.00%</span></div></td></tr>
+        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Non-Corporate</td>
+        <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">20.00%</span></div></td></tr>
+        </tbody></table>
+        """
+        rows = self._pos()._sectors_from_html_table(html)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Government")
         self.assertAlmostEqual(float(rows[0]["weight_pct"]), 100.0)
 
 
