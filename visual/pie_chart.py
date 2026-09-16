@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from .chart_merge import PieFactor, merge_charts, merge_closing_title
 from .visual_window import VisualWindow
@@ -62,6 +66,7 @@ class PieChart(VisualWindow):
         *,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
+        colors: Sequence[str] | None = None,
     ) -> None:
         if not self._data:
             raise ValueError("data must contain at least one entry")
@@ -98,6 +103,7 @@ class PieChart(VisualWindow):
             labels=labels,
             autopct=autopct_arg,
             startangle=90,
+            **({"colors": list(colors)} if colors is not None else {}),
         )
         if label_fontsize is not None:
             for t in texts:

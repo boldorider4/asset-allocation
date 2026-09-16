@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from portfolio.portfolio import Portfolio
 from portfolio.regional_portfolio import RegionalPortfolio
+from visual import SECTOR_PALETTE
 
 
 def _stub(*, value, sectors, dmem=1.0, usavn=0.5, short_name=None):
@@ -33,6 +34,7 @@ class _RecordingPlotter:
         self._data = data
         self._title = title
         self.plots = 0
+        self.last_kwargs: dict = {}
 
     @property
     def title(self):
@@ -52,6 +54,7 @@ class _RecordingPlotter:
 
     def plot(self, **kwargs):
         self.plots += 1
+        self.last_kwargs = dict(kwargs)
 
 
 class TestFilterSectorWedges(unittest.TestCase):
@@ -298,6 +301,9 @@ class TestSectorVisualizer(unittest.TestCase):
             self.assertIsNotNone(merged._sector_visualizer)
             merged.plot_sectors()  # must not raise (previous AttributeError)
             self.assertEqual(merged._sector_visualizer.plots, 1)
+            self.assertEqual(
+                merged._sector_visualizer.last_kwargs.get("colors"), SECTOR_PALETTE
+            )
 
 
 if __name__ == "__main__":

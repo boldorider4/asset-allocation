@@ -1,4 +1,4 @@
-from .visual import Visual
+from .visual import SECTOR_PALETTE, Visual
 from .web_chart import WebChart
 from .pie_chart import PieChart
 
@@ -25,6 +25,7 @@ def get_plotter():
 
 __all__ = [
     "Visual",
+    "SECTOR_PALETTE",
     "WebChart",
     "PieChart",
     "DEFAULT_VISUALIZER",

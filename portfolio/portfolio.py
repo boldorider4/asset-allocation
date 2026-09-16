@@ -5,7 +5,7 @@ import numpy as np
 from position.factory import factory as _factory
 from position.position import Position
 from logger import attach_color_stderr_handler_for_module
-from visual import Visual, get_plotter
+from visual import SECTOR_PALETTE, Visual, get_plotter
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -184,6 +184,7 @@ class Portfolio:
         self._sector_visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,
+            colors=SECTOR_PALETTE,
         )
 
     def _constituent_breakdown(self) -> dict[str, float]:
