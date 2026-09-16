@@ -1,15 +1,17 @@
 """
-Smoke test: OSKAR cockpit manual login + «Aktuelle Gewichtung» fetch.
+Smoke test: OSKAR cockpit headless CLI login + «Aktuelle Gewichtung» fetch.
 
-Requires ``playwright install chromium`` and network. Sign in yourself in the
-headed browser when prompted. No credential files are read.
+Requires ``playwright install chromium`` and network. The Auth0 email is read
+with ``input()`` and the password with ``getpass`` (never echoed); type them
+in the terminal when prompted. No credential files are read.
 
-Run from repo root::
+Run from repo root in a real terminal (stdin must be a TTY)::
 
     python -m unittest tests.test_oskar_login -v
 
 With pytest (install dev extras: ``pip install -e ".[dev]"``). If Playwright
-browsers are installed under a Cursor sandbox path, force the default cache::
+browsers are installed under a Cursor sandbox path, force the default cache.
+``-s`` is required so the credential prompts can read stdin::
 
     PLAYWRIGHT_BROWSERS_PATH=0 pytest tests/test_oskar_login.py -s -v --log-cli-level=DEBUG
 
@@ -42,11 +44,15 @@ class TestOskarLogin(unittest.TestCase):
     def test_login_and_oskar_etfs(self) -> None:
         from scrape.oskar import fetch_oskar_etfs
 
-        logger.info("OSKAR login test: start (manual Auth0, headed browser)")
+        logger.info("OSKAR login test: start (headless CLI Auth0, ~5 min login wait)")
+        import sys
 
-        logger.info("OSKAR login test: calling fetch_oskar_etfs (headed, ~5 min login wait)")
+        if not sys.stdin.isatty():
+            self.skipTest("headless CLI login needs an interactive terminal")
+
+        logger.info("OSKAR login test: calling fetch_oskar_etfs (headless)")
         rows = fetch_oskar_etfs(
-            headless=False,
+            headless=True,
             timeout_ms=120_000,
         )
         self.assertIsInstance(rows, dict)
@@ -55,17 +61,19 @@ class TestOskarLogin(unittest.TestCase):
 
     def test_login_then_headless_handover(self) -> None:
         """
-        Log in headed, then move the session into a headless browser for the scrape.
-        Falls back to a minimized headed window if OSKAR rejects headless Chromium,
-        so a pass here does not by itself prove the handover worked — check the logs
-        for «headless session accepted» vs «headless handover failed».
+        Already headless, so ``headless_after_login`` is a no-op: the scrape
+        runs in the same browser that performed the CLI login.
         """
         from scrape.oskar import fetch_oskar_etfs
 
-        logger.info("OSKAR headless handover test: start (manual Auth0, headed browser)")
+        logger.info("OSKAR headless handover test: start (headless CLI Auth0)")
+        import sys
+
+        if not sys.stdin.isatty():
+            self.skipTest("headless CLI login needs an interactive terminal")
 
         rows = fetch_oskar_etfs(
-            headless=False,
+            headless=True,
             headless_after_login=True,
             timeout_ms=120_000,
         )

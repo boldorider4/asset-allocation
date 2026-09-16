@@ -2,14 +2,18 @@
 OSKAR portfolio positions (JustETF pricing) plus a Playwright-based client for the
 logged-in cockpit «Aktuelle Gewichtung» ETF list.
 
-Sign in manually in the browser when prompted. After ``pip install`` run
+Headless runs sign in via a CLI prompt: when the Auth0 login form is detected,
+the email is read with ``input()`` and the password with ``getpass`` (hidden),
+then filled into the headless page. After ``pip install`` run
 ``playwright install chromium`` once so the browser binary is available.
 """
 
 from __future__ import annotations
 
+import getpass
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -273,6 +277,205 @@ def _wait_for_manual_oskar_login(page: Any, *, timeout_ms: int) -> None:
         _DASHBOARD_URL,
     )
     _wait_for_cockpit_dashboard(page, timeout_ms=timeout_ms)
+
+
+# Auth0 login form controls for the headless CLI login. Auth0 renders either a
+# single screen (email + password) or an identifier-first flow (email, then
+# password on the next screen), so each poll looks for whatever is visible.
+_LOGIN_EMAIL_SELECTORS = (
+    'input[type="email"]',
+    'input[name="email"]',
+    'input[name="username"]',
+    'input[autocomplete="username"]',
+    'input[autocomplete="email"]',
+)
+_LOGIN_PASSWORD_SELECTORS = ('input[type="password"]',)
+_LOGIN_SUBMIT_PATTERNS = (
+    re.compile(r"^\s*Anmelden\s*$", re.I),
+    re.compile(r"^\s*Weiter\s*$", re.I),
+    re.compile(r"^\s*Continue\s*$", re.I),
+    re.compile(r"^\s*Log\s*in\s*$", re.I),
+)
+
+# How long to wait for the dashboard after one CLI credential submit before
+# concluding the attempt failed and re-prompting.
+_CLI_LOGIN_ATTEMPT_WAIT_MS = 30_000
+
+
+def _first_visible_locator(scope: Any, selectors: tuple[str, ...]) -> Any | None:
+    """First visible locator among *selectors* in *scope* (page or frame)."""
+    for sel in selectors:
+        try:
+            loc = scope.locator(sel)
+        except Exception:
+            continue
+        try:
+            if loc.count() > 0 and loc.first.is_visible():
+                return loc.first
+        except Exception:
+            continue
+    return None
+
+
+def _find_login_controls(page: Any) -> tuple[Any | None, Any | None, Any | None]:
+    """
+    Return ``(email, password, submit)`` locators for the visible Auth0 login
+    form, or ``(None, None, None)`` when no login screen is showing. Frames are
+    scanned in order because Auth0 may host the form in a child frame.
+    """
+    for fr in page.frames:
+        try:
+            email = _first_visible_locator(fr, _LOGIN_EMAIL_SELECTORS)
+            password = _first_visible_locator(fr, _LOGIN_PASSWORD_SELECTORS)
+            if email is None and password is None:
+                continue
+            submit = None
+            try:
+                btn = fr.locator('button[type="submit"]')
+                if btn.count() > 0 and btn.first.is_visible():
+                    submit = btn.first
+            except Exception:
+                submit = None
+            if submit is None:
+                for pat in _LOGIN_SUBMIT_PATTERNS:
+                    try:
+                        loc = fr.get_by_role("button", name=pat)
+                    except Exception:
+                        continue
+                    try:
+                        if loc.count() > 0 and loc.first.is_visible():
+                            submit = loc.first
+                            break
+                    except Exception:
+                        continue
+            return email, password, submit
+        except Exception as exc:
+            logger.debug("OSKAR: login form scan skipped frame: %s", exc)
+            continue
+    return None, None, None
+
+
+def _prompt_oskar_email() -> str:
+    """Read the Auth0 email/username from the terminal (visible)."""
+    _require_interactive_terminal()
+    email = input("OSKAR email: ").strip()
+    while not email:
+        email = input("OSKAR email (must not be empty): ").strip()
+    return email
+
+
+def _prompt_oskar_password() -> str:
+    """Read the Auth0 password from the terminal without echoing it."""
+    _require_interactive_terminal()
+    password = getpass.getpass("OSKAR password (hidden): ")
+    while not password:
+        password = getpass.getpass("OSKAR password (hidden, must not be empty): ")
+    return password
+
+
+def _require_interactive_terminal() -> None:
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "OSKAR login needs an interactive terminal for the email/password "
+            "prompt, but stdin is not a TTY. Run `asalloc update --fetch-oskar` "
+            "in a real terminal instead of a pipe."
+        )
+
+
+def _locator_input_value(locator: Any) -> str:
+    try:
+        current = locator.input_value(timeout=5_000)
+    except Exception:
+        return ""
+    return current if isinstance(current, str) else ""
+
+
+def _perform_cli_login(page: Any, *, timeout_ms: int) -> None:
+    """
+    Headless Auth0 login driven from the terminal.
+
+    Polls for the login form (email and/or password, covering Auth0's
+    identifier-first flow), prompts for whatever is missing/empty — the
+    password via ``getpass`` so it is never echoed — fills it into the page,
+    and submits. A rejected login (form still showing) re-prompts, so a typo
+    just costs one more prompt instead of aborting. Returns once the cockpit
+    dashboard URL lands; raises on timeout or without an interactive terminal.
+    """
+    logger.warning(
+        "OSKAR headless login: watching for the Auth0 login screen (up to %.0f s). "
+        "Email and password are typed here in the terminal, never shown in a browser.",
+        timeout_ms / 1000,
+    )
+    if _on_cockpit_dashboard(page):
+        logger.info("OSKAR: cockpit dashboard reached url=%s", page.url)
+        return
+    _require_interactive_terminal()
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        if _on_cockpit_dashboard(page):
+            logger.info("OSKAR: cockpit dashboard reached url=%s", page.url)
+            return
+        email, password, submit = _find_login_controls(page)
+        if email is None and password is None:
+            # Still on an intermediate Auth0 redirect with no form yet.
+            page.wait_for_timeout(800)
+            continue
+        try:
+            anchor = None
+            if email is not None and not _locator_input_value(email).strip():
+                email.fill(_prompt_oskar_email(), timeout=15_000)
+                page.wait_for_timeout(300)
+                anchor = email
+            # The password step may render only after the email submit.
+            if password is None or not password.is_visible():
+                _, password, submit = _find_login_controls(page)
+            if password is not None and password.is_visible():
+                password.fill(_prompt_oskar_password(), timeout=15_000)
+                page.wait_for_timeout(300)
+                anchor = password
+            if anchor is None:
+                # Form is fully prefilled (e.g. remembered email); just submit.
+                anchor = password if password is not None else email
+            if submit is not None and submit.is_visible():
+                submit.click(timeout=15_000)
+            elif anchor is not None:
+                anchor.press("Enter", timeout=15_000)
+            else:
+                page.wait_for_timeout(800)
+                continue
+        except Exception as exc:
+            logger.warning("OSKAR headless login: form interaction failed: %s", exc)
+            page.wait_for_timeout(800)
+            continue
+        if _await_login_attempt_outcome(page, deadline=deadline):
+            logger.info("OSKAR: cockpit dashboard reached url=%s", page.url)
+            return
+    raise RuntimeError(
+        f"OSKAR: headless login timed out waiting for the redirect to {_DASHBOARD_URL} "
+        f"(url={getattr(page, 'url', '?')})."
+    )
+
+
+def _await_login_attempt_outcome(page: Any, *, deadline: float) -> bool:
+    """
+    After one credential submit, wait for the dashboard (success → True) or
+    for the login form to come back (rejected → False so the caller
+    re-prompts). Intermediate Auth0 redirects show neither; those just burn
+    down the per-attempt wait instead of triggering a redundant prompt.
+    """
+    attempt_end = min(deadline, time.monotonic() + _CLI_LOGIN_ATTEMPT_WAIT_MS / 1000.0)
+    while time.monotonic() < attempt_end:
+        if _on_cockpit_dashboard(page):
+            return True
+        email, password, _ = _find_login_controls(page)
+        if email is not None or password is not None:
+            logger.warning(
+                "OSKAR headless login: still on the login screen; "
+                "credentials may have been rejected — prompting again."
+            )
+            return False
+        page.wait_for_timeout(1_000)
+    return False
 
 
 def _click_allocation_tab(page: Any, *, timeout_ms: int) -> None:
@@ -842,12 +1045,18 @@ def fetch_oskar_etfs(
     """
     Launch Chromium (TLS verification on). Everything hinges on one signal: the
     redirect to ``mein.oskar.de/cockpit/dashboard``, which Auth0 only performs after a
-    successful login. Until it lands, sign in **manually** in the browser (a typo just
-    keeps the wait running). With ``headless=True`` and a login gate, the browser is
-    restarted **headed** once so you can complete Auth0.
+    successful login.
 
-    Once that URL is reached, the headed window is taken off screen before the
-    allocation tab is opened:
+    * ``headless=True`` (default) — stays headless the whole time. When the Auth0
+      login screen appears, the email is read with ``input()`` and the password
+      with ``getpass`` (never echoed), filled into the page, and submitted. A
+      rejected login re-prompts instead of aborting. Requires an interactive
+      terminal.
+    * ``headless=False`` — sign in **manually** in the visible browser window;
+      a typo just keeps the wait running.
+
+    Once that URL is reached and the run started headed, the window is taken off
+    screen before the allocation tab is opened:
 
     * default — the window is **minimized**, keeping the very same browser process;
     * ``headless_after_login=True`` — the session (cookies + localStorage) is moved
@@ -881,18 +1090,9 @@ def fetch_oskar_etfs(
             if not _on_cockpit_dashboard(page):
                 logger.info("fetch_oskar_etfs: login required (url=%s)", page.url)
                 if headless:
-                    logger.info(
-                        "fetch_oskar_etfs: restarting as headed browser for manual Auth0"
-                    )
-                    browser.close()
-                    browser, context, page = _open_oskar_page(
-                        p,
-                        headless=False,
-                        dashboard_url=dashboard_url,
-                        timeout_ms=timeout_ms,
-                    )
-                    headed_visible = True
-                _wait_for_manual_oskar_login(page, timeout_ms=max(timeout_ms, 300_000))
+                    _perform_cli_login(page, timeout_ms=max(timeout_ms, 300_000))
+                else:
+                    _wait_for_manual_oskar_login(page, timeout_ms=max(timeout_ms, 300_000))
 
             if headed_visible and headless_after_login:
                 browser, context, page, headed_visible = _switch_to_headless_after_login(
