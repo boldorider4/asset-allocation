@@ -81,7 +81,6 @@ def main():
     )
     total_growth_portfolio.plot_sectors(
         title="Sector Breakdown",
-        closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
         label_fontsize=7,
         autopct_fontsize=7,
     )
