@@ -140,8 +140,10 @@ class Portfolio:
             else:
                 short_name = position._short_name
                 if short_name is not None and short_name.lower() == "gold":
+                    logger.info("Portfolio %r: position %r is Gold; aggregating into Commodities", self._name, position._isin)
                     label = _COMMODITIES_LABEL
                 else:
+                    logger.info("Portfolio %r: position %r has no sector info; aggregating into Other", self._name, position._isin)
                     label = short_name or _SECTOR_OTHER_LABEL
                 consolidated[label] = consolidated.get(label, 0.0) + share
         return consolidated
