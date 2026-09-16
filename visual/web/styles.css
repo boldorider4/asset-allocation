@@ -30,7 +30,7 @@ body {
 }
 
 .masthead {
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 0 auto 1.1rem;
 }
 
@@ -52,7 +52,7 @@ code {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
   gap: 1.4rem;
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 0 auto;
 }
 
@@ -78,7 +78,7 @@ code {
 }
 
 .donut {
-  width: min(100%, 20rem);
+  width: min(100%, 23rem);
   height: auto;
   overflow: visible;
 }
@@ -172,7 +172,7 @@ code {
 
 .empty,
 .status {
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 3rem auto 0;
   padding: 2.2rem 1.6rem;
   border: 1px dashed var(--line);
@@ -253,12 +253,12 @@ code {
   }
 
   .legend .name {
-    width: 44%;
+    width: 46%;
   }
 
   .legend .pct {
-    width: 20%;
-    transform: translateX(0.25rem);
+    width: 18%;
+    transform: translateX(0.4rem);
   }
 
   .legend .val {
