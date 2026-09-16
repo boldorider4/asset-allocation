@@ -18,12 +18,15 @@ class TestWebChart(unittest.TestCase):
         self.data_dir = Path(self._tmpdir.name) / "data"
         self._orig_dir = WebChart.data_dir
         self._orig_counts = dict(WebChart._slug_counts)
+        self._orig_seq = WebChart._plot_seq
         WebChart.data_dir = self.data_dir
         WebChart._slug_counts = {}
+        WebChart._plot_seq = 0
 
     def tearDown(self) -> None:
         WebChart.data_dir = self._orig_dir
         WebChart._slug_counts = self._orig_counts
+        WebChart._plot_seq = self._orig_seq
         self._tmpdir.cleanup()
 
     def test_default_visualizer_is_web_chart(self) -> None:
@@ -37,7 +40,7 @@ class TestWebChart(unittest.TestCase):
             factor={"value": 1000, "unit": "Euro"},
         )
         chart.plot()
-        path = self.data_dir / "equity-portfolio-regional-split.raw"
+        path = self.data_dir / "01-equity-portfolio-regional-split.raw"
         self.assertTrue(path.is_file())
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["name"], "Equity Portfolio: Regional Split")
@@ -54,6 +57,7 @@ class TestWebChart(unittest.TestCase):
     def test_rerun_overwrites_same_slug(self) -> None:
         WebChart(data={"A": 1.0}, title="Same Title").plot()
         WebChart._slug_counts = {}
+        WebChart._plot_seq = 0
         WebChart(data={"B": 1.0}, title="Same Title").plot()
         files = list(self.data_dir.glob("*.raw"))
         self.assertEqual(len(files), 1)
@@ -64,7 +68,13 @@ class TestWebChart(unittest.TestCase):
         WebChart(data={"A": 1.0}, title="Same Title").plot()
         WebChart(data={"B": 1.0}, title="Same Title").plot()
         names = sorted(p.name for p in self.data_dir.glob("*.raw"))
-        self.assertEqual(names, ["same-title-2.raw", "same-title.raw"])
+        self.assertEqual(names, ["01-same-title.raw", "02-same-title-2.raw"])
+
+    def test_filenames_reflect_plot_call_order(self) -> None:
+        WebChart(data={"B": 1.0}, title="Zulu").plot()
+        WebChart(data={"A": 1.0}, title="Alpha").plot()
+        names = sorted(p.name for p in self.data_dir.glob("*.raw"))
+        self.assertEqual(names, ["01-zulu.raw", "02-alpha.raw"])
 
     def test_add_matches_pie_chart_merge(self) -> None:
         left = {"Europe": 45.0, "Developed Markets": 23.0, "Emerging Markets": 32.0}

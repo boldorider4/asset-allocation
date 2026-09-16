@@ -39,6 +39,9 @@ class WebChart(Visual):
 
     data_dir: Path = Path.home() / ".local" / "asalloc" / "visualizer" / "data"
     _slug_counts: dict[str, int] = {}
+    # Process-global plot() call counter. Filenames carry it as a leading
+    # number so the directory listing reflects plot call order.
+    _plot_seq: int = 0
 
     def __init__(
         self,
@@ -110,7 +113,8 @@ class WebChart(Visual):
 
         dest = type(self).data_dir
         dest.mkdir(parents=True, exist_ok=True)
-        stem = self._unique_stem(_slug(self._title))
+        type(self)._plot_seq += 1
+        stem = f"{type(self)._plot_seq:02d}-{self._unique_stem(_slug(self._title))}"
         path = dest / f"{stem}.raw"
         path.write_text(json.dumps(self._payload(), indent=2) + "\n", encoding="utf-8")
 
@@ -118,6 +122,7 @@ class WebChart(Visual):
     def write_example(cls) -> None:
         """Write a couple of sample ``*.raw`` files into :attr:`data_dir`."""
         cls._slug_counts = {}
+        cls._plot_seq = 0
         examples = (
             WebChart(
                 data={
