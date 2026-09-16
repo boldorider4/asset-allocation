@@ -56,6 +56,8 @@ class Portfolio:
         logger.info("Portfolio %r: calculated DMEM values: %r", name, self._dmem)
         self._usavn = self._calculate_usavn()
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
+        self._sectors = self._calculate_sectors()
+        logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
         self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
 
     def _calculate_value(self) -> float:
@@ -66,6 +68,26 @@ class Portfolio:
 
     def _calculate_usavn(self) -> list[float]:
         return [position.usavn for position in self._positions]
+
+    def _calculate_sectors(self) -> dict[str, float]:
+        """Value-weighted sector fractions (0–1) across positions with sector data."""
+        consolidated: dict[str, float] = {}
+        if self._value <= 0:
+            return consolidated
+        for position in self._positions:
+            rows = position.sectors()
+            value = position.value
+            if not rows or value is None:
+                continue
+            share = float(value) / self._value
+            for row in rows:
+                name = str(row["name"])
+                # Position rows use weight_pct (0–100); portfolio dicts use fractions (0–1).
+                consolidated[name] = (
+                    consolidated.get(name, 0.0)
+                    + share * float(row["weight_pct"]) / 100.0
+                )
+        return consolidated
 
     def plot(
         self,
@@ -100,6 +122,10 @@ class Portfolio:
         return self._usavn
 
     @property
+    def sectors(self) -> dict[str, float]:
+        return self._sectors
+
+    @property
     def total_value(self) -> float:
         return self._value
 
@@ -128,6 +154,7 @@ class Portfolio:
         merged._value = self._value + other._value
         merged._dmem = None
         merged._usavn = None
+        merged._sectors = merged._calculate_sectors()
         sv, ov = self._visualizer, other._visualizer
         if sv is not None and ov is not None:
             merged._visualizer = sv + ov
