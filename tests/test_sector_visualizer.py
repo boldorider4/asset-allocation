@@ -111,7 +111,22 @@ class TestSectorVisualizer(unittest.TestCase):
                 _stub(value=30.0, sectors=None),
             ],
         )
-        self.assertEqual(port._constituent_breakdown(), {"Gold": 0.7, "Inflation Hedge": 0.3})
+        self.assertEqual(
+            port._constituent_breakdown(), {"Commodities": 0.7, "Inflation Hedge": 0.3}
+        )
+
+    def test_breakdown_gold_case_insensitive(self) -> None:
+        port = _portfolio(
+            RegionalPortfolio,
+            "Inflation Hedge",
+            [
+                _stub(value=60.0, sectors=None, short_name="gold"),
+                _stub(value=40.0, sectors=None, short_name="Silver"),
+            ],
+        )
+        self.assertEqual(
+            port._constituent_breakdown(), {"Commodities": 0.6, "Silver": 0.4}
+        )
 
     def test_breakdown_all_nameless_is_single_wedge(self) -> None:
         port = _portfolio(
@@ -141,11 +156,12 @@ class TestSectorVisualizer(unittest.TestCase):
             [_stub(value=10.0, sectors=None, short_name="Gold")],
         )
         merged = equity + commodity
-        # Gold is ~1% yet survives; the 25-cap only applies to sector wedges.
-        self.assertAlmostEqual(merged._sector_chart_data()["Gold"], 0.01)
-        sector_wedges = [k for k in merged._sector_chart_data() if k != "Gold"]
+        # Commodities (from Gold) is ~1% yet survives; the 25-cap only
+        # applies to sector wedges.
+        self.assertAlmostEqual(merged._sector_chart_data()["Commodities"], 0.01)
+        sector_wedges = [k for k in merged._sector_chart_data() if k != "Commodities"]
         self.assertEqual(len(sector_wedges), 26)  # 25 kept sectors + Other
-        self.assertNotIn("Gold", merged._sectors)  # pure sector data untouched
+        self.assertNotIn("Commodities", merged._sectors)  # pure sector data untouched
         # Other holds only dropped sector mass, no breakdown mass.
         # (derived from side-level sectors: merged._sectors is already scaled.)
         side_dropped = sum(
@@ -193,8 +209,9 @@ class TestSectorVisualizer(unittest.TestCase):
         self.assertAlmostEqual(first._sector_breakdowns["Bonds"], 250.0 / 4750.0)
         merged = first + commodity
         # Breakdown wedges survive chained adds instead of collapsing into Other.
+        # Gold aggregates into Commodities.
         self.assertAlmostEqual(merged._sector_chart_data()["Bonds"], 250.0 / 4800.0)
-        self.assertAlmostEqual(merged._sector_chart_data()["Gold"], 40.0 / 4800.0)
+        self.assertAlmostEqual(merged._sector_chart_data()["Commodities"], 40.0 / 4800.0)
         self.assertAlmostEqual(
             merged._sector_chart_data()["EUR Infl.-Linkd"], 10.0 / 4800.0
         )

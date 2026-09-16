@@ -33,6 +33,9 @@ DMEM_OTHER = "dmem_other"
 USAVN = "usavn"
 
 
+# Breakdown wedge for constituents named Gold (e.g. physical gold ETCs),
+# which carry no sector data of their own.
+_COMMODITIES_LABEL = "Commodities"
 # Sector chart prep: wedges below this fraction (0–1) fold into "Other".
 _SECTOR_MIN_WEIGHT = 0.02
 # At most this many sector wedges are kept; the rest fold into "Other".
@@ -191,8 +194,9 @@ class Portfolio:
     def _constituent_breakdown(self) -> dict[str, float]:
         """Side-relative fractions by short_name for a sector-uninformative portfolio.
 
-        Positions with a short_name get their own wedge; all others fold into
-        one wedge named by the portfolio. Exempt from chart filtering.
+        Positions with a short_name get their own wedge, except Gold which
+        aggregates into a Commodities wedge; all others fold into one wedge
+        named by the portfolio. Exempt from chart filtering.
         """
         breakdown: dict[str, float] = {}
         if self._value <= 0:
@@ -205,7 +209,11 @@ class Portfolio:
             value = position.value
             if value is None:
                 continue
-            label = position._short_name or self._name
+            short_name = position._short_name
+            if short_name is not None and short_name.lower() == "gold":
+                label = _COMMODITIES_LABEL
+            else:
+                label = short_name or self._name
             breakdown[label] = breakdown.get(label, 0.0) + float(value) / self._value
         logger.info(
             "Portfolio %r: constituent breakdown (sector-uninformative side): %r",
