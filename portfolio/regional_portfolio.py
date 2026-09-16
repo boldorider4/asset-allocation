@@ -51,13 +51,13 @@ class RegionalPortfolio(Portfolio):
 
         # now let's look at regional split: us vs. ex-us vs. emerging markets
         # Scale us_within_developed by the developed_share so that US is proportional to the total_value
-        self._regional_split_data = {
+        self._geosplit_data = {
             "Equity US": us_within_developed * developed_share,
             "Equity Ex-US": (1.0 - us_within_developed) * developed_share,
             "Equity Emrg. Markets": 1.0 - developed_share,
         }
-        self._visualizer = get_plotter()(
-            data=self._regional_split_data,
+        self._geosplit_visualizer = get_plotter()(
+            data=self._geosplit_data,
             title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
             closing_title="Value: {:.2f}".format(self._value),
             factor={"value": self._value, "unit": "Euro"},
@@ -87,16 +87,16 @@ class RegionalPortfolio(Portfolio):
             merged._name, merged._value, merged._sector_chart_data()
         )
         total = merged._value
-        keys = self._regional_split_data.keys() | other._regional_split_data.keys()
-        merged._regional_split_data = {
+        keys = self._geosplit_data.keys() | other._geosplit_data.keys()
+        merged._geosplit_data = {
             k: (
-                self._value * self._regional_split_data.get(k, 0.0)
-                + other._value * other._regional_split_data.get(k, 0.0)
+                self._value * self._geosplit_data.get(k, 0.0)
+                + other._value * other._geosplit_data.get(k, 0.0)
             ) / total
             if total > 0 else 0.0
             for k in keys
         }
-        for attr in ("_dmem_visualizer", "_usavn_visualizer", "_visualizer"):
+        for attr in ("_dmem_visualizer", "_usavn_visualizer", "_geosplit_visualizer"):
             sv, ov = getattr(self, attr, None), getattr(other, attr, None)
             if sv is not None and ov is not None:
                 setattr(merged, attr, sv + ov)

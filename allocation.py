@@ -73,7 +73,7 @@ def main():
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
-    total_growth_portfolio.plot(
+    total_growth_portfolio.plot_geosplit(
         title="95-5 Equity Portfolio",
         closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
         label_fontsize=7,
@@ -85,7 +85,7 @@ def main():
         label_fontsize=7,
         autopct_fontsize=7,
     )
-    total_portfolio.plot(
+    total_portfolio.plot_geosplit(
         title="Complete Portfolio",
         closing_title="Net Worth: {:.2f} €".format(total_portfolio.total_value),
         label_fontsize=7,

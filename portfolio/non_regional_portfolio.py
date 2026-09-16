@@ -40,7 +40,7 @@ class NonRegionalPortfolio(Portfolio):
                 self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
 
 
-        self._visualizer = get_plotter()(
+        self._geosplit_visualizer = get_plotter()(
             data=self._visualizer_data,
             title="{}: {:.2f} Euro".format(name, self._value),
             closing_title="Value: {:.2f}".format(self._value),

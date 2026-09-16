@@ -95,7 +95,7 @@ class Portfolio:
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
         self._sectors = self._calculate_sectors()
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
-        self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
+        self._geosplit_visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
         # Keep history of sector mass that is exempt from chart filtering, e.g. uninformative sides and constituent breakdowns.
         self._sector_breakdowns: dict[str, float] = {}
         # Filtered once here so repeat plot_sectors() calls reuse it.
@@ -132,7 +132,7 @@ class Portfolio:
                 )
         return consolidated
 
-    def plot(
+    def plot_geosplit(
         self,
         title: str | None = None,
         closing_title: str | None = None,
@@ -140,14 +140,14 @@ class Portfolio:
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
-        if self._visualizer is None:
-            logger.warning("No visualizer set for portfolio %r; skipping plot", self._name)
+        if self._geosplit_visualizer is None:
+            logger.warning("No geosplit visualizer set for portfolio %r; skipping plot", self._name)
             return
         if title is not None:
-            self._visualizer.title = title
+            self._geosplit_visualizer.title = title
         if closing_title is not None:
-            self._visualizer.closing_title = closing_title
-        self._visualizer.plot(
+            self._geosplit_visualizer.closing_title = closing_title
+        self._geosplit_visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,
         )
@@ -298,12 +298,12 @@ class Portfolio:
         merged._sector_visualizer = merged._make_sector_visualizer(
             merged._name, merged._value, merged._sector_chart_data()
         )
-        sv, ov = self._visualizer, other._visualizer
+        sv, ov = self._geosplit_visualizer, other._geosplit_visualizer
         if sv is not None and ov is not None:
-            merged._visualizer = sv + ov
+            merged._geosplit_visualizer = sv + ov
         else:
             # Always set so chained adds never hit a missing attribute.
-            merged._visualizer = sv if sv is not None else ov
+            merged._geosplit_visualizer = sv if sv is not None else ov
         return merged
 
 
