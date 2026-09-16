@@ -51,32 +51,25 @@ class TestOskarLogin(unittest.TestCase):
             self.skipTest("headless CLI login needs an interactive terminal")
 
         logger.info("OSKAR login test: calling fetch_oskar_etfs (headless)")
-        rows = fetch_oskar_etfs(
-            headless=True,
-            timeout_ms=120_000,
-        )
+        rows = fetch_oskar_etfs(timeout_ms=120_000)
         self.assertIsInstance(rows, dict)
         self.assertGreater(len(rows), 0)
         logger.info("OSKAR login test: done rows=%d", len(rows))
 
-    def test_login_then_headless_handover(self) -> None:
+    def test_login_then_scrape_stays_in_same_browser(self) -> None:
         """
-        Already headless, so ``headless_after_login`` is a no-op: the scrape
-        runs in the same browser that performed the CLI login.
+        The whole run — CLI login plus scrape — happens in a single headless
+        browser; there is no headed window and no session handover.
         """
         from scrape.oskar import fetch_oskar_etfs
 
-        logger.info("OSKAR headless handover test: start (headless CLI Auth0)")
+        logger.info("OSKAR same-browser test: start (headless CLI Auth0)")
         import sys
 
         if not sys.stdin.isatty():
             self.skipTest("headless CLI login needs an interactive terminal")
 
-        rows = fetch_oskar_etfs(
-            headless=True,
-            headless_after_login=True,
-            timeout_ms=120_000,
-        )
+        rows = fetch_oskar_etfs(timeout_ms=120_000)
         self.assertIsInstance(rows, dict)
         self.assertGreater(len(rows), 0)
-        logger.info("OSKAR headless handover test: done rows=%d", len(rows))
+        logger.info("OSKAR same-browser test: done rows=%d", len(rows))
