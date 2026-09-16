@@ -7,9 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from visual import DEFAULT_VISUALIZER
+from visual import DEFAULT_VISUALIZER, SECTOR_PALETTE
 from visual.pie_chart import PieChart
-from visual.web_chart import WebChart
+from visual.web_chart import WebChart, _TAB10
 
 
 class TestWebChart(unittest.TestCase):
@@ -18,12 +18,15 @@ class TestWebChart(unittest.TestCase):
         self.data_dir = Path(self._tmpdir.name) / "data"
         self._orig_dir = WebChart.data_dir
         self._orig_counts = dict(WebChart._slug_counts)
+        self._orig_seq = WebChart._plot_seq
         WebChart.data_dir = self.data_dir
         WebChart._slug_counts = {}
+        WebChart._plot_seq = 0
 
     def tearDown(self) -> None:
         WebChart.data_dir = self._orig_dir
         WebChart._slug_counts = self._orig_counts
+        WebChart._plot_seq = self._orig_seq
         self._tmpdir.cleanup()
 
     def test_default_visualizer_is_web_chart(self) -> None:
@@ -37,7 +40,7 @@ class TestWebChart(unittest.TestCase):
             factor={"value": 1000, "unit": "Euro"},
         )
         chart.plot()
-        path = self.data_dir / "equity-portfolio-regional-split.raw"
+        path = self.data_dir / "01-equity-portfolio-regional-split.raw"
         self.assertTrue(path.is_file())
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(payload["name"], "Equity Portfolio: Regional Split")
@@ -54,6 +57,7 @@ class TestWebChart(unittest.TestCase):
     def test_rerun_overwrites_same_slug(self) -> None:
         WebChart(data={"A": 1.0}, title="Same Title").plot()
         WebChart._slug_counts = {}
+        WebChart._plot_seq = 0
         WebChart(data={"B": 1.0}, title="Same Title").plot()
         files = list(self.data_dir.glob("*.raw"))
         self.assertEqual(len(files), 1)
@@ -64,7 +68,72 @@ class TestWebChart(unittest.TestCase):
         WebChart(data={"A": 1.0}, title="Same Title").plot()
         WebChart(data={"B": 1.0}, title="Same Title").plot()
         names = sorted(p.name for p in self.data_dir.glob("*.raw"))
-        self.assertEqual(names, ["same-title-2.raw", "same-title.raw"])
+        self.assertEqual(names, ["01-same-title.raw", "02-same-title-2.raw"])
+
+    def test_filenames_reflect_plot_call_order(self) -> None:
+        WebChart(data={"B": 1.0}, title="Zulu").plot()
+        WebChart(data={"A": 1.0}, title="Alpha").plot()
+        names = sorted(p.name for p in self.data_dir.glob("*.raw"))
+        self.assertEqual(names, ["01-zulu.raw", "02-alpha.raw"])
+
+    def test_sector_palette_differs_from_geosplit(self) -> None:
+        self.assertGreaterEqual(len(SECTOR_PALETTE), 12)
+        self.assertTrue(all(c.startswith("#") and len(c) == 7 for c in SECTOR_PALETTE))
+        self.assertTrue(set(SECTOR_PALETTE).isdisjoint(_TAB10))
+
+    def test_plot_uses_alternate_palette_when_passed(self) -> None:
+        WebChart(data={"A": 0.6, "B": 0.4}, title="Palette").plot(
+            colors=["#111111", "#222222"]
+        )
+        path = self.data_dir / "01-palette.raw"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [w["color"] for w in payload["wedges"]], ["#111111", "#222222"]
+        )
+
+    def test_plot_defaults_to_tab10_without_palette(self) -> None:
+        WebChart(data={"A": 0.6, "B": 0.4}, title="Default").plot()
+        path = self.data_dir / "01-default.raw"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [w["color"] for w in payload["wedges"]], list(_TAB10[:2])
+        )
+
+    def test_pie_chart_forwards_colors_to_matplotlib(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        seen: dict = {}
+
+        class FakeAx:
+            def pie(self, sizes, **kwargs):
+                seen.update(kwargs)
+                return ([], [], [])
+
+            def axis(self, *args, **kwargs):
+                pass
+
+        class FakeFig:
+            canvas = SimpleNamespace(manager=None)
+
+            def suptitle(self, *args, **kwargs):
+                pass
+
+            def text(self, *args, **kwargs):
+                pass
+
+            def subplots_adjust(self, *args, **kwargs):
+                pass
+
+        with (
+            patch("matplotlib.pyplot.subplots", return_value=(FakeFig(), FakeAx())),
+            patch("matplotlib.pyplot.show"),
+            patch("matplotlib.pyplot.pause"),
+        ):
+            PieChart(data={"A": 0.6, "B": 0.4}).plot(colors=["#111111", "#222222"])
+            seen.clear()
+            PieChart(data={"A": 0.6, "B": 0.4}).plot()
+        self.assertNotIn("colors", seen)
 
     def test_add_matches_pie_chart_merge(self) -> None:
         left = {"Europe": 45.0, "Developed Markets": 23.0, "Emerging Markets": 32.0}

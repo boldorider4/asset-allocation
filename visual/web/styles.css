@@ -30,7 +30,7 @@ body {
 }
 
 .masthead {
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 0 auto 1.1rem;
 }
 
@@ -52,7 +52,7 @@ code {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
   gap: 1.4rem;
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 0 auto;
 }
 
@@ -78,7 +78,7 @@ code {
 }
 
 .donut {
-  width: min(100%, 24rem);
+  width: min(100%, 23rem);
   height: auto;
   overflow: visible;
 }
@@ -115,7 +115,7 @@ code {
 }
 
 .legend .name {
-  width: 50%;
+  width: 40%;
 }
 
 .legend .name-cell {
@@ -126,7 +126,7 @@ code {
 
 .legend .pct,
 .legend .val {
-  width: 25%;
+  width: 30%;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -157,6 +157,10 @@ code {
   white-space: nowrap;
 }
 
+.legend .val {
+  padding-left: 1.25rem;
+}
+
 .closing-title {
   margin: 0.55rem 0 0;
   padding-top: 0.5rem;
@@ -168,7 +172,7 @@ code {
 
 .empty,
 .status {
-  max-width: 90rem;
+  max-width: 100rem;
   margin: 3rem auto 0;
   padding: 2.2rem 1.6rem;
   border: 1px dashed var(--line);
@@ -218,4 +222,48 @@ code {
 
 .site-footer a:hover {
   text-decoration: underline;
+}
+
+/* Narrow phones: single column, smaller type, tighter spacing so each
+   plot frame fits the viewport and all legend columns stay visible. */
+@media (max-width: 34rem) {
+  body {
+    padding: 1rem 0.75rem 4rem;
+  }
+
+  .gallery {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .card {
+    padding: 0.75rem 0.9rem 0.8rem;
+  }
+
+  .card h2 {
+    font-size: 0.95rem;
+  }
+
+  .donut {
+    width: min(100%, 17rem);
+  }
+
+  .legend td {
+    font-size: 0.78rem;
+  }
+
+  .legend .name {
+    width: 46%;
+  }
+
+  .legend .pct {
+    width: 18%;
+    transform: translateX(0.4rem);
+  }
+
+  .legend .val {
+    width: 36%;
+    padding-left: 0.75rem;
+    font-size: 0.72rem;
+  }
 }

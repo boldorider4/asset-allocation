@@ -4,6 +4,10 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from .chart_merge import PieFactor, merge_charts, merge_closing_title
 from .visual import Visual
@@ -39,6 +43,9 @@ class WebChart(Visual):
 
     data_dir: Path = Path.home() / ".local" / "asalloc" / "visualizer" / "data"
     _slug_counts: dict[str, int] = {}
+    # Process-global plot() call counter. Filenames carry it as a leading
+    # number so the directory listing reflects plot call order.
+    _plot_seq: int = 0
 
     def __init__(
         self,
@@ -65,7 +72,7 @@ class WebChart(Visual):
         closing = merge_closing_title(self._closing_title, other._closing_title, factor)
         return WebChart(data=merged, title=title, closing_title=closing, factor=factor)
 
-    def _payload(self) -> dict:
+    def _payload(self, palette: Sequence[str]) -> dict:
         total_w = sum(float(v) for v in self._data.values())
         total_attr = float(self._factor["value"]) if self._factor is not None else None
         unit = self._factor["unit"] if self._factor is not None else None
@@ -75,7 +82,7 @@ class WebChart(Visual):
             wedge: dict = {
                 "label": label,
                 "weight": weight_f,
-                "color": _TAB10[i % len(_TAB10)],
+                "color": palette[i % len(palette)],
             }
             if total_attr is not None and total_w > 0:
                 wedge["value"] = weight_f / total_w * total_attr
@@ -99,7 +106,9 @@ class WebChart(Visual):
             return base
         return f"{base}-{n + 1}"
 
-    def plot(self, **_kwargs) -> None:
+    def plot(
+        self, *, colors: Sequence[str] | None = None, **_kwargs
+    ) -> None:
         if not self._data:
             raise ValueError("data must contain at least one entry")
         sizes = [float(v) for v in self._data.values()]
@@ -108,16 +117,20 @@ class WebChart(Visual):
         if sum(sizes) <= 0:
             raise ValueError("sum of weights must be positive")
 
+        palette = list(colors) if colors is not None else _TAB10
+
         dest = type(self).data_dir
         dest.mkdir(parents=True, exist_ok=True)
-        stem = self._unique_stem(_slug(self._title))
+        type(self)._plot_seq += 1
+        stem = f"{type(self)._plot_seq:02d}-{self._unique_stem(_slug(self._title))}"
         path = dest / f"{stem}.raw"
-        path.write_text(json.dumps(self._payload(), indent=2) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(self._payload(palette), indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def write_example(cls) -> None:
         """Write a couple of sample ``*.raw`` files into :attr:`data_dir`."""
         cls._slug_counts = {}
+        cls._plot_seq = 0
         examples = (
             WebChart(
                 data={

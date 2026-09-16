@@ -65,7 +65,6 @@ def main():
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=portfolio[EQUITY_PORTFOLIO])
     fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True)
     cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=portfolio[CASH_PORTFOLIO], consolidate=True)
-    bond_portfolio = RegionalPortfolio(name="Bonds", positions=portfolio[BOND_PORTFOLIO])
     non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=portfolio[BOND_PORTFOLIO], consolidate=True)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=portfolio[COMMODITY_PORTFOLIO])
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=portfolio[PENSION_PORTFOLIO])
@@ -74,32 +73,18 @@ def main():
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
-    # print(equity_portfolio)
-    # equity_portfolio.plot_dmem()
-    # equity_portfolio.plot_usavn()
-    # equity_portfolio.plot()
-
-    # print(bond_portfolio)
-    # bond_portfolio.plot_dmem()
-    # bond_portfolio.plot_usavn()
-    # bond_portfolio.plot()
-
-    # print(fixed_maturity_bond_portfolio)
-    # fixed_maturity_bond_portfolio.plot()
-
-    # print(cash_portfolio)
-    # cash_portfolio.plot()
-
-    # print(commodity_portfolio)
-    # commodity_portfolio.plot()
-
-    total_growth_portfolio.plot(
+    total_growth_portfolio.plot_geosplit(
         title="95-5 Equity Portfolio",
         closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
         label_fontsize=7,
         autopct_fontsize=7,
     )
-    total_portfolio.plot(
+    total_growth_portfolio.plot_sectors(
+        title="Sector Breakdown",
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
+    total_portfolio.plot_geosplit(
         title="Complete Portfolio",
         closing_title="Net Worth: {:.2f} €".format(total_portfolio.total_value),
         label_fontsize=7,

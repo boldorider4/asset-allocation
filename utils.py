@@ -22,6 +22,7 @@ portfolio: dict[str, list[dict]] = {}
 IGNORE_CACHE = False
 FETCH_PRICES = False
 FETCH_GEOSPLIT = False
+FETCH_SECTORSPLIT = False
 FETCH_OSKAR = False
 FETCH_SCALABLE = False
 FETCH_TRADEREPUBLIC = False
@@ -35,6 +36,7 @@ CACHE_FILENAME = "cache.json"
 # Per-ISIN value in ``cache.json`` (written by ``save_position_in_cache``).
 _CACHE_PRICE = "price"
 _CACHE_COUNTRIES = "countries"
+_CACHE_SECTORS = "sectors"
 
 
 def get_ignore_cache() -> bool:
@@ -64,6 +66,16 @@ def get_fetch_geosplit() -> bool:
 def set_fetch_geosplit(fetch_geosplit: bool) -> None:
     global FETCH_GEOSPLIT
     FETCH_GEOSPLIT = fetch_geosplit
+
+
+def get_fetch_sectorsplit() -> bool:
+    global FETCH_SECTORSPLIT
+    return FETCH_SECTORSPLIT
+
+
+def set_fetch_sectorsplit(fetch_sectorsplit: bool) -> None:
+    global FETCH_SECTORSPLIT
+    FETCH_SECTORSPLIT = fetch_sectorsplit
 
 
 def get_fetch_oskar() -> bool:
@@ -126,21 +138,23 @@ def set_incognito_value_factor(factor: float) -> None:
     INCOGNITO_VALUE_FACTOR = factor
 
 
-def parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None]:
+def parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None, dict[str, float] | None]:
     """
-    Returns ``(price, cached_countries)``.
+    Returns ``(price, cached_countries, cached_sectors)``.
     Each element is ``None`` if the row has no stored value for it (fetch at use);
-    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``price``.
-    Country values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
+    a row written by ``--fetch-geosplit`` alone has ``countries`` but no ``price``,
+    and a row written by ``--fetch-sectorsplit`` alone has ``sectors`` but no ``price``.
+    Country/sector values in the file are fractions of 1 (e.g. ``0.89`` for 89%).
     """
     if not isinstance(entry, dict):
-        return None, None
+        return None, None, None
     raw_price = entry.get(_CACHE_PRICE)
     price = None if raw_price is None else float(raw_price)
     co = entry.get(_CACHE_COUNTRIES)
-    if co is None:
-        return price, None
-    return price, {str(k): float(v) for k, v in co.items()}
+    cached_countries = None if co is None else {str(k): float(v) for k, v in co.items()}
+    se = entry.get(_CACHE_SECTORS)
+    cached_sectors = None if se is None else {str(k): float(v) for k, v in se.items()}
+    return price, cached_countries, cached_sectors
 
 
 def load_cache() -> dict[str, Any]:
@@ -163,16 +177,26 @@ def countries_to_cache_fractions(
     return {str(r["name"]): float(r["weight_pct"]) / 100.0 for r in rows}
 
 
+def sectors_to_cache_fractions(
+    rows: list[dict[str, float | str]] | None,
+) -> dict[str, float]:
+    if not rows:
+        return {}
+    return {str(r["name"]): float(r["weight_pct"]) / 100.0 for r in rows}
+
+
 def save_position_in_cache(
     cache: dict[str, Any],
     isin: str,
     *,
     price: float | None = None,
     countries: list[dict[str, float | str]] | None = None,
+    sectors: list[dict[str, float | str]] | None = None,
     update_price: bool = False,
     update_countries: bool = False,
+    update_sectors: bool = False,
 ) -> None:
-    if not update_price and not update_countries:
+    if not update_price and not update_countries and not update_sectors:
         return
     row = cache.get(isin)
     if not isinstance(row, dict):
@@ -183,6 +207,8 @@ def save_position_in_cache(
         row[_CACHE_PRICE] = price
     if update_countries:
         row[_CACHE_COUNTRIES] = countries_to_cache_fractions(countries)
+    if update_sectors:
+        row[_CACHE_SECTORS] = sectors_to_cache_fractions(sectors)
     cache[isin] = row
     with open(CACHE_FILENAME, "w") as f:
         json.dump(cache, f, indent=2)
@@ -222,7 +248,7 @@ def _incognito_cached_price(isin: str | None) -> float | None:
     """
     if not isin:
         return None
-    cached, _ = parse_cache_entry(load_cache().get(isin))
+    cached, _, _ = parse_cache_entry(load_cache().get(isin))
     return None if cached is None else float(cached)
 
 

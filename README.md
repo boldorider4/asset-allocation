@@ -41,7 +41,7 @@ Each bucket is an array of position objects. Typical fields:
 
 ## Price source
 
-Positions are built through `position/factory.py` (JustETF by default, Yahoo Finance via `yfinance` for some ISINs). With `--fetch-prices`, quotes are written to `cache.json` (also gitignored). `--fetch-geosplit` refreshes country weights in the same cache.
+Positions are built through `position/factory.py` (JustETF by default, Yahoo Finance via `yfinance` for some ISINs). With `--fetch-prices`, quotes are written to `cache.json` (also gitignored). `--fetch-geosplit` refreshes country weights and `--fetch-sectorsplit` refreshes sector weights in the same cache.
 
 ## Run
 
@@ -57,6 +57,7 @@ Useful `update` flags:
 | --- | --- |
 | `--fetch-prices` | Scrape live quotes into `cache.json` |
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
+| `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
 | `--incognito` | Scale display values |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |

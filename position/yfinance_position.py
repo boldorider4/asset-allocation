@@ -29,6 +29,7 @@ class YFinancePosition(Position):
         usavn: float | None = None,
         dmem_other: float | None = None,
         cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
         value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
@@ -47,6 +48,7 @@ class YFinancePosition(Position):
             usavn=usavn,
             dmem_other=dmem_other,
             cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
             value_scale=value_scale,
             price=price,
             prefer_scrape_value=prefer_scrape_value,
@@ -55,6 +57,11 @@ class YFinancePosition(Position):
     def countries(self) -> list[dict[str, float | str]]:
         raise NotImplementedError(
             "YFinancePosition does not scrape country allocations"
+        )
+
+    def sectors(self) -> list[dict[str, float | str]] | None:
+        raise NotImplementedError(
+            "YFinancePosition does not scrape sector allocations"
         )
 
     def _read_listing_currency(self) -> str | None:
