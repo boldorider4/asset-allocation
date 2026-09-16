@@ -70,7 +70,6 @@ class Portfolio:
         return get_plotter()(
             data=data,
             title="{}: Sector Split: {:.2f} Euro".format(name, value),
-            closing_title="Value: {:.2f}".format(value),
             factor={"value": value, "unit": "Euro"},
         )
 
