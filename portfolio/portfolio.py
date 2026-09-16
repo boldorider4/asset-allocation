@@ -99,8 +99,6 @@ class Portfolio:
         self._sectors = self._calculate_sectors()
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
         self._geosplit_visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
-        # Keep history of sector mass that is exempt from chart filtering, e.g. uninformative sides and constituent breakdowns.
-        self._sector_breakdowns: dict[str, float] = {}
         # Filtered once here so repeat plot_sectors() calls reuse it.
         self._sector_visualizer = self._make_sector_visualizer(
             name, self._value, self._sector_chart_data()
@@ -116,23 +114,37 @@ class Portfolio:
         return [position.usavn for position in self._positions]
 
     def _calculate_sectors(self) -> dict[str, float]:
-        """Value-weighted sector fractions (0–1) across positions with sector data."""
+        """Value-weighted sector fractions (0–1) across all positions.
+
+        Positions with sector rows contribute their split; rowless positions
+        contribute a constituent wedge (short_name, Gold aggregating into
+        Commodities, everything else into "Other"). Single pass, so every
+        position's mass enters exactly once and merges are plain unions.
+        """
         consolidated: dict[str, float] = {}
         if self._value <= 0:
             return consolidated
         for position in self._positions:
             rows = position.sectors()
             value = position.value
-            if not rows or value is None:
+            if value is None:
                 continue
             share = float(value) / self._value
-            for row in rows:
-                name = str(row["name"])
-                # Position rows use weight_pct (0–100); portfolio dicts use fractions (0–1).
-                consolidated[name] = (
-                    consolidated.get(name, 0.0)
-                    + share * float(row["weight_pct"]) / 100.0
-                )
+            if rows:
+                for row in rows:
+                    name = str(row["name"])
+                    # Position rows use weight_pct (0–100); portfolio dicts use fractions (0–1).
+                    consolidated[name] = (
+                        consolidated.get(name, 0.0)
+                        + share * float(row["weight_pct"]) / 100.0
+                    )
+            else:
+                short_name = position._short_name
+                if short_name is not None and short_name.lower() == "gold":
+                    label = _COMMODITIES_LABEL
+                else:
+                    label = short_name or _SECTOR_OTHER_LABEL
+                consolidated[label] = consolidated.get(label, 0.0) + share
         return consolidated
 
     def plot_geosplit(
@@ -156,14 +168,12 @@ class Portfolio:
         )
 
     def _sector_chart_data(self) -> dict[str, float]:
-        """Final chart wedges: filtered sectors plus exempt breakdowns.
+        """Final chart wedges: _sectors through the Other aggregation.
 
         Evaluated when the persistent visualizer is built (construction and
         merges) so repeat plot_sectors() calls never re-run the filters.
         """
         chart = self._filter_sector_wedges(self._sectors)
-        for name, weight in self._sector_breakdowns.items():
-            chart[name] = chart.get(name, 0.0) + weight
         logger.info("Portfolio %r: sector chart data: %r", self._name, chart)
         return chart
 
@@ -191,64 +201,17 @@ class Portfolio:
             colors=SECTOR_PALETTE,
         )
 
-    def _constituent_breakdown(self) -> dict[str, float]:
-        """Side-relative fractions by short_name for a sector-uninformative portfolio.
-
-        Positions with a short_name get their own wedge, except Gold which
-        aggregates into a Commodities wedge; all others fold into one wedge
-        named by the portfolio. Exempt from chart filtering.
-        """
-        breakdown: dict[str, float] = {}
-        if self._value <= 0:
-            logger.warning(
-                "Portfolio %r: zero total value; constituent breakdown is empty",
-                self._name,
-            )
-            return breakdown
-        for position in self._positions:
-            value = position.value
-            if value is None:
-                continue
-            short_name = position._short_name
-            if short_name is not None and short_name.lower() == "gold":
-                label = _COMMODITIES_LABEL
-            else:
-                label = short_name or self._name
-            breakdown[label] = breakdown.get(label, 0.0) + float(value) / self._value
-        logger.info(
-            "Portfolio %r: constituent breakdown (sector-uninformative side): %r",
-            self._name,
-            breakdown,
-        )
-        return breakdown
-
-    def _has_informative_sectors(self) -> bool:
-        """True with at least one concrete (non-"Other") sector.
-
-        Unknown labels are folded into "Other" upstream (scraper / cache
-        load), so only "Other" itself is special here.
-        """
-        return any(
-            name != _SECTOR_OTHER_LABEL for name in (self._sectors or {})
-        )
-
     def _merged_sector_union(
         self, other: 'Portfolio', merged_total: float
     ) -> dict[str, float]:
-        """Value-weighted union of informative sides' sector mass (merged-relative).
+        """Value-weighted union of both sides' _sectors (merged-relative).
 
-        Uninformative sides are excluded here; their mass lives in
-        ``_sector_breakdowns`` so it is never double-counted.
+        Every position's mass enters exactly once — at its home portfolio via
+        rows or constituent wedges — so merges are plain associative unions
+        with no carried state and no double-counting.
         """
         union: dict[str, float] = {}
         for side in (self, other):
-            if not side._has_informative_sectors():
-                logger.warning(
-                    "Sector union: side %r has no informative sectors; "
-                    "its mass goes to breakdowns instead",
-                    side._name,
-                )
-                continue
             share = float(side._value) / merged_total if merged_total > 0 else 0.0
             logger.debug(
                 "Sector union: side %r contributes share %.4f",
@@ -259,40 +222,6 @@ class Portfolio:
                 union[name] = union.get(name, 0.0) + share * float(weight)
         logger.info("Sector union (merged-relative): %r", union)
         return union
-
-    def _merged_sector_breakdowns(
-        self, other: 'Portfolio', merged_total: float
-    ) -> dict[str, float]:
-        """Exempt breakdown wedges: carried over plus fresh (merged-relative)."""
-        breakdowns: dict[str, float] = {}
-        for side in (self, other):
-            share = float(side._value) / merged_total if merged_total > 0 else 0.0
-            carried = {
-                name: share * float(weight)
-                for name, weight in side._sector_breakdowns.items()
-            }
-            if carried:
-                logger.debug(
-                    "Sector breakdowns: carrying over from side %r: %r",
-                    side._name,
-                    carried,
-                )
-                for name, weight in carried.items():
-                    breakdowns[name] = breakdowns.get(name, 0.0) + weight
-            if not side._has_informative_sectors():
-                fresh = {
-                    name: share * float(weight)
-                    for name, weight in side._constituent_breakdown().items()
-                }
-                logger.debug(
-                    "Sector breakdowns: fresh wedges from side %r: %r",
-                    side._name,
-                    fresh,
-                )
-                for name, weight in fresh.items():
-                    breakdowns[name] = breakdowns.get(name, 0.0) + weight
-        logger.info("Sector breakdowns (merged-relative): %r", breakdowns)
-        return breakdowns
 
     @property
     def value(self) -> float:
@@ -339,11 +268,9 @@ class Portfolio:
         merged._value = self._value + other._value
         merged._dmem = None
         merged._usavn = None
-        # Informative-side mass only; uninformative mass lives in _sector_breakdowns
-        # so chained merges never double-count it. Filtered once into the
-        # persistent visualizer so repeat plot_sectors() calls reuse it.
+        # Plain associative union: every position's mass enters exactly once,
+        # at its home portfolio via rows or constituent wedges.
         merged._sectors = self._merged_sector_union(other, merged._value)
-        merged._sector_breakdowns = self._merged_sector_breakdowns(other, merged._value)
         # Filtered once here so repeat plot_sectors() calls reuse it.
         merged._sector_visualizer = merged._make_sector_visualizer(
             merged._name, merged._value, merged._sector_chart_data()

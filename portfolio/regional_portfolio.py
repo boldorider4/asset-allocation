@@ -78,20 +78,17 @@ class RegionalPortfolio(Portfolio):
         merged._value = self._value + other._value
         merged._dmem = list(self._dmem or []) + list(other._dmem or [])
         merged._usavn = list(self._usavn or []) + list(other._usavn or [])
-        # Informative-side mass only; uninformative mass lives in _sector_breakdowns
-        # so chained merges never double-count it. Filtered once into the
-        # persistent visualizer so repeat plot_sectors() calls reuse it.
+        # Plain associative union: every position's mass enters exactly once,
+        # at its home portfolio via rows or constituent wedges.
         merged._sectors = self._merged_sector_union(other, merged._value)
-        merged._sector_breakdowns = self._merged_sector_breakdowns(other, merged._value)
         merged._sector_visualizer = merged._make_sector_visualizer(
             merged._name, merged._value, merged._sector_chart_data()
         )
         logger.debug(
-            "RegionalPortfolio %r + %r: merged sectors: %r; breakdowns: %r",
+            "RegionalPortfolio %r + %r: merged sectors: %r",
             self._name,
             other._name,
             merged._sectors,
-            merged._sector_breakdowns,
         )
         total = merged._value
         keys = self._geosplit_data.keys() | other._geosplit_data.keys()

@@ -49,7 +49,7 @@ class TestConsolidateSectors(unittest.TestCase):
         self.assertAlmostEqual(port.sectors["Finance"], 0.75 * 0.5)
         self.assertAlmostEqual(sum(port.sectors.values()), 1.0)
 
-    def test_positions_without_sectors_are_skipped(self) -> None:
+    def test_positions_without_sectors_become_other(self) -> None:
         port = _regional(
             "R",
             [
@@ -60,7 +60,7 @@ class TestConsolidateSectors(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(port.sectors, {"Technology": 0.5})
+        self.assertEqual(port.sectors, {"Technology": 0.5, "Other": 0.5})
 
     def test_zero_total_value_returns_empty(self) -> None:
         port = _regional(
@@ -69,9 +69,9 @@ class TestConsolidateSectors(unittest.TestCase):
         )
         self.assertEqual(port.sectors, {})
 
-    def test_no_sector_data_returns_empty(self) -> None:
+    def test_empty_rows_become_other(self) -> None:
         port = _regional("R", [_stub(value=100.0, sectors=[])])
-        self.assertEqual(port.sectors, {})
+        self.assertEqual(port.sectors, {"Other": 1.0})
 
 
 class TestRegionalAdd(unittest.TestCase):
@@ -105,6 +105,7 @@ class TestRegionalAdd(unittest.TestCase):
         self.assertAlmostEqual(merged.value, 150.0)
         # parent-class consolidation still applies to the merged positions
         self.assertAlmostEqual(merged.sectors["Technology"], 100.0 / 150.0)
+        self.assertAlmostEqual(merged.sectors["Other"], 50.0 / 150.0)
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ class TestSectorVisualizer(unittest.TestCase):
             port._sector_chart_data(), {"Technology": 0.99, "Other": 0.01}
         )
 
-    def test_breakdown_mixed_short_names(self) -> None:
+    def test_rowless_gold_becomes_commodities(self) -> None:
         port = _portfolio(
             RegionalPortfolio,
             "Inflation Hedge",
@@ -112,10 +112,10 @@ class TestSectorVisualizer(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            port._constituent_breakdown(), {"Commodities": 0.7, "Inflation Hedge": 0.3}
+            port._sectors, {"Commodities": 0.7, "Other": 0.3}
         )
 
-    def test_breakdown_gold_case_insensitive(self) -> None:
+    def test_rowless_gold_case_insensitive(self) -> None:
         port = _portfolio(
             RegionalPortfolio,
             "Inflation Hedge",
@@ -125,18 +125,18 @@ class TestSectorVisualizer(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            port._constituent_breakdown(), {"Commodities": 0.6, "Silver": 0.4}
+            port._sectors, {"Commodities": 0.6, "Silver": 0.4}
         )
 
-    def test_breakdown_all_nameless_is_single_wedge(self) -> None:
+    def test_rowless_nameless_becomes_other(self) -> None:
         port = _portfolio(
             RegionalPortfolio, "Cash", [_stub(value=100.0, sectors=None)]
         )
-        self.assertEqual(port._constituent_breakdown(), {"Cash": 1.0})
+        self.assertEqual(port._sectors, {"Other": 1.0})
 
-    def test_add_exempts_breakdown_from_filter(self) -> None:
-        # 30 distinct non-Other labels so the cap (not informativeness) binds.
-        # (The portfolio layer treats every non-Other label opaquely.)
+    def test_add_small_wedges_filter_uniformly(self) -> None:
+        # 30 distinct labels so the cap binds; the ~1% Commodities wedge
+        # from Gold filters like everything else — no exemptions.
         labels = [f"S{i:02d}" for i in range(30)]
         equity = _portfolio(
             RegionalPortfolio,
@@ -156,37 +156,31 @@ class TestSectorVisualizer(unittest.TestCase):
             [_stub(value=10.0, sectors=None, short_name="Gold")],
         )
         merged = equity + commodity
-        # Commodities (from Gold) is ~1% yet survives; the 25-cap only
-        # applies to sector wedges.
-        self.assertAlmostEqual(merged._sector_chart_data()["Commodities"], 0.01)
-        sector_wedges = [k for k in merged._sector_chart_data() if k != "Commodities"]
-        self.assertEqual(len(sector_wedges), 26)  # 25 kept sectors + Other
-        self.assertNotIn("Commodities", merged._sectors)  # pure sector data untouched
-        # Other holds only dropped sector mass, no breakdown mass.
-        # (derived from side-level sectors: merged._sectors is already scaled.)
+        chart = merged._sector_chart_data()
+        # 25 kept sector wedges + Other holding the 5 dropped sectors AND Gold.
+        self.assertEqual(len(chart), 26)
         side_dropped = sum(
             w for _, w in sorted(equity._sectors.items(), key=lambda kv: -kv[1])[25:]
         )
         self.assertAlmostEqual(
-            merged._sector_chart_data()["Other"], side_dropped * 990.0 / 1000.0
+            chart["Other"], side_dropped * 990.0 / 1000.0 + 10.0 / 1000.0
         )
+        self.assertNotIn("Commodities", chart)
 
-    def test_add_both_empty_plots_breakdown(self) -> None:
-        # No sector rows on either side: the chart is pure breakdown wedges.
+    def test_add_both_empty_folds_into_other(self) -> None:
+        # No sector rows on either side: everything lands in Other.
         # Must use the recording plotter: the real WebChart would write a
         # stray *.raw file into the user's visualizer data dir.
         with patch("portfolio.portfolio.get_plotter", return_value=_RecordingPlotter):
             left = _portfolio(RegionalPortfolio, "A", [_stub(value=100.0, sectors=None)])
             right = _portfolio(RegionalPortfolio, "B", [_stub(value=100.0, sectors=None)])
             merged = left + right
-            self.assertEqual(merged._sector_chart_data(), {"A": 0.5, "B": 0.5})
+            self.assertEqual(merged._sector_chart_data(), {"Other": 1.0})
             merged.plot_sectors()  # must not raise
             self.assertEqual(merged._sector_visualizer.plots, 1)
-            self.assertEqual(merged._sector_visualizer._data, {"A": 0.5, "B": 0.5})
+            self.assertEqual(merged._sector_visualizer._data, {"Other": 1.0})
 
-    def test_chained_add_preserves_breakdown_wedges(self) -> None:
-        # Upstream folding turns unknown labels into Other before rows reach
-        # the portfolio layer, so the bond leg arrives as Other-only.
+    def test_chained_add_filters_uniformly(self) -> None:
         equity = _portfolio(
             RegionalPortfolio,
             "Equity",
@@ -205,23 +199,18 @@ class TestSectorVisualizer(unittest.TestCase):
                 _stub(value=10.0, sectors=None, short_name="EUR Infl.-Linkd"),
             ],
         )
-        first = equity + bonds
-        self.assertAlmostEqual(first._sector_breakdowns["Bonds"], 250.0 / 4750.0)
-        merged = first + commodity
-        # Breakdown wedges survive chained adds instead of collapsing into Other.
-        # Gold aggregates into Commodities.
-        self.assertAlmostEqual(merged._sector_chart_data()["Bonds"], 250.0 / 4800.0)
-        self.assertAlmostEqual(merged._sector_chart_data()["Commodities"], 40.0 / 4800.0)
-        self.assertAlmostEqual(
-            merged._sector_chart_data()["EUR Infl.-Linkd"], 10.0 / 4800.0
-        )
+        merged = (equity + bonds) + commodity
+        # Sub-2% Gold and EUR Infl.-Linkd fold like everything else.
         self.assertAlmostEqual(merged._sector_chart_data()["Technology"], 4500.0 / 4800.0)
-        self.assertNotIn("Sovereign", merged._sector_chart_data())
+        self.assertAlmostEqual(
+            merged._sector_chart_data()["Other"],
+            250.0 / 4800.0 + 40.0 / 4800.0 + 10.0 / 4800.0,
+        )
+        self.assertNotIn("Commodities", merged._sector_chart_data())
+        self.assertNotIn("Bonds", merged._sector_chart_data())
         self.assertAlmostEqual(sum(merged._sector_chart_data().values()), 1.0)
 
-    def test_add_folded_bond_side_gets_breakdown(self) -> None:
-        # Scraper/cache folding turns unknown labels (e.g. Sovereign) into
-        # Other before rows reach the portfolio layer.
+    def test_other_rows_side_merges_as_other(self) -> None:
         equity = _portfolio(
             RegionalPortfolio,
             "Equity",
@@ -232,13 +221,12 @@ class TestSectorVisualizer(unittest.TestCase):
             "Bonds",
             [_stub(value=250.0, sectors=[{"name": "Other", "weight_pct": 100.0}])],
         )
-        self.assertFalse(bonds._has_informative_sectors())
         merged = equity + bonds
-        self.assertAlmostEqual(merged._sector_chart_data()["Bonds"], 0.05)
         self.assertAlmostEqual(merged._sector_chart_data()["Technology"], 0.95)
+        self.assertAlmostEqual(merged._sector_chart_data()["Other"], 0.05)
         self.assertAlmostEqual(sum(merged._sector_chart_data().values()), 1.0)
 
-    def test_add_other_only_side_gets_breakdown(self) -> None:
+    def test_add_other_only_side_merges_as_other(self) -> None:
         equity = _portfolio(
             RegionalPortfolio,
             "Equity",
@@ -247,10 +235,9 @@ class TestSectorVisualizer(unittest.TestCase):
         side = _portfolio(
             Portfolio, "Side", [_stub(value=100.0, sectors=[{"name": "Other", "weight_pct": 100.0}])]
         )
-        self.assertFalse(side._has_informative_sectors())
         merged = equity + side
         self.assertEqual(
-            merged._sector_chart_data(), {"Technology": 0.9, "Side": 0.1}
+            merged._sector_chart_data(), {"Technology": 0.9, "Other": 0.1}
         )
 
     def test_add_mixed_side_stays_union(self) -> None:
@@ -272,9 +259,9 @@ class TestSectorVisualizer(unittest.TestCase):
                 )
             ],
         )
-        self.assertTrue(mixed._has_informative_sectors())
+        self.assertTrue(mixed._sectors)
         merged = equity + mixed
-        # Government passes through the union (≥2%) instead of triggering breakdown.
+        # Government passes through the union (≥2%) like any other wedge.
         self.assertAlmostEqual(merged._sector_chart_data()["Government"], 0.05)
         self.assertNotIn("Mixed", merged._sector_chart_data())
 
