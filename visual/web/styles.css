@@ -78,7 +78,7 @@ code {
 }
 
 .donut {
-  width: min(100%, 24rem);
+  width: min(100%, 20rem);
   height: auto;
   overflow: visible;
 }
@@ -153,7 +153,7 @@ code {
 .legend .pct {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
-  text-align: center;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -222,4 +222,48 @@ code {
 
 .site-footer a:hover {
   text-decoration: underline;
+}
+
+/* Narrow phones: single column, smaller type, tighter spacing so each
+   plot frame fits the viewport and all legend columns stay visible. */
+@media (max-width: 34rem) {
+  body {
+    padding: 1rem 0.75rem 4rem;
+  }
+
+  .gallery {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .card {
+    padding: 0.75rem 0.9rem 0.8rem;
+  }
+
+  .card h2 {
+    font-size: 0.95rem;
+  }
+
+  .donut {
+    width: min(100%, 17rem);
+  }
+
+  .legend td {
+    font-size: 0.78rem;
+  }
+
+  .legend .name {
+    width: 44%;
+  }
+
+  .legend .pct {
+    width: 20%;
+    transform: translateX(0.25rem);
+  }
+
+  .legend .val {
+    width: 36%;
+    padding-left: 0.75rem;
+    font-size: 0.72rem;
+  }
 }
