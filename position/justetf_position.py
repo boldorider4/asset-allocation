@@ -88,8 +88,8 @@ class JustETFPosition(Position):
         "Non-Corporate": "Government",
         "Government Agencies": "Government",
         "Municipal": "Government",
-        "Energy", "Commodities",
-        "Non-Energy Materials", "Materials",
+        "Energy": "Commodities",
+        "Non-Energy Materials": "Materials",
     }
     _RETRIES = 10
     _DELAY_S = 0.1
