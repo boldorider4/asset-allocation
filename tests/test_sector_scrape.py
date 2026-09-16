@@ -13,6 +13,7 @@ from unittest.mock import patch
 from common import PENDING_FETCHED_VALUES
 from position.factory import factory
 from position.justetf_position import JustETFPosition
+from position.position import Position
 from position.yfinance_position import YFinancePosition
 from utils import (
     get_fetch_geosplit,
@@ -98,13 +99,49 @@ class TestSectorTableParsing(unittest.TestCase):
         self.assertAlmostEqual(by_name["Finance"], 5.00)
         self.assertAlmostEqual(by_name["Telecommunication"], 3.00)
 
-    def test_unknown_sector_passes_through(self) -> None:
+    def test_unknown_sector_folds_into_other(self) -> None:
         self.assertEqual(
-            JustETFPosition._canonical_sector_name("Unobtanium"), "Unobtanium"
+            JustETFPosition._canonical_sector_name("Unobtanium"), "Other"
+        )
+        self.assertEqual(
+            JustETFPosition._canonical_sector_name("Sovereign"), "Other"
         )
         self.assertEqual(
             JustETFPosition._canonical_sector_name("  Finance  "), "Finance"
         )
+
+    def test_html_table_folds_unknown_labels(self) -> None:
+        html = """
+        <table data-testid="etf-holdings_sectors_table"><tbody>
+        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Sovereign</td>
+        <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">99.81%</span></div></td></tr>
+        <tr><td data-testid="tl_etf-holdings_sectors_value_name">Other</td>
+        <td><div><span data-testid="tl_etf-holdings_sectors_value_percentage">0.19%</span></div></td></tr>
+        </tbody></table>
+        """
+        rows = self._pos()._sectors_from_html_table(html)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Other")
+        self.assertAlmostEqual(float(rows[0]["weight_pct"]), 100.0)
+
+
+class TestCachedSectorRows(unittest.TestCase):
+    def test_fractions_scale_to_weight_pct(self) -> None:
+        self.assertEqual(
+            Position._cached_sectors_to_rows({"Technology": 0.4304}),
+            [{"name": "Technology", "weight_pct": 43.04}],
+        )
+
+    def test_unknown_labels_fold_into_other_summing_duplicates(self) -> None:
+        rows = Position._cached_sectors_to_rows(
+            {"Sovereign": 0.9981, "Other": 0.0019}
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Other")
+        self.assertAlmostEqual(float(rows[0]["weight_pct"]), 100.0)
+
+    def test_none_returns_none(self) -> None:
+        self.assertIsNone(Position._cached_sectors_to_rows(None))
 
 
 class TestJustETFSectorScrapeFailure(unittest.TestCase):

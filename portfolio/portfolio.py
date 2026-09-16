@@ -91,11 +91,11 @@ class Portfolio:
         logger.info("Portfolio %r: calculated USAVN values: %r", name, self._usavn)
         self._sectors = self._calculate_sectors()
         logger.info("Portfolio %r: calculated sectors: %r", name, self._sectors)
-        self._sector_data = self._filter_sector_wedges(self._sectors)
-        self._sector_visualizer = self._make_sector_visualizer(
-            name, self._value, self._sector_data
-        )
         self._visualizer: Visual | None = None  # subclasses set DEFAULT_VISUALIZER
+        # Keep history of sector mass that is exempt from chart filtering, e.g. uninformative sides and constituent breakdowns.
+        # The chart dict itself is derived on demand in _sector_chart_data().
+        self._sector_breakdowns: dict[str, float] = {}
+        self._sector_visualizer: Visual | None = None
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)
@@ -146,6 +146,17 @@ class Portfolio:
             autopct_fontsize=autopct_fontsize,
         )
 
+    def _sector_chart_data(self) -> dict[str, float]:
+        """Final chart wedges: filtered sectors plus exempt breakdowns.
+
+        The single place where the Other aggregation happens, evaluated on
+        demand so merges only ever carry unfiltered state.
+        """
+        chart = self._filter_sector_wedges(self._sectors)
+        for name, weight in self._sector_breakdowns.items():
+            chart[name] = chart.get(name, 0.0) + weight
+        return chart
+
     def plot_sectors(
         self,
         title: str | None = None,
@@ -154,11 +165,13 @@ class Portfolio:
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
-        if self._sector_visualizer is None or not self._sector_data:
+        data = self._sector_chart_data()
+        if not data:
             logger.warning(
                 "No sector data for portfolio %r; skipping sector plot", self._name
             )
             return
+        self._sector_visualizer = self._make_sector_visualizer(self._name, self._value, data)
         if title is not None:
             self._sector_visualizer.title = title
         if closing_title is not None:
@@ -169,7 +182,7 @@ class Portfolio:
         )
 
     def _constituent_breakdown(self) -> dict[str, float]:
-        """Side-relative fractions by short_name for a sector-less portfolio.
+        """Side-relative fractions by short_name for a sector-uninformative portfolio.
 
         Positions with a short_name get their own wedge; all others fold into
         one wedge named by the portfolio. Exempt from chart filtering.
@@ -185,24 +198,46 @@ class Portfolio:
             breakdown[label] = breakdown.get(label, 0.0) + float(value) / self._value
         return breakdown
 
-    def _merged_sector_chart_data(
+    def _has_informative_sectors(self) -> bool:
+        """True with at least one concrete (non-"Other") sector.
+
+        Unknown labels are folded into "Other" upstream (scraper / cache
+        load), so only "Other" itself is special here.
+        """
+        return any(
+            name != _SECTOR_OTHER_LABEL for name in (self._sectors or {})
+        )
+
+    def _merged_sector_union(
         self, other: 'Portfolio', merged_total: float
     ) -> dict[str, float]:
-        """Filtered sector wedges plus unfiltered breakdown wedges of sector-less sides."""
+        """Value-weighted union of informative sides' sector mass (merged-relative).
+
+        Uninformative sides are excluded here; their mass lives in
+        ``_sector_breakdowns`` so it is never double-counted.
+        """
         union: dict[str, float] = {}
+        for side in (self, other):
+            if not side._has_informative_sectors():
+                continue
+            share = float(side._value) / merged_total if merged_total > 0 else 0.0
+            for name, weight in side._sectors.items():
+                union[name] = union.get(name, 0.0) + share * float(weight)
+        return union
+
+    def _merged_sector_breakdowns(
+        self, other: 'Portfolio', merged_total: float
+    ) -> dict[str, float]:
+        """Exempt breakdown wedges: carried over plus fresh (merged-relative)."""
         breakdowns: dict[str, float] = {}
         for side in (self, other):
             share = float(side._value) / merged_total if merged_total > 0 else 0.0
-            if side._sectors:
-                for name, weight in side._sectors.items():
-                    union[name] = union.get(name, 0.0) + share * float(weight)
-            else:
+            for name, weight in side._sector_breakdowns.items():
+                breakdowns[name] = breakdowns.get(name, 0.0) + share * float(weight)
+            if not side._has_informative_sectors():
                 for name, weight in side._constituent_breakdown().items():
                     breakdowns[name] = breakdowns.get(name, 0.0) + share * float(weight)
-        filtered = self._filter_sector_wedges(union)
-        for name, weight in breakdowns.items():
-            filtered[name] = filtered.get(name, 0.0) + weight
-        return filtered
+        return breakdowns
 
     @property
     def value(self) -> float:
@@ -249,14 +284,17 @@ class Portfolio:
         merged._value = self._value + other._value
         merged._dmem = None
         merged._usavn = None
-        merged._sectors = merged._calculate_sectors()
-        merged._sector_data = self._merged_sector_chart_data(other, merged._value)
-        merged._sector_visualizer = merged._make_sector_visualizer(
-            merged._name, merged._value, merged._sector_data
-        )
+        # Informative-side mass only; uninformative mass lives in _sector_breakdowns
+        # so chained merges never double-count it. The chart dict itself is
+        # derived on demand in _sector_chart_data().
+        merged._sectors = self._merged_sector_union(other, merged._value)
+        merged._sector_breakdowns = self._merged_sector_breakdowns(other, merged._value)
         sv, ov = self._visualizer, other._visualizer
         if sv is not None and ov is not None:
             merged._visualizer = sv + ov
+        else:
+            # Always set so chained adds never hit a missing attribute.
+            merged._visualizer = sv if sv is not None else ov
         return merged
 
 
