@@ -165,6 +165,9 @@ class Portfolio:
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
+        if self._sector_visualizer is None:
+            logger.warning("No sector visualizer set for portfolio %r; skipping sector plot", self._name)
+            return
         data = self._sector_chart_data()
         if not data:
             logger.warning(
