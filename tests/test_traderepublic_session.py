@@ -91,10 +91,10 @@ class TestTradeRepublicSession(unittest.TestCase):
             return fake_tr
 
         with patch(
-            "traderepublic._import_pytr",
+            "scrape.traderepublic._import_pytr",
             return_value=(fake_login, FakePytrPortfolio),
         ):
-            rows = fetch_traderepublic_etfs()
+            rows = fetch_traderepublic_etfs(phone_no="+490000000", pin="0000")
 
         self.assertEqual(logins[0]["v2"], True)
         self.assertIn("IE0006WW1TQ4", rows)
@@ -116,11 +116,11 @@ class TestTradeRepublicSession(unittest.TestCase):
                 raise RuntimeError("boom")
 
         with patch(
-            "traderepublic._import_pytr",
+            "scrape.traderepublic._import_pytr",
             return_value=(fake_login, BoomPortfolio),
         ):
             with self.assertRaises(RuntimeError):
-                fetch_traderepublic_etfs()
+                fetch_traderepublic_etfs(phone_no="+490000000", pin="0000")
 
         self.assertEqual(fake_tr.closed, 1)
 
@@ -128,6 +128,74 @@ class TestTradeRepublicSession(unittest.TestCase):
         session = TradeRepublic()
         with self.assertRaises(RuntimeError):
             session.portfolio_and_cash()
+
+    def test_login_prompts_for_missing_credentials(self) -> None:
+        fake_tr = FakeTr()
+        logins: list[dict] = []
+
+        def fake_login(**kwargs):
+            logins.append(kwargs)
+            return fake_tr
+
+        with (
+            patch(
+                "scrape.traderepublic._import_pytr",
+                return_value=(fake_login, FakePytrPortfolio),
+            ),
+            patch("sys.stdin.isatty", return_value=True),
+            patch("builtins.input", return_value="+491234567") as prompt,
+            patch(
+                "scrape.traderepublic.getpass.getpass", return_value="1234"
+            ) as hidden,
+        ):
+            TradeRepublic().login()
+        prompt.assert_called_once()  # phone number is visible input
+        hidden.assert_called_once()  # PIN never goes through visible input()
+        self.assertEqual(logins[0]["phone_no"], "+491234567")
+        self.assertEqual(logins[0]["pin"], "1234")
+
+    def test_explicit_credentials_skip_prompts(self) -> None:
+        fake_tr = FakeTr()
+        logins: list[dict] = []
+
+        def fake_login(**kwargs):
+            logins.append(kwargs)
+            return fake_tr
+
+        with (
+            patch(
+                "scrape.traderepublic._import_pytr",
+                return_value=(fake_login, FakePytrPortfolio),
+            ),
+            patch("builtins.input") as prompt,
+            patch("scrape.traderepublic.getpass.getpass") as hidden,
+        ):
+            TradeRepublic(phone_no="+490000000", pin="0000").login()
+        prompt.assert_not_called()
+        hidden.assert_not_called()
+        self.assertEqual(logins[0]["phone_no"], "+490000000")
+        self.assertEqual(logins[0]["pin"], "0000")
+
+    def test_empty_phone_reprompts(self) -> None:
+        with (
+            patch("sys.stdin.isatty", return_value=True),
+            patch("builtins.input", side_effect=["", "  ", "+491234567"]) as prompt,
+        ):
+            from scrape.traderepublic import _prompt_phone_no
+
+            self.assertEqual(_prompt_phone_no(), "+491234567")
+        self.assertEqual(prompt.call_count, 3)
+
+    def test_non_tty_raises_without_prompting(self) -> None:
+        with (
+            patch("sys.stdin.isatty", return_value=False),
+            patch("builtins.input") as prompt,
+            patch("scrape.traderepublic.getpass.getpass") as hidden,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "interactive terminal"):
+                TradeRepublic().login()
+        prompt.assert_not_called()
+        hidden.assert_not_called()
 
 
 if __name__ == "__main__":

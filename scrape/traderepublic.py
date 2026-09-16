@@ -1,14 +1,19 @@
 """
 Trade Republic positions via the ``pytr`` library (login, compact portfolio, cash).
+
+Credentials are never read from disk: the phone number is read with ``input()``
+and the PIN with ``getpass`` (never echoed) when ``pytr`` (an unofficial
+Trade Republic API client, https://github.com/pytr/pytr) asks for them.
 """
 
 from __future__ import annotations
 
 import asyncio
+import getpass
 import logging
+import sys
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from typing import TYPE_CHECKING
@@ -26,30 +31,33 @@ attach_color_stderr_handler_for_module(logger)
 _TRADEREPUBLIC = "traderepublic"
 _CASH_NAME = "Cash"
 _CASH_FETCH_KEY = "__TRADEREPUBLIC_CASH__"
-_PYTR_CREDENTIALS = Path.home() / ".pytr" / "credentials"
 
 
-def _load_pytr_credentials() -> tuple[str | None, str | None]:
-    """Read phone + pin from ``~/.pytr/credentials`` (two lines), or ``(None, None)``."""
-    if not _PYTR_CREDENTIALS.is_file():
-        return None, None
-    try:
-        lines = _PYTR_CREDENTIALS.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        logger.warning("traderepublic: could not read %s: %s", _PYTR_CREDENTIALS, exc)
-        return None, None
-    if len(lines) < 2:
-        logger.warning(
-            "traderepublic: %s must have phone (line 1) and pin (line 2)",
-            _PYTR_CREDENTIALS,
+def _require_interactive_terminal() -> None:
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "Trade Republic login needs an interactive terminal for the phone "
+            "number / PIN prompt, but stdin is not a TTY. Run "
+            "`asalloc update --fetch-tr` in a real terminal instead of a pipe."
         )
-        return None, None
-    phone_no = lines[0].strip()
-    pin = lines[1].strip()
-    if not phone_no or not pin:
-        logger.warning("traderepublic: %s has empty phone or pin", _PYTR_CREDENTIALS)
-        return None, None
-    return phone_no, pin
+
+
+def _prompt_phone_no() -> str:
+    """Read the Trade Republic phone number from the terminal (visible)."""
+    _require_interactive_terminal()
+    phone_no = input("Trade Republic phone number: ").strip()
+    while not phone_no:
+        phone_no = input("Trade Republic phone number (must not be empty): ").strip()
+    return phone_no
+
+
+def _prompt_pin() -> str:
+    """Read the Trade Republic PIN from the terminal without echoing it."""
+    _require_interactive_terminal()
+    pin = getpass.getpass("Trade Republic PIN (hidden): ")
+    while not pin:
+        pin = getpass.getpass("Trade Republic PIN (hidden, must not be empty): ")
+    return pin
 
 
 @dataclass(frozen=True)
@@ -93,10 +101,6 @@ class TradeRepublic:
         v2: bool = True,
         store_credentials: bool = False,
     ) -> None:
-        if phone_no is None and pin is None:
-            phone_no, pin = _load_pytr_credentials()
-            if phone_no is not None:
-                logger.info("traderepublic: loaded credentials from %s", _PYTR_CREDENTIALS)
         self._phone_no = phone_no
         self._pin = pin
         self._v2 = v2
@@ -113,10 +117,12 @@ class TradeRepublic:
 
     def login(self) -> None:
         logger.info("traderepublic: starting pytr login (v2=%s)", self._v2)
+        phone_no = self._phone_no or _prompt_phone_no()
+        pin = self._pin or _prompt_pin()
         pytr_login, _ = _import_pytr()
         self._tr = pytr_login(
-            phone_no=self._phone_no,
-            pin=self._pin,
+            phone_no=phone_no,
+            pin=pin,
             store_credentials=self._store_credentials,
             waf_token="default",
             v2=self._v2,
@@ -255,7 +261,9 @@ def fetch_traderepublic_etfs(
 ) -> dict[str, TradeRepublicHolding]:
     """
     Login with ``pytr``, scrape compact portfolio and cash, then close the session.
-    Confirm the login in the Trade Republic app when prompted (v2 default).
+    Phone number and PIN come from terminal prompts (PIN hidden) unless passed
+    explicitly. Confirm the login in the Trade Republic app when prompted
+    (v2 default).
     """
     rows: dict[str, TradeRepublicHolding] = {}
     session = TradeRepublic(
