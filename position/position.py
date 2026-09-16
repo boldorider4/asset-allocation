@@ -69,11 +69,11 @@ _LIST_OF_DEVELOPED_MARKETS = [
 _LIST_OF_STAPLE_SECTORS = [
     "Technology",
     "Finance",
-    "Non-Energy Materials",
+    "Materials",
     "Consumer",
     "Business Services",
     "Industrials",
-    "Energy",
+    "Commodities",
     "Healthcare",
     "Telecommunication",
     "Utilities",
