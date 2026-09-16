@@ -62,9 +62,10 @@ _LIST_OF_DEVELOPED_MARKETS = [
     "United Kingdom",
 ]
 
-# Definitive sector labels. Raw JustETF variants (e.g. "Financials",
-# "Consumer Cyclicals", "Communication Services") are aggregated to these
-# canonical names by the scraper (see JustETFPosition); matching here is exact.
+# Definitive sector labels; the single source of truth. Raw scrape variants
+# (e.g. "Financials", "Consumer Cyclicals") are aggregated to these canonical
+# names by the scraper (see JustETFPosition); anything else folds into "Other"
+# via fold_unknown_sector_label so downstream layers only see definitive names.
 _LIST_OF_STAPLE_SECTORS = [
     "Technology",
     "Finance",
@@ -79,6 +80,16 @@ _LIST_OF_STAPLE_SECTORS = [
     "Real Estate",
     "Other",
 ]
+
+
+def fold_unknown_sector_label(name: str) -> str:
+    """Fold a sector label outside the staple taxonomy into "Other"."""
+    stripped = name.strip()
+    if stripped in _LIST_OF_STAPLE_SECTORS:
+        return stripped
+    logger.warning("Position: unknown sector label %r; folding into Other", name)
+    return "Other"
+
 # MSCI EM core + common broad-EM / frontier names; English labels as on JustETF / feeds.
 # Aliases (e.g. UAE, Czechia) are separate strings because matching is exact.
 _LIST_OF_EMERGING_MARKETS = [
@@ -381,11 +392,16 @@ class Position(ABC):
         cached_sectors: dict[str, float] | None,
     ) -> list[dict[str, float | str]] | None:
         # Sector weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        # Unknown labels (e.g. from older caches) fold into "Other", summing duplicates.
         if cached_sectors is None:
             return None
+        weights: dict[str, float] = {}
+        for name, w in cached_sectors.items():
+            canonical = fold_unknown_sector_label(name)
+            weights[canonical] = weights.get(canonical, 0.0) + float(w)
         return [
-            {"name": name, "weight_pct": float(w) * 100.0}
-            for name, w in cached_sectors.items()
+            {"name": name, "weight_pct": weight * 100.0}
+            for name, weight in weights.items()
         ]
 
     def _fetch_sectors_for_sectorsplit(

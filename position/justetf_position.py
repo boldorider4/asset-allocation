@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from position.position import Position
+from position.position import Position, fold_unknown_sector_label
 from logger import attach_color_stderr_handler_for_module
 
 logger = logging.getLogger(__name__)
@@ -350,9 +350,15 @@ class JustETFPosition(Position):
 
     @classmethod
     def _canonical_sector_name(cls, raw: str) -> str:
-        """Aggregate a raw JustETF sector label to its canonical staple name."""
+        """Aggregate a raw JustETF sector label to its canonical staple name.
+
+        Labels outside the staple taxonomy fold into "Other" so downstream
+        layers only ever see definitive sector names.
+        """
         stripped = raw.strip()
-        return cls._SECTOR_CANONICAL_NAMES.get(stripped, stripped)
+        return fold_unknown_sector_label(
+            cls._SECTOR_CANONICAL_NAMES.get(stripped, stripped)
+        )
 
     def _sectors_from_html_table(self, html: str) -> list[dict[str, float | str]]:
         weights: dict[str, float] = {}
