@@ -63,6 +63,25 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     server_version = "asalloc-dashboard/1.0"
 
+    def _redirect_root(self) -> bool:
+        """302 ``/`` to ``/dashboard``, preserving any query string."""
+        if urlsplit(self.path).path != "/":
+            return False
+        query = urlsplit(self.path).query
+        target = "/dashboard" + (f"?{query}" if query else "")
+        self.send_response(302)
+        self.send_header("Location", target)
+        self.end_headers()
+        return True
+
+    def do_GET(self) -> None:
+        if not self._redirect_root():
+            super().do_GET()
+
+    def do_HEAD(self) -> None:
+        if not self._redirect_root():
+            super().do_HEAD()
+
     def translate_path(self, path: str) -> str:
         url_path = urlsplit(path).path
         if url_path in DASHBOARD_PATHS:

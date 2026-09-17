@@ -52,8 +52,21 @@ class TestDashboardEndpoint(unittest.TestCase):
             self.assertEqual(status, 200, query)
             self.assertEqual(body, "DASHBOARD", query)
 
-    def test_root_still_serves_index(self) -> None:
-        status, body = self._get("/")
+    def test_root_redirects_to_dashboard(self) -> None:
+        import http.client
+
+        for path, location in (
+            ("/", "/dashboard"),
+            ("/?incognito=true", "/dashboard?incognito=true"),
+        ):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port)
+            conn.request("GET", path)
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 302, path)
+            self.assertEqual(resp.getheader("Location"), location, path)
+            conn.close()
+        # Redirect target serves the gallery.
+        status, body = self._get("/dashboard")
         self.assertEqual(status, 200)
         self.assertEqual(body, "DASHBOARD")
 
