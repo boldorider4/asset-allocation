@@ -264,6 +264,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_broker_marks_and_escaping(self) -> None:
         page = self._page()
+        self.assertIn('src="icons/scalable.png"', page)
+        self.assertIn('src="icons/oskar.png"', page)
+        self.assertIn('src="icons/traderepublic.png"', page)
+        # Unknown brokers keep the SVG fallback mark.
         self.assertIn("<svg", page)
         self.assertIn("&lt;evil&gt; &amp; co", page)
         self.assertNotIn("<evil>", page)
@@ -346,8 +350,7 @@ class TestNumberFormatting(unittest.TestCase):
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         page = render_constituents_page(sections)
-        self.assertIn(">AL<", page)
-        self.assertIn("#0b2a4a", page)
+        self.assertIn('src="icons/alte-leipziger.png"', page)
 
     def test_check24_broker_mark(self) -> None:
         assets = {
@@ -368,8 +371,7 @@ class TestNumberFormatting(unittest.TestCase):
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         page = render_constituents_page(sections)
-        self.assertIn("C24", page)
-        self.assertIn("#1a5fb4", page)
+        self.assertIn('src="icons/check24.png"', page)
 
     def test_name_cell_right_aligned_with_fixed_columns(self) -> None:
         css = (

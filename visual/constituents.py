@@ -37,13 +37,13 @@ _PENSION_BUCKET = "pension_portfolio"
 _FIXED_MATURITY_BUCKET = "fixed_maturity_bond_portfolio"
 _CHECK24 = "check24"
 
-# Placeholder broker marks (inline SVG, swappable for real uploads later).
-_BROKER_MARKS: dict[str, tuple[str, str]] = {
-    "oskar": ("O", "#7c5cbf"),
-    "scalable": ("S", "#2e9e6b"),
-    "traderepublic": ("TR", "#c8a24a"),
-    "check24": ("C24", "#1a5fb4"),
-    "alte-leipziger": ("AL", "#0b2a4a"),
+# Broker icons served from visual/web/icons/ (copied by `make web`).
+_BROKER_ICONS: dict[str, str] = {
+    "oskar": "oskar.png",
+    "scalable": "scalable.png",
+    "traderepublic": "traderepublic.png",
+    "check24": "check24.png",
+    "alte-leipziger": "alte-leipziger.png",
 }
 _FALLBACK_MARK = ("?", "#6b6259")
 
@@ -53,11 +53,18 @@ def _prettify_bucket(key: str) -> str:
 
 
 def _broker_mark(broker: str | None) -> str:
-    letter, color = _BROKER_MARKS.get(
-        (broker or "").strip().casefold(), _FALLBACK_MARK
-    )
+    key = (broker or "").strip().casefold()
+    title = html.escape(broker or "", quote=True)
+    icon = _BROKER_ICONS.get(key)
+    if icon is not None:
+        return (
+            f'<span class="broker-mark" title="{title}">'
+            f'<img src="icons/{icon}" width="22" height="22" alt="{title}" />'
+            f"</span>"
+        )
+    letter, color = _FALLBACK_MARK
     return (
-        f'<span class="broker-mark" title="{html.escape(broker or "", quote=True)}">'
+        f'<span class="broker-mark" title="{title}">'
         f'<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">'
         f'<rect x="1" y="1" width="30" height="30" rx="7" fill="{color}"/>'
         f'<text x="16" y="21" text-anchor="middle" font-size="13" '
