@@ -187,9 +187,14 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         help="Log into Trade Republic via pytr and scrape broker holdings.",
     )
     update.add_argument(
-        "--incognito",
+        "--plot-clear",
         action="store_true",
-        help="Show fake values for asset allocation.",
+        help="Emit charts with real values.",
+    )
+    update.add_argument(
+        "--plot-incognito",
+        action="store_true",
+        help="Emit charts with fake (scaled) values.",
     )
     update.add_argument(
         "--plot",

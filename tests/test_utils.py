@@ -138,7 +138,7 @@ class TestIncognitoScaling(unittest.TestCase):
         )
         with patch("random.randint", return_value=25000):
             apply_incognito_scaling(ctx)
-        self.assertEqual(ctx.config.incognito_value_factor, 250.0)
+        self.assertEqual(ctx.value_factor, 250.0)
         self.assertAlmostEqual(ctx.portfolio["a"][0]["value"], 40.0)
         self.assertAlmostEqual(ctx.portfolio["b"][0]["value"], 60.0)
         raw_total = sum(

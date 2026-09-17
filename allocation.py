@@ -38,7 +38,6 @@ def main(ctx: RuntimeContext) -> None:
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
-    logger.info("Writing charts to %s", ctx.output_data_dir)
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
@@ -57,9 +56,8 @@ def main(ctx: RuntimeContext) -> None:
         ctx.flush_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
-    if ctx.config.incognito:
-        logger.info("Incognito mode: scaling display values")
-        apply_incognito_scaling(ctx)
+    logger.info("Computing incognito display factor")
+    apply_incognito_scaling(ctx)
 
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
     fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True, ctx=ctx)
@@ -72,22 +70,36 @@ def main(ctx: RuntimeContext) -> None:
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
-    total_growth_portfolio.plot_geosplit(
-        title="95-5 Equity Portfolio",
-        closing_title="Value: {:.2f} €".format(total_growth_portfolio.total_value),
-        label_fontsize=7,
-        autopct_fontsize=7,
-    )
-    total_growth_portfolio.plot_sectors(
-        title="Sector Breakdown",
-        label_fontsize=7,
-        autopct_fontsize=7,
-    )
-    total_portfolio.plot_geosplit(
-        title="Complete Portfolio",
-        closing_title="Net Worth: {:.2f} €".format(total_portfolio.total_value),
-        label_fontsize=7,
-        autopct_fontsize=7,
-    )
+    passes = [
+        incognito
+        for incognito, requested in (
+            (False, ctx.config.plot_clear),
+            (True, ctx.config.plot_incognito),
+        )
+        if requested
+    ]
+    for incognito in passes:
+        ctx.configure_web_output(incognito=incognito)
+        logger.info("Writing charts to %s", ctx.output_data_dir(incognito=incognito))
+        total_growth_portfolio.plot_geosplit(
+            title="95-5 Equity Portfolio",
+            closing_title="Total Value: {tot_value}",
+            label_fontsize=7,
+            autopct_fontsize=7,
+            incognito=incognito,
+        )
+        total_growth_portfolio.plot_sectors(
+            title="Sector Breakdown",
+            label_fontsize=7,
+            autopct_fontsize=7,
+            incognito=incognito,
+        )
+        total_portfolio.plot_geosplit(
+            title="Complete Portfolio",
+            closing_title="Net Worth: {tot_value}",
+            label_fontsize=7,
+            autopct_fontsize=7,
+            incognito=incognito,
+        )
     ctx.flush_cache()
     ctx.plotter_class().finish_plots()

@@ -122,11 +122,10 @@ def _incognito_cached_price(ctx: Any, isin: str | None) -> float | None:
 
 def apply_incognito_scaling(ctx: Any) -> None:
     """
-    Pick a random total in ``[10001, 54999]`` and set
-    ``ctx.config.incognito_value_factor`` so that (when positions use cached
-    prices / explicit JSON values) portfolio totals match that target. Does
-    **not** mutate the portfolio dict; scaling is applied when building
-    ``Position`` instances via ``factory``.
+    Pick a random total in ``[10001, 54999]`` and store the resulting display
+    factor on ``ctx.value_factor`` (default ``1.0``). Does **not** mutate the
+    portfolio dict or any stored value; the factor is consumed explicitly by
+    the ``incognito=True`` plot path.
 
     Totals use explicit JSON ``value`` when set. Otherwise uses **cache only**
     (``shares`` × cached ``price``); missing cache entry or missing price → **0**
@@ -153,7 +152,7 @@ def apply_incognito_scaling(ctx: Any) -> None:
         return
 
     target = float(random.randint(10001, 54999))
-    ctx.config.incognito_value_factor = target / total
+    ctx.value_factor = target / total
 
 
 def load_portfolio(path: Path) -> dict[str, list[dict]]:

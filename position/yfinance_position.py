@@ -35,7 +35,6 @@ class YFinancePosition(Position):
         dmem_other: float | None = None,
         cached_countries: dict[str, float] | None = None,
         cached_sectors: dict[str, float] | None = None,
-        value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
         ctx: RuntimeContext | None = None,
@@ -55,7 +54,6 @@ class YFinancePosition(Position):
             dmem_other=dmem_other,
             cached_countries=cached_countries,
             cached_sectors=cached_sectors,
-            value_scale=value_scale,
             price=price,
             prefer_scrape_value=prefer_scrape_value,
             ctx=ctx,
@@ -90,7 +88,7 @@ class YFinancePosition(Position):
         """USD per 1 EUR (Yahoo convention for EURUSD=X)."""
         from position.factory import factory as _factory
 
-        fx = _factory(self._EURUSD_SYMBOL, value_scale=1.0, ctx=self._ctx)
+        fx = _factory(self._EURUSD_SYMBOL, ctx=self._ctx)
         return fx.price
 
     def _init_eur_scaling(self) -> None:

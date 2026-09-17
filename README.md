@@ -59,13 +59,14 @@ Useful `update` flags:
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
 | `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
-| `--incognito` | Scale display values and write charts to `data/incognito/` instead of `data/` |
+| `--plot-clear` | Emit charts with real values to `data/clear/` |
+| `--plot-incognito` | Emit charts with fake (scaled) values to `data/incognito/` |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
 
-The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/clear/` — or `data/incognito/` when `asalloc update --incognito` is used. Scaffold the JS app (without touching existing raw files) with:
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/clear/` — or `data/incognito/` when `asalloc update --plot-incognito` is used (both passes can run in one invocation; the scrape runs once). Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
 make web

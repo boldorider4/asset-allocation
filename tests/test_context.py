@@ -24,7 +24,8 @@ def _update_ns(**overrides) -> argparse.Namespace:
         "assets_file": None,
         "cache_file": None,
         "position_source": "justetf",
-        "incognito": False,
+        "plot_clear": False,
+        "plot_incognito": False,
         "plot": "web",
         "log_level": "INFO",
     }
@@ -191,8 +192,10 @@ class TestIncognitoOutputDir(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(config=AppConfig(server=_server(server)))
-            self.assertEqual(ctx.output_data_dir, server / "data" / "clear")
-            ctx.configure_web_output()
+            self.assertEqual(
+                ctx.output_data_dir(incognito=False), server / "data" / "clear"
+            )
+            ctx.configure_web_output(incognito=False)
             from visual.web_chart import WebChart
 
             self.assertEqual(WebChart.data_dir, server / "data" / "clear")
@@ -203,10 +206,12 @@ class TestIncognitoOutputDir(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(
-                config=AppConfig(incognito=True, server=_server(server))
+                config=AppConfig(plot_incognito=True, server=_server(server))
             )
-            self.assertEqual(ctx.output_data_dir, server / "data" / "incognito")
-            ctx.configure_web_output()
+            self.assertEqual(
+                ctx.output_data_dir(incognito=True), server / "data" / "incognito"
+            )
+            ctx.configure_web_output(incognito=True)
             from visual.web_chart import WebChart
 
             self.assertEqual(WebChart.data_dir, server / "data" / "incognito")
@@ -215,14 +220,17 @@ class TestIncognitoOutputDir(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(
-                config=AppConfig(incognito=True, server=_server(server))
+                config=AppConfig(plot_incognito=True, server=_server(server))
             )
-            ctx.configure_web_output()
+            ctx.configure_web_output(incognito=True)
             from visual.web_chart import WebChart
 
             WebChart(data={"A": 1.0}, title="Incognito check").plot()
-            raw = ctx.output_data_dir / "01-incognito-check.raw"
+            raw = ctx.output_data_dir(incognito=True) / "01-incognito-check.raw"
             self.assertTrue(raw.is_file())
+
+    def test_value_factor_defaults_to_one(self) -> None:
+        self.assertEqual(RuntimeContext().value_factor, 1.0)
 
 
 def _server(directory: Path):

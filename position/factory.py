@@ -95,12 +95,8 @@ def factory(
     dmem_other: float | None = None,
     *,
     ctx: RuntimeContext,
-    value_scale: float | None = None,
     price: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
-    if value_scale is None:
-        logger.info("Factory: no value scale provided, using default value")
-        value_scale = ctx.config.incognito_value_factor
     cache = ctx.ensure_cache_loaded()
     cached_price, cached_countries, cached_sectors = parse_cache_entry(cache.get(isin))
     fetch_prices = ctx.config.fetch_prices
@@ -153,7 +149,6 @@ def factory(
         "dmem_other": dmem_other,
         "cached_countries": countries_arg,
         "cached_sectors": sectors_arg,
-        "value_scale": value_scale,
         "price": ctor_price,
         "prefer_scrape_value": prefer_scrape_value,
         "ctx": ctx,

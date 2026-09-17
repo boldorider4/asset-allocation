@@ -57,6 +57,15 @@ class Visual(ABC):
     def closing_title(self, value: str | None) -> None:
         self._closing_title = value
 
+    @property
+    def factor(self) -> dict | None:
+        """Absolute-value factor (``{"value": ..., "unit": ...}``), if any."""
+        return getattr(self, "_factor", None)
+
+    @factor.setter
+    def factor(self, value: dict | None) -> None:
+        self._factor = value
+
     @abstractmethod
     def plot(self) -> None:
         pass

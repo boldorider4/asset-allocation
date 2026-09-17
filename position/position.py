@@ -170,7 +170,6 @@ class Position(ABC):
         dmem_other: float | None = None,
         cached_countries: dict[str, float] | None = None,
         cached_sectors: dict[str, float] | None = None,
-        value_scale: float = 1.0,
         price: float | None = None,
         prefer_scrape_value: bool = False,
         ctx: RuntimeContext | None = None,
@@ -182,7 +181,6 @@ class Position(ABC):
         self._short_name = short_name
         self._shares = shares
         self._value = value
-        self._value_scale = value_scale
         self._broker = broker
         self._isin = isin
         self._dmem = dmem
@@ -307,7 +305,6 @@ class Position(ABC):
             or base is None
             or not self._ctx.config.fetch_prices
             or self._prefer_scrape_value
-            or self._ctx.config.incognito
             or not self._isin
             or self._shares is None
         ):
@@ -320,8 +317,8 @@ class Position(ABC):
         self._stage_fetched_asset_value(base, from_quote)
         if base is None:
             return None
-        logger.info("Position: computed value: %s", base * self._value_scale)
-        return base * self._value_scale
+        logger.info("Position: computed value: %s", base)
+        return base
 
     @property
     def dmem(self) -> float | None:

@@ -56,8 +56,8 @@ class AppConfig:
     fetch_oskar: bool = False
     fetch_scalable: bool = False
     fetch_traderepublic: bool = False
-    incognito: bool = False
-    incognito_value_factor: float = 1.0
+    plot_clear: bool = False
+    plot_incognito: bool = False
     position_source: PositionSource = "justetf"
     plotter: PlotterKind = "web"
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
@@ -136,7 +136,8 @@ class AppConfig:
             fetch_oskar=bool(getattr(args, "fetch_oskar", False)),
             fetch_scalable=bool(getattr(args, "fetch_scalable", False)),
             fetch_traderepublic=bool(getattr(args, "fetch_tr", False)),
-            incognito=bool(getattr(args, "incognito", False)),
+            plot_clear=bool(getattr(args, "plot_clear", False)),
+            plot_incognito=bool(getattr(args, "plot_incognito", False)),
             position_source=source,  # type: ignore[arg-type]
             plotter=plotter,  # type: ignore[arg-type]
             assets_file=Path(assets) if assets else DEFAULT_ASSETS_PATH,
@@ -162,6 +163,9 @@ class RuntimeContext:
     oskar_etfs: dict[str, Any] = field(default_factory=dict)
     scalable_holdings: dict[str, Any] = field(default_factory=dict)
     traderepublic_holdings: dict[str, Any] = field(default_factory=dict)
+    # Display-only value scaler for incognito plots (computed once per run;
+    # stored clear values are never mutated).
+    value_factor: float = 1.0
 
     # -- portfolio --
     def load_portfolio(self, path: Path | None = None) -> None:
@@ -217,16 +221,15 @@ class RuntimeContext:
         except KeyError as exc:
             raise ValueError(f"unknown plotter {self.config.plotter!r}") from exc
 
-    @property
-    def output_data_dir(self) -> Path:
-        """Chart output dir: ``data/incognito`` for incognito runs, else ``data/clear``."""
+    def output_data_dir(self, *, incognito: bool = False) -> Path:
+        """Chart output dir: ``data/incognito`` for incognito passes, else ``data/clear``."""
         base = self.config.server.directory / "data"
-        return base / "incognito" if self.config.incognito else base / "clear"
+        return base / "incognito" if incognito else base / "clear"
 
-    def configure_web_output(self):  # type: ignore[no-untyped-def]
-        """Point WebChart file output at :prop:`output_data_dir`; reset seq."""
+    def configure_web_output(self, *, incognito: bool = False):  # type: ignore[no-untyped-def]
+        """Point WebChart file output at the pass's dir; reset seq."""
         from visual.web_chart import WebChart
 
-        WebChart.data_dir = self.output_data_dir
+        WebChart.data_dir = self.output_data_dir(incognito=incognito)
         WebChart._slug_counts = {}
         WebChart._plot_seq = 0

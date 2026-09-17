@@ -159,21 +159,43 @@ class Portfolio:
                 consolidated[label] = consolidated.get(label, 0.0) + share
         return consolidated
 
+    def _live_total(self, *, incognito: bool) -> float:
+        """Display total: stored clear value, scaled for incognito passes."""
+        scale = self._ctx.value_factor if incognito else 1.0
+        return self._value * scale
+
+    @staticmethod
+    def _render_closing_title(template: str | None, total: float) -> str | None:
+        """Format a ``{tot_value}`` template, passing other strings through."""
+        if template is not None and "{tot_value}" in template:
+            return template.format(tot_value=total)
+        return template
+
+    def _sync_factor(self, viz: Visual | None, total: float) -> None:
+        """Point a persistent visualizer at the pass's absolute total."""
+        if viz is not None and getattr(viz, "factor", None) is not None:
+            viz.factor = {"value": total, "unit": "Euro"}
+
     def plot_geosplit(
         self,
         title: str | None = None,
         closing_title: str | None = None,
         *,
+        incognito: bool = False,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
         if self._geosplit_visualizer is None:
             logger.warning("No geosplit visualizer set for portfolio %r; skipping plot", self._name)
             return
+        total = self._live_total(incognito=incognito)
         if title is not None:
             self._geosplit_visualizer.title = title
         if closing_title is not None:
-            self._geosplit_visualizer.closing_title = closing_title
+            self._geosplit_visualizer.closing_title = self._render_closing_title(
+                closing_title, total
+            )
+        self._sync_factor(self._geosplit_visualizer, total)
         self._geosplit_visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,
@@ -194,6 +216,7 @@ class Portfolio:
         title: str | None = None,
         closing_title: str | None = None,
         *,
+        incognito: bool = False,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
@@ -203,10 +226,14 @@ class Portfolio:
                 self._name,
             )
             return
+        total = self._live_total(incognito=incognito)
         if title is not None:
             self._sector_visualizer.title = title
         if closing_title is not None:
-            self._sector_visualizer.closing_title = closing_title
+            self._sector_visualizer.closing_title = self._render_closing_title(
+                closing_title, total
+            )
+        self._sync_factor(self._sector_visualizer, total)
         self._sector_visualizer.plot(
             label_fontsize=label_fontsize,
             autopct_fontsize=autopct_fontsize,

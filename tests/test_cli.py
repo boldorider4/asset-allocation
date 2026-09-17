@@ -47,7 +47,8 @@ class TestCliPlotFlags(unittest.TestCase):
                     assets_file=Path(tmp) / "assets.json",
                     cache_file=Path(tmp) / "cache.json",
                     position_source="yfinance",
-                    incognito=False,
+                    plot_clear=True,
+                    plot_incognito=True,
                     plot="pie-chart",
                     log_level="INFO",
                 )
@@ -64,6 +65,8 @@ class TestCliPlotFlags(unittest.TestCase):
         self.assertTrue(config.fetch_prices)
         self.assertEqual(config.position_source, "yfinance")
         self.assertEqual(config.plotter, "pie-chart")
+        self.assertTrue(config.plot_clear)
+        self.assertTrue(config.plot_incognito)
         self.assertTrue(str(config.cache_file).endswith("cache.json"))
 
 
