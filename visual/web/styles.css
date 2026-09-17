@@ -303,7 +303,34 @@ table {
   max-width: 100rem;
   margin: 0 auto 0.4rem;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 0.85rem;
+}
+
+th:nth-child(1),
+td:nth-child(1) {
+  width: 40%;
+}
+
+th:nth-child(2),
+td:nth-child(2),
+th:nth-child(3),
+td:nth-child(3),
+th:nth-child(4),
+td:nth-child(4) {
+  width: 16%;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
+  width: 12%;
+}
+
+td.name {
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 th {

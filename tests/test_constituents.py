@@ -144,6 +144,97 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('<a class="nav-button" href="/dashboard">Overview</a>', page)
 
 
+class TestNumberFormatting(unittest.TestCase):
+    def _page(self) -> str:
+        assets = {
+            "equity_portfolio": [
+                {
+                    "name": "Decimals",
+                    "shares": 220.0,
+                    "value": 500.50,
+                    "broker": "scalable",
+                    "ISIN": "IE00X",
+                }
+            ]
+        }
+        cache = {"IE00X": {"price": 81.256}}
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text(json.dumps(cache), encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        return render_constituents_page(sections)
+
+    def test_two_decimals_tops(self) -> None:
+        page = self._page()
+        self.assertIn(">81.26<", page)
+        self.assertIn(">500.5<", page)
+        self.assertIn('value="220"', page)
+        self.assertNotIn("81.256", page)
+        self.assertNotIn("500.50", page)
+
+    def test_alte_leipziger_broker_mark(self) -> None:
+        assets = {
+            "equity_portfolio": [
+                {
+                    "name": "AL Fund",
+                    "shares": 5,
+                    "value": 100,
+                    "broker": "alte-leipziger",
+                    "ISIN": None,
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text("{}", encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        page = render_constituents_page(sections)
+        self.assertIn(">AL<", page)
+        self.assertIn("#0b2a4a", page)
+
+    def test_check24_broker_mark(self) -> None:
+        assets = {
+            "equity_portfolio": [
+                {
+                    "name": "Check ETF",
+                    "shares": 5,
+                    "value": 100,
+                    "broker": "check24",
+                    "ISIN": None,
+                }
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text("{}", encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        page = render_constituents_page(sections)
+        self.assertIn("C24", page)
+        self.assertIn("#1a5fb4", page)
+
+    def test_name_cell_right_aligned_with_fixed_columns(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("table-layout: fixed", css)
+        self.assertIn("td.name", css)
+        self.assertIn("text-align: right", css)
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        page = render_constituents_page(sections)
+        self.assertIn('<td class="name"', page)
+
+
 class TestConstituentsRoute(unittest.TestCase):
     def setUp(self) -> None:
         self._holder = tempfile.TemporaryDirectory()

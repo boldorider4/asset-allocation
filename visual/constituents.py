@@ -33,6 +33,8 @@ _BROKER_MARKS: dict[str, tuple[str, str]] = {
     "oskar": ("O", "#7c5cbf"),
     "scalable": ("S", "#2e9e6b"),
     "traderepublic": ("TR", "#c8a24a"),
+    "check24": ("C24", "#1a5fb4"),
+    "alte-leipziger": ("AL", "#0b2a4a"),
 }
 _FALLBACK_MARK = ("?", "#6b6259")
 
@@ -58,8 +60,13 @@ def _broker_mark(broker: str | None) -> str:
 def _text(value: Any) -> str:
     if value is None:
         return _MISSING
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        # Two decimals tops: round, then drop trailing zeros.
+        return f"{value:.2f}".rstrip("0").rstrip(".") or "0"
     return str(value)
 
 
@@ -149,9 +156,11 @@ def render_constituents_page(
                 if row["editable_shares"]
                 else _locked_box(row["shares"], name="shares")
             )
+            name_text = _text(row["name"])
             parts.append(
                 "<tr>"
-                f"<td>{html.escape(_text(row['name']), quote=False)}</td>"
+                f'<td class="name" title="{html.escape(name_text, quote=True)}">'
+                f"{html.escape(name_text, quote=False)}</td>"
                 f"<td>{_locked_box(row['value'], name='value')}</td>"
                 f"<td>{shares_cell}</td>"
                 f"<td>{_locked_box(row['price'], name='price')}</td>"
