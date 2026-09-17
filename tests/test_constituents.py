@@ -143,6 +143,18 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("<h2>Equity</h2>", page)
         self.assertIn("<h2>Weird Bucket</h2>", page)
 
+    def test_tables_scroll_horizontally_on_small_screens(self) -> None:
+        page = self._page()
+        self.assertEqual(page.count('class="table-scroll"'), 3)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("overflow-x: auto", css)
+        self.assertIn(".table-scroll table", css)
+
     def test_cells_and_placeholders(self) -> None:
         page = self._page()
         self.assertIn("Amundi Core", page)

@@ -166,6 +166,7 @@ def render_constituents_page(
             parts.append('<hr class="section-rule" />')
         parts.append(f"<section><h2>{html.escape(label, quote=False)}</h2>")
         parts.append(
+            '<div class="table-scroll">'
             "<table><thead><tr>"
             "<th>Name</th><th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
             "</tr></thead><tbody>"
@@ -198,7 +199,7 @@ def render_constituents_page(
                 f"<td>{_broker_mark(row['broker'])}</td>"
                 "</tr>"
             )
-        parts.append("</tbody></table></section>")
+        parts.append("</tbody></table></div></section>")
     return f"""<!DOCTYPE html>
 <html lang="en">
   <head>

@@ -307,18 +307,32 @@ table {
   font-size: 0.85rem;
 }
 
+.table-scroll {
+  max-width: 100rem;
+  margin: 0 auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll table {
+  min-width: 52rem;
+}
+
 th:nth-child(1),
 td:nth-child(1) {
-  width: 40%;
+  width: 36%;
 }
 
 th:nth-child(2),
 td:nth-child(2),
-th:nth-child(3),
-td:nth-child(3),
 th:nth-child(4),
 td:nth-child(4) {
-  width: 16%;
+  width: 19%;
+}
+
+th:nth-child(3),
+td:nth-child(3) {
+  width: 14%;
 }
 
 th:nth-child(5),
