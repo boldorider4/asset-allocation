@@ -217,10 +217,16 @@ class RuntimeContext:
         except KeyError as exc:
             raise ValueError(f"unknown plotter {self.config.plotter!r}") from exc
 
+    @property
+    def output_data_dir(self) -> Path:
+        """Chart output dir: ``data/incognito`` for incognito runs, else ``data``."""
+        base = self.config.server.directory / "data"
+        return base / "incognito" if self.config.incognito else base
+
     def configure_web_output(self):  # type: ignore[no-untyped-def]
-        """Point WebChart file output at the server directory; reset seq."""
+        """Point WebChart file output at :prop:`output_data_dir`; reset seq."""
         from visual.web_chart import WebChart
 
-        WebChart.data_dir = self.config.server.directory / "data"
+        WebChart.data_dir = self.output_data_dir
         WebChart._slug_counts = {}
         WebChart._plot_seq = 0

@@ -38,6 +38,7 @@ def main(ctx: RuntimeContext) -> None:
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
+    logger.info("Writing charts to %s", ctx.output_data_dir)
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)

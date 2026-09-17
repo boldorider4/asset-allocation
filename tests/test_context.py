@@ -171,5 +171,63 @@ class TestPlotterSelection(unittest.TestCase):
         self.assertFalse(b.config.fetch_prices)
 
 
+class TestIncognitoOutputDir(unittest.TestCase):
+    def setUp(self) -> None:
+        from visual.web_chart import WebChart
+
+        self._orig_dir = WebChart.data_dir
+        self._orig_counts = dict(WebChart._slug_counts)
+        self._orig_seq = WebChart._plot_seq
+        self.addCleanup(self._restore_output_state)
+
+    def _restore_output_state(self) -> None:
+        from visual.web_chart import WebChart
+
+        WebChart.data_dir = self._orig_dir
+        WebChart._slug_counts = self._orig_counts
+        WebChart._plot_seq = self._orig_seq
+
+    def test_plain_run_writes_to_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server = Path(tmp) / "visualizer"
+            ctx = RuntimeContext(config=AppConfig(server=_server(server)))
+            self.assertEqual(ctx.output_data_dir, server / "data")
+            ctx.configure_web_output()
+            from visual.web_chart import WebChart
+
+            self.assertEqual(WebChart.data_dir, server / "data")
+
+    def test_incognito_run_writes_to_data_incognito(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server = Path(tmp) / "visualizer"
+            ctx = RuntimeContext(
+                config=AppConfig(incognito=True, server=_server(server))
+            )
+            self.assertEqual(ctx.output_data_dir, server / "data" / "incognito")
+            ctx.configure_web_output()
+            from visual.web_chart import WebChart
+
+            self.assertEqual(WebChart.data_dir, server / "data" / "incognito")
+
+    def test_incognito_plot_creates_subdir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server = Path(tmp) / "visualizer"
+            ctx = RuntimeContext(
+                config=AppConfig(incognito=True, server=_server(server))
+            )
+            ctx.configure_web_output()
+            from visual.web_chart import WebChart
+
+            WebChart(data={"A": 1.0}, title="Incognito check").plot()
+            raw = ctx.output_data_dir / "01-incognito-check.raw"
+            self.assertTrue(raw.is_file())
+
+
+def _server(directory: Path):
+    from context import ServerConfig
+
+    return ServerConfig(port=8765, address="localhost", directory=directory)
+
+
 if __name__ == "__main__":
     unittest.main()

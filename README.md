@@ -59,7 +59,7 @@ Useful `update` flags:
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
 | `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
-| `--incognito` | Scale display values |
+| `--incognito` | Scale display values and write charts to `data/incognito/` instead of `data/` |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
