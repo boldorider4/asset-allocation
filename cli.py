@@ -85,13 +85,17 @@ def cmd_stop(_args: argparse.Namespace) -> None:
     pid_file.unlink(missing_ok=True)
 
 
-def cmd_serve(_args: argparse.Namespace) -> None:
+def cmd_serve(args: argparse.Namespace) -> None:
+    from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+
     cfg = load_server_config()
     cfg.directory.mkdir(parents=True, exist_ok=True)
     (cfg.directory / "data").mkdir(exist_ok=True)
     (cfg.directory / "data" / "clear").mkdir(exist_ok=True)
     (cfg.directory / "data" / "incognito").mkdir(exist_ok=True)
     pid_file = cfg.directory / ".serve.pid"
+    assets_file = Path(args.assets_file) if args.assets_file else DEFAULT_ASSETS_PATH
+    cache_file = Path(args.cache_file) if args.cache_file else DEFAULT_CACHE_PATH
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -103,6 +107,10 @@ def cmd_serve(_args: argparse.Namespace) -> None:
             cfg.address,
             "--directory",
             str(cfg.directory),
+            "--assets-file",
+            str(assets_file),
+            "--cache-file",
+            str(cache_file),
         ],
         cwd=cfg.directory,
         stdout=subprocess.DEVNULL,
@@ -239,6 +247,20 @@ def main(argv: list[str] | None = None) -> None:
     serve = subparsers.add_parser(
         "serve",
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
+    )
+    serve.add_argument(
+        "--assets-file",
+        type=Path,
+        dest="assets_file",
+        default=None,
+        help="Assets JSON file backing /constituents (default: assets.json next to the package).",
+    )
+    serve.add_argument(
+        "--cache-file",
+        type=Path,
+        dest="cache_file",
+        default=None,
+        help="Cache JSON file backing /constituents prices (default: cache.json next to the package).",
     )
     serve.set_defaults(func=cmd_serve)
 

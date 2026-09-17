@@ -82,6 +82,8 @@ asalloc serve
 
 Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the clear charts, or `http://localhost:8765/dashboard?incognito=true` for the incognito set — same gallery, only the data root differs (`data/clear/` vs `data/incognito/`).
 
+`http://localhost:8765/constituents` shows the holdings from `assets.json` (prices from `cache.json`) as read-only tables with editable shares boxes; edits are never persisted. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
+
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 
 | Target | What it does |

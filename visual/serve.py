@@ -24,9 +24,12 @@ import http.server
 import logging
 from urllib.parse import parse_qs, urlsplit
 
+from visual.constituents import load_constituents, render_constituents_page
+
 logger = logging.getLogger(__name__)
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
+CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
 GALLERY_PATHS = ("/", "/index.html", "/index.htm", "/dashboard", "/dashboard/")
 DATA_PREFIX = "/data"
 CLEAR_DIR = "clear"
@@ -74,12 +77,40 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return True
 
+    def __init__(self, *args, assets_file=None, cache_file=None, **kwargs):
+        self._assets_file = assets_file
+        self._cache_file = cache_file
+        super().__init__(*args, **kwargs)
+
+    def _serve_constituents(self) -> bool:
+        """Render the constituents page; 502 with a plain reason on failure."""
+        if urlsplit(self.path).path not in CONSTITUENTS_PATHS:
+            return False
+        try:
+            if not self._assets_file or not self._cache_file:
+                raise RuntimeError("assets file not configured")
+            body = render_constituents_page(
+                load_constituents(self._assets_file, self._cache_file)
+            ).encode("utf-8")
+            status, content_type = 200, "text/html; charset=utf-8"
+        except Exception as exc:
+            logger.warning("constituents unavailable: %s", exc)
+            body = f"constituents unavailable: {exc}".encode("utf-8")
+            status, content_type = 502, "text/plain; charset=utf-8"
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+        return True
+
     def do_GET(self) -> None:
-        if not self._redirect_root():
+        if not self._redirect_root() and not self._serve_constituents():
             super().do_GET()
 
     def do_HEAD(self) -> None:
-        if not self._redirect_root():
+        if not self._redirect_root() and not self._serve_constituents():
             super().do_HEAD()
 
     def translate_path(self, path: str) -> str:
@@ -96,9 +127,21 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
 
-def serve_forever(*, address: str, port: int, directory: str) -> None:
+def serve_forever(
+    *,
+    address: str,
+    port: int,
+    directory: str,
+    assets_file: str | None = None,
+    cache_file: str | None = None,
+) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
-    handler = functools.partial(DashboardHandler, directory=directory)
+    handler = functools.partial(
+        DashboardHandler,
+        directory=directory,
+        assets_file=assets_file,
+        cache_file=cache_file,
+    )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
         httpd.serve_forever()
@@ -109,9 +152,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bind", default="localhost", help="Address to bind (default: localhost).")
     parser.add_argument("--port", type=int, required=True, help="Port to listen on.")
     parser.add_argument("--directory", required=True, help="Visualizer directory to serve.")
+    parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
+    parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    serve_forever(address=args.bind, port=args.port, directory=args.directory)
+    serve_forever(
+        address=args.bind,
+        port=args.port,
+        directory=args.directory,
+        assets_file=args.assets_file,
+        cache_file=args.cache_file,
+    )
 
 
 if __name__ == "__main__":

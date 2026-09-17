@@ -36,7 +36,7 @@ clean: web-clean
 
 serve: web
 	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
-	asalloc serve
+	asalloc serve --assets-file $(INSTALL_ROOT)/assets.json --cache-file $(INSTALL_ROOT)/cache.json
 
 stop-serve:
 	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
