@@ -54,4 +54,40 @@
       save(target);
     }
   });
+
+  function setStatus(text) {
+    const status = document.getElementById("update-status");
+    if (!status) {
+      return;
+    }
+    status.textContent = text;
+    status.hidden = !text;
+  }
+
+  async function refreshAndGo(event) {
+    event.preventDefault();
+    const link = event.currentTarget;
+    if (link.dataset.busy === "1") {
+      return;
+    }
+    link.dataset.busy = "1";
+    setStatus("Updating charts…");
+    try {
+      const response = await fetch("/api/update", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      window.location.href = "/dashboard";
+    } catch (err) {
+      setStatus("Update failed: " + (err && err.message ? err.message : err));
+      link.dataset.busy = "";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const overview = document.getElementById("overview-link");
+    if (overview) {
+      overview.addEventListener("click", refreshAndGo);
+    }
+  });
 })();

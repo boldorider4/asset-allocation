@@ -460,10 +460,9 @@ class TestFactoryCacheFlags(unittest.TestCase):
         saved = self.ctx.cache["IE0006WW1TQ4"]
         self.assertEqual(saved["countries"]["Germany"], 0.4)
 
-    def test_countries_only_cache_row_fetches_price_without_caching_it(self) -> None:
-        """A ``--fetch-geosplit`` row has no ``price``: fetch it, never store 0.0."""
+    def test_countries_only_cache_row_backfills_missing_price(self) -> None:
+        """A ``--fetch-geosplit`` row has no ``price``: fetch it and store it."""
         self.ctx.cache = {"IE0006WW1TQ4": {"countries": {"France": 1.0}}}
-        before = dict(self.ctx.cache)
         self.ctx.config.fetch_prices = False
         self.ctx.config.fetch_geosplit = False
         self.ctx.config.fetch_scalable = False
@@ -471,8 +470,37 @@ class TestFactoryCacheFlags(unittest.TestCase):
             pos = self._factory(price=None)
         fast.assert_called()
         self.assertEqual(pos.price, 8.65)
-        self.assertEqual(self.ctx.cache, before)
-        self.assertFalse(self.ctx.cache_dirty)
+        self.assertEqual(
+            self.ctx.cache,
+            {"IE0006WW1TQ4": {"countries": {"France": 1.0}, "price": 8.65}},
+        )
+        self.assertTrue(self.ctx.cache_dirty)
+
+    def test_nulled_value_row_uses_shares_times_cached_price(self) -> None:
+        """A shares edit nulls the file value, so shares × quote wins."""
+        self.ctx.config.fetch_prices = False
+        self.ctx.config.fetch_scalable = False
+        self.ctx.portfolio.clear()
+        self.ctx.portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 4,
+                "value": None,
+                "broker": "scalable",
+            }
+        ]
+        with patch("utils.write_portfolio") as write:
+            with patch.object(
+                JustETFPosition,
+                "_fast_info_price",
+                side_effect=AssertionError("must use cached price"),
+            ):
+                pos = self._factory(broker="scalable", value=None, shares=4, price=None)
+            persist_fetched_values_in_portfolio(self.ctx)
+        self.assertEqual(pos.price, 10.0)
+        self.assertEqual(pos.value, 40.0)
+        write.assert_not_called()
 
     def test_neither_flag_does_not_rewrite_cache(self) -> None:
         before = dict(self.ctx.cache)

@@ -48,11 +48,12 @@ service:
 	$(MAKE) web VISUALIZER=$(INSTALL_VIS)
 	mkdir -p $(INSTALL_ROOT) $(INSTALL_VIS)/data $(SYSTEMD_USER)
 	cp config.ini $(INSTALL_ROOT)/
-	cp systemd/asalloc-serve.service systemd/asalloc-update.service systemd/asalloc-update.timer $(SYSTEMD_USER)/
+	cp systemd/asalloc-serve.service systemd/asalloc-update.service systemd/asalloc-update.timer systemd/asalloc-lite-update.service $(SYSTEMD_USER)/
 	systemctl --user daemon-reload
 	systemctl --user enable --now asalloc-serve.service
 	systemctl --user enable --now asalloc-update.timer
 	@echo "Installed user units. Place holdings at $(INSTALL_ROOT)/assets.json"
+	@echo "asalloc-lite-update.service was copied but left disabled for the admin to start manually"
 	@echo "Headless hosts: sudo loginctl enable-linger $$USER"
 
 stop-service:

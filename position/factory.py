@@ -118,7 +118,7 @@ def factory(
         ctor_price = cached_price if cached_price is not None else price
     if ctor_price is None and not fetch_prices:
         logger.warning(
-            "Factory: no cached price for %s; Position will fetch it (not cached without --fetch-prices)",
+            "Factory: no cached price for %s; Position will fetch it live",
             isin,
         )
 
@@ -227,9 +227,15 @@ def factory(
     else:
         raise ValueError(f"Unknown position_source: {position_source!r}")
 
-    # ``--fetch-prices`` always refreshes the cached quote; the assets file
-    # never stores a price. Staged in-memory; flushed once at end of run.
-    update_price = fetch_prices and isin is not None and position.price is not None
+    # A fetched quote is always written back to the cache (even without
+    # ``--fetch-prices``) when the row had no cached price, so the cost of a
+    # live fetch is paid once; the assets file never stores a price.
+    # Staged in-memory; flushed once at end of run.
+    update_price = (
+        (fetch_prices or cached_price is None)
+        and isin is not None
+        and position.price is not None
+    )
     update_countries = (
         scrape_geosplit
         and isin is not None

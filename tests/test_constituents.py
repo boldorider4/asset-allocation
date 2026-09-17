@@ -292,7 +292,11 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_overview_button_top_right(self) -> None:
         page = self._page()
-        self.assertIn('<a class="nav-button" href="/dashboard">Overview</a>', page)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" href="/dashboard">Overview</a>',
+            page,
+        )
+        self.assertIn('id="update-status"', page)
 
     def test_editable_inputs_carry_identity_and_baseline(self) -> None:
         page = self._page()
@@ -324,6 +328,18 @@ class TestStoreConstituentValue(unittest.TestCase):
             # Untouched rows survive the round-trip.
             self.assertEqual(data["equity_portfolio"][1]["shares"], 10)
             json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_shares_edit_nulls_stored_value(self) -> None:
+        """The next update recomputes value from shares × cached price."""
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            self.assertEqual(
+                self._read(assets)["equity_portfolio"][1]["value"], 500.5
+            )
+            store_constituent_value(assets, "equity_portfolio", 1, "shares", "12")
+            data = self._read(assets)
+            self.assertEqual(data["equity_portfolio"][1]["shares"], 12.0)
+            self.assertIsNone(data["equity_portfolio"][1]["value"])
 
     def test_empty_value_means_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,6 +606,57 @@ class TestConstituentsRoute(unittest.TestCase):
             self.fail("expected HTTPError")
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 404)
+
+    def _post_update(self) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/update",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_update_runs_lite_refresh_at_error_level(self) -> None:
+        import logging
+        from unittest.mock import patch
+
+        seen = {}
+
+        def fake_main(ctx) -> None:
+            seen["config"] = ctx.config
+            seen["level"] = logging.getLogger().level
+
+        before = logging.getLogger().level
+        with patch("allocation.main", side_effect=fake_main):
+            status, body = self._post_update()
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"updated": True})
+        config = seen["config"]
+        self.assertFalse(config.fetch_prices)
+        self.assertFalse(config.fetch_geosplit)
+        self.assertFalse(config.fetch_sectorsplit)
+        self.assertFalse(config.fetch_oskar)
+        self.assertFalse(config.fetch_scalable)
+        self.assertFalse(config.fetch_traderepublic)
+        self.assertTrue(config.plot_clear)
+        self.assertFalse(config.plot_incognito)
+        self.assertEqual(seen["level"], logging.ERROR)
+        self.assertEqual(logging.getLogger().level, before)
+        self.assertEqual(str(config.assets_file), str(self.assets))
+        self.assertEqual(str(config.cache_file), str(self.cache))
+
+    def test_post_update_failure_is_500(self) -> None:
+        from unittest.mock import patch
+
+        with patch("allocation.main", side_effect=RuntimeError("boom")):
+            status, body = self._post_update()
+        self.assertEqual(status, 500)
+        self.assertIn("boom", body)
+        self.assertNotIn("Traceback", body)
 
     def test_missing_files_yield_502_without_traceback(self) -> None:
         handler = functools.partial(

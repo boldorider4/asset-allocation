@@ -23,6 +23,7 @@ import functools
 import http.server
 import json
 import logging
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from visual.constituents import load_constituents, render_constituents_page
@@ -169,8 +170,47 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not self._redirect_root() and not self._serve_constituents():
             super().do_HEAD()
 
+    def _run_update(self) -> bool:
+        """Handle ``POST /api/update``: lite refresh (clear charts), in-process."""
+        from allocation import main as run_update
+        from context import AppConfig, RuntimeContext, ServerConfig
+
+        if urlsplit(self.path).path != "/api/update":
+            return False
+        try:
+            if not self._assets_file or not self._cache_file:
+                raise RuntimeError("assets file not configured")
+            config = AppConfig(
+                assets_file=Path(self._assets_file),
+                cache_file=Path(self._cache_file),
+                plot_clear=True,
+                plot_incognito=False,
+                server=ServerConfig(
+                    port=0, address="localhost", directory=Path(self.directory)
+                ),
+            )
+            ctx = RuntimeContext(config=config)
+            root = logging.getLogger()
+            old_level = root.level
+            root.setLevel(logging.ERROR)
+            try:
+                run_update(ctx)
+            finally:
+                root.setLevel(old_level)
+        except Exception as exc:
+            logger.warning("programmatic update failed: %s", exc)
+            self._plain_status(500, f"update failed: {exc}")
+            return True
+        body = json.dumps({"updated": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_POST(self) -> None:
-        if not self._store_constituent():
+        if not self._store_constituent() and not self._run_update():
             self._plain_status(404, "unknown endpoint")
 
     def translate_path(self, path: str) -> str:

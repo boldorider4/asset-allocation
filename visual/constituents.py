@@ -241,6 +241,10 @@ def store_constituent_value(
         raise ValueError(f"field {field!r} is not editable for this row")
     value = _parse_stored_value(raw_value)
     row[field] = value
+    if field == "shares":
+        # Clear the stored value so the next update recomputes it from
+        # shares × cached price instead of reusing the stale figure.
+        row["value"] = None
     path = Path(assets_path)
     tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -313,7 +317,8 @@ def render_constituents_page(
   <body>
     <header class="masthead">
       <h1>Constituents</h1>
-      <a class="nav-button" href="/dashboard">Overview</a>
+      <a id="overview-link" class="nav-button" href="/dashboard">Overview</a>
+      <p id="update-status" class="status" hidden></p>
     </header>
     <main>{"".join(parts)}</main>
     <script src="constituents.js"></script>
