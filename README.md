@@ -86,6 +86,8 @@ Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the c
 
 Clicking Overview runs a lite refresh first (`POST /api/update`: no scraping flags, clear charts only, log level ERROR) and navigates to the dashboard once it completes. A missing cached price is live-fetched once for that position and written back to the cache. For admin use, `make service` also copies `systemd/asalloc-lite-update.service` (same lite update) but leaves it disabled — start it yourself when needed.
 
+The dashboard's Sync Prices button posts `{"mode": "fat"}` to the same endpoint for a fat refresh (live prices, geosplits, and sectorsplits for both clear and incognito charts; broker scrapes never run there). It takes minutes and reloads the gallery when done.
+
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 
 | Target | What it does |

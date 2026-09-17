@@ -272,10 +272,15 @@ code {
   position: relative;
 }
 
-.nav-button {
+.nav-buttons {
   position: absolute;
   top: 0.4rem;
   right: 0;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.nav-button {
   display: inline-block;
   padding: 0.45rem 1.1rem;
   border: 1px solid var(--line);
@@ -289,6 +294,11 @@ code {
 .nav-button:hover {
   border-color: var(--gold);
   color: var(--gold);
+}
+
+.nav-button[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .section-rule {

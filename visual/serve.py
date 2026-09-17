@@ -170,8 +170,24 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not self._redirect_root() and not self._serve_constituents():
             super().do_HEAD()
 
+    def _update_mode(self) -> str:
+        """Update mode from the optional JSON body; anything but fat is lite."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            return "lite"
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError):
+            return "lite"
+        if isinstance(payload, dict) and payload.get("mode") == "fat":
+            return "fat"
+        return "lite"
+
     def _run_update(self) -> bool:
-        """Handle ``POST /api/update``: lite refresh (clear charts), in-process."""
+        """Handle ``POST /api/update``: lite refresh, or fat with ``{"mode": "fat"}``."""
         from allocation import main as run_update
         from context import AppConfig, RuntimeContext, ServerConfig
 
@@ -180,11 +196,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
+            fat = self._update_mode() == "fat"
+            if fat:
+                logger.info("programmatic fat update requested")
             config = AppConfig(
                 assets_file=Path(self._assets_file),
                 cache_file=Path(self._cache_file),
+                fetch_prices=fat,
+                fetch_geosplit=fat,
+                fetch_sectorsplit=fat,
                 plot_clear=True,
-                plot_incognito=False,
+                plot_incognito=fat,
                 server=ServerConfig(
                     port=0, address="localhost", directory=Path(self.directory)
                 ),

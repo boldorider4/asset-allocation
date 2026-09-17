@@ -298,6 +298,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
         )
         self.assertIn('id="update-status"', page)
 
+    def test_dashboard_has_sync_prices_button(self) -> None:
+        index = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn('id="sync-link"', index)
+        self.assertIn(">Sync Prices</a>", index)
+        self.assertIn('<script src="dashboard.js"></script>', index)
+        dashboard_js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "dashboard.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("mode:", dashboard_js)
+        self.assertIn('"fat"', dashboard_js)
+        self.assertIn("/api/update", dashboard_js)
+
     def test_editable_inputs_carry_identity_and_baseline(self) -> None:
         page = self._page()
         self.assertIn('data-bucket="equity_portfolio"', page)
@@ -607,10 +627,10 @@ class TestConstituentsRoute(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 404)
 
-    def _post_update(self) -> tuple[int, str]:
+    def _post_update(self, payload: dict | None = None) -> tuple[int, str]:
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/api/update",
-            data=b"{}",
+            data=json.dumps(payload if payload is not None else {}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -657,6 +677,55 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertIn("boom", body)
         self.assertNotIn("Traceback", body)
+
+    def test_post_update_fat_mode_sets_fetch_and_both_plots(self) -> None:
+        import logging
+        from unittest.mock import patch
+
+        seen = {}
+
+        def fake_main(ctx) -> None:
+            seen["config"] = ctx.config
+            seen["level"] = logging.getLogger().level
+
+        before = logging.getLogger().level
+        with patch("allocation.main", side_effect=fake_main):
+            status, body = self._post_update({"mode": "fat"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"updated": True})
+        config = seen["config"]
+        self.assertTrue(config.fetch_prices)
+        self.assertTrue(config.fetch_geosplit)
+        self.assertTrue(config.fetch_sectorsplit)
+        self.assertFalse(config.fetch_oskar)
+        self.assertFalse(config.fetch_scalable)
+        self.assertFalse(config.fetch_traderepublic)
+        self.assertTrue(config.plot_clear)
+        self.assertTrue(config.plot_incognito)
+        self.assertEqual(seen["level"], logging.ERROR)
+        self.assertEqual(logging.getLogger().level, before)
+
+    def test_post_update_garbage_body_falls_back_to_lite(self) -> None:
+        from unittest.mock import patch
+
+        seen = {}
+
+        def fake_main(ctx) -> None:
+            seen["config"] = ctx.config
+
+        with patch("allocation.main", side_effect=fake_main):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/update",
+                data=b"not json{{{",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                status = resp.status
+        self.assertEqual(status, 200)
+        self.assertFalse(seen["config"].fetch_prices)
+        self.assertTrue(seen["config"].plot_clear)
+        self.assertFalse(seen["config"].plot_incognito)
 
     def test_missing_files_yield_502_without_traceback(self) -> None:
         handler = functools.partial(
