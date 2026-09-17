@@ -217,6 +217,14 @@ class JustETFPosition(Position):
                 e.code,
             )
             return None
+        except OSError as e:
+            logger.warning(
+                "JustETF %s Wicket request connection failed for %s (%s); using profile HTML",
+                label,
+                self._isin,
+                e,
+            )
+            return None
 
         logger.info("JustETF: XML text parsed successfully")
         try:
@@ -307,12 +315,14 @@ class JustETFPosition(Position):
                 raise RuntimeError(
                     f"JustETF HTTP {e.code} while fetching {label} dist for {self._isin}"
                 ) from e
-            except urllib.error.URLError:
+            except (urllib.error.URLError, OSError) as e:
                 if attempt + 1 < self._RETRIES:
                     time.sleep(self._DELAY_S)
                     continue
-                logger.error("JustETF: URL error")
-                raise
+                logger.error("JustETF: URL/connection error: %s", e)
+                raise RuntimeError(
+                    f"JustETF {label} connection failed for {self._isin}: {e}"
+                ) from e
         logger.error("JustETF: %s fetch failed after %d attempts", label, self._RETRIES)
         raise RuntimeError(
             f"JustETF {label} fetch failed for {self._isin} after {self._RETRIES} attempts"
@@ -349,7 +359,7 @@ class JustETFPosition(Position):
         if self._countries is None and self._isin is not None:
             try:
                 self._countries = self._fetch_countries_with_retries()
-            except (RuntimeError, urllib.error.URLError) as e:
+            except (RuntimeError, urllib.error.URLError, OSError) as e:
                 self._countries = []
                 logger.warning(
                     "JustETF: country fetch failed for %s (%s); using empty country list",
@@ -411,7 +421,7 @@ class JustETFPosition(Position):
         if self._sectors is None and self._isin is not None:
             try:
                 self._sectors = self._fetch_sectors_with_retries()
-            except (RuntimeError, urllib.error.URLError) as e:
+            except (RuntimeError, urllib.error.URLError, OSError) as e:
                 self._sectors = []
                 logger.warning(
                     "JustETF: sector fetch failed for %s (%s); using empty sector list",
@@ -441,11 +451,13 @@ class JustETFPosition(Position):
                 raise RuntimeError(
                     f"JustETF HTTP {e.code} while fetching chart for {self._isin}"
                 ) from e
-            except urllib.error.URLError:
+            except (urllib.error.URLError, OSError) as e:
                 if attempt + 1 < self._RETRIES:
                     time.sleep(self._DELAY_S)
                     continue
-                raise
+                raise RuntimeError(
+                    f"JustETF chart connection failed for {self._isin}: {e}"
+                ) from e
         raise RuntimeError(
             f"JustETF chart fetch failed for {self._isin} after {self._RETRIES} attempts"
         )

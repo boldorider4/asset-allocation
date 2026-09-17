@@ -148,6 +148,13 @@ class TestSsgaProductExists(unittest.TestCase):
         ):
             self.assertFalse(ssga_product_url_exists(_ISIN))
 
+    def test_timeout_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            self.assertFalse(ssga_product_url_exists(_ISIN))
+
     def test_result_is_memoized(self) -> None:
         with patch(
             "urllib.request.urlopen",

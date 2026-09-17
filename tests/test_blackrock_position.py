@@ -144,6 +144,13 @@ class TestIsharesProductUrl(unittest.TestCase):
         ):
             self.assertFalse(ishares_product_url_exists(_ISIN))
 
+    def test_timeout_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            self.assertFalse(ishares_product_url_exists(_ISIN))
+
     def test_result_is_memoized(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()) as opener:
             self.assertTrue(ishares_product_url_exists(_ISIN))

@@ -451,6 +451,11 @@ class UBSPosition(JustETFPosition):
             raise RuntimeError(
                 f"UBS HTTP {e.status} while fetching countries for {self._isin}"
             ) from e
+        except OSError as e:
+            # Also covers curl_cffi connection/timeout errors (OSError subclasses).
+            raise RuntimeError(
+                f"UBS connection failed while fetching countries for {self._isin}: {e}"
+            ) from e
         except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
             raise RuntimeError(
                 f"UBS constituents parse failed for {self._isin}: {e}"

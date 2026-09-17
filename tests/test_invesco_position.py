@@ -137,6 +137,13 @@ class TestInvescoProductExists(unittest.TestCase):
         ):
             self.assertFalse(invesco_product_url_exists(_ISIN))
 
+    def test_timeout_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            self.assertFalse(invesco_product_url_exists(_ISIN))
+
     def test_exists_on_holdings_when_country_empty(self) -> None:
         with patch(
             "urllib.request.urlopen",

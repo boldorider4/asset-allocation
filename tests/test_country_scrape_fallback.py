@@ -48,6 +48,66 @@ class TestJustETFCountryScrapeFailure(unittest.TestCase):
         pos = self._position(RuntimeError("JustETF HTTP 403"))
         self.assertEqual(pos.countries(), [])
 
+    def test_timeout_error_returns_empty_countries(self) -> None:
+        self.assertEqual(
+            self._position(TimeoutError("The read operation timed out")).countries(),
+            [],
+        )
+
+    def test_retry_then_success_on_timeout(self) -> None:
+        sample = [{"name": "France", "weight_pct": 100.0}]
+        with patch.object(
+            JustETFPosition,
+            "_http_country_dist_json",
+            side_effect=[TimeoutError("The read operation timed out"), sample],
+        ) as dist:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=12.0):
+                pos = JustETFPosition(
+                    _ISIN, name="Bond ETF", shares=10, ctx=self.ctx
+                )
+        self.assertEqual(dist.call_count, 2)
+        self.assertEqual(pos.countries(), sample)
+
+    def test_price_lookup_failure_uses_supplied_price(self) -> None:
+        tmp = Path(self._holder.name)
+        ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_prices=True,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        ctx.cache = {}
+        ctx.cache_loaded = True
+        with patch.object(
+            JustETFPosition, "_fast_info_price", side_effect=RuntimeError("boom")
+        ):
+            pos = JustETFPosition(
+                _ISIN, name="Bond ETF", shares=10, price=12.0, ctx=ctx
+            )
+        self.assertEqual(pos.price, 12.0)
+
+    def test_price_timeout_uses_supplied_price(self) -> None:
+        tmp = Path(self._holder.name)
+        ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_prices=True,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        ctx.cache = {}
+        ctx.cache_loaded = True
+        with patch.object(
+            JustETFPosition,
+            "_fast_info_price",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            pos = JustETFPosition(
+                _ISIN, name="Bond ETF", shares=10, price=12.0, ctx=ctx
+            )
+        self.assertEqual(pos.price, 12.0)
+
     def test_failure_logs_warning(self) -> None:
         with self.assertLogs("position.justetf_position", level="WARNING") as logs:
             self._position(_HTTP_403)

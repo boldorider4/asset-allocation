@@ -191,6 +191,12 @@ class TestJustETFSectorScrapeFailure(unittest.TestCase):
         pos = self._position(RuntimeError("JustETF HTTP 403"))
         self.assertEqual(pos.sectors(), [])
 
+    def test_timeout_error_returns_empty_sectors(self) -> None:
+        self.assertEqual(
+            self._position(TimeoutError("The read operation timed out")).sectors(),
+            [],
+        )
+
     def test_failure_logs_warning(self) -> None:
         with self.assertLogs("position.justetf_position", level="WARNING") as logs:
             self._position(_HTTP_403)

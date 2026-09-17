@@ -84,6 +84,10 @@ def ishares_product_url_exists(isin: str) -> bool:
     except urllib.error.URLError as e:
         exists = False
         logger.warning("iShares holdings URL check failed for %s (%s)", isin, e)
+    except OSError as e:
+        # Read timeouts, resets, DNS/SSL failures: bail to cached data.
+        exists = False
+        logger.warning("iShares holdings URL check connection failed for %s (%s)", isin, e)
     _ISHARES_PRODUCT_EXISTS[isin] = exists
     return exists
 
@@ -190,6 +194,10 @@ class BlackRockPosition(JustETFPosition):
         except urllib.error.HTTPError as e:
             raise RuntimeError(
                 f"iShares HTTP {e.code} while fetching countries for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"iShares connection failed while fetching countries for {self._isin}: {e}"
             ) from e
         except (csv.Error, TypeError, ValueError, UnicodeError) as e:
             raise RuntimeError(

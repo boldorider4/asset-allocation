@@ -201,6 +201,15 @@ class TestUbsProductExists(unittest.TestCase):
                 ):
                     self.assertFalse(ubs_product_url_exists(_ISIN))
 
+    def test_timeout_error_is_false(self) -> None:
+        with patch("position.ubs_position._new_ha4_session", return_value=MagicMock()):
+            with patch("position.ubs_position._seed_ubs_product_page"):
+                with patch(
+                    "position.ubs_position._http_token",
+                    side_effect=TimeoutError("The read operation timed out"),
+                ):
+                    self.assertFalse(ubs_product_url_exists(_ISIN))
+
     def test_result_is_memoized(self) -> None:
         with patch("position.ubs_position._new_ha4_session", return_value=MagicMock()):
             with patch("position.ubs_position._seed_ubs_product_page"):

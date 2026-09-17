@@ -159,6 +159,20 @@ class TestAmundiProductExists(unittest.TestCase):
         ):
             self.assertFalse(amundi_product_url_exists(_ISIN))
 
+    def test_timeout_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            self.assertFalse(amundi_product_url_exists(_ISIN))
+
+    def test_connection_error_is_false(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=ConnectionError("Connection reset by peer"),
+        ):
+            self.assertFalse(amundi_product_url_exists(_ISIN))
+
     def test_result_is_memoized(self) -> None:
         with patch(
             "urllib.request.urlopen",
@@ -200,6 +214,17 @@ class TestAmundiCountryFetch(unittest.TestCase):
                 {"name": "UAE", "weight_pct": 0.0},
             ],
         )
+
+    def test_timeout_falls_back_to_empty_countries(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            with patch.object(AmundiPosition, "_fast_info_price", return_value=12.0):
+                pos = AmundiPosition(
+                    _ISIN, name="Amundi Core MSCI World", shares=1, ctx=self.ctx
+                )
+        self.assertEqual(pos.countries(), [])
 
 
 class TestAmundiFactoryRouting(unittest.TestCase):
@@ -261,6 +286,24 @@ class TestAmundiFactoryRouting(unittest.TestCase):
         with patch("position.factory.amundi_product_url_exists", return_value=False):
             with self._no_country_scrape():
                 pos = self._factory()
+        self.assertIsInstance(pos, JustETFPosition)
+        self.assertNotIsInstance(pos, AmundiPosition)
+
+    def test_probe_timeout_falls_back_to_justetf(self) -> None:
+        # Regression test for a probe read-timeout killing the whole run:
+        # the real probe must swallow it and the factory must fall back.
+        from position.amundi_position import _AMUNDI_PRODUCT_EXISTS
+
+        _AMUNDI_PRODUCT_EXISTS.clear()
+        try:
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=TimeoutError("The read operation timed out"),
+            ):
+                with self._no_country_scrape():
+                    pos = self._factory()
+        finally:
+            _AMUNDI_PRODUCT_EXISTS.clear()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, AmundiPosition)
 

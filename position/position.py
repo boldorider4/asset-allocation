@@ -460,6 +460,14 @@ class Position(ABC):
                 supplied_price,
             )
             return supplied_price
+        except (RuntimeError, OSError) as e:
+            logger.warning(
+                "Position: quote lookup failed for ISIN %s (%s); using supplied price %s",
+                self._isin,
+                e,
+                supplied_price,
+            )
+            return supplied_price
         if fetched is None:
             logger.warning(
                 "Position: no price for ISIN %s; using supplied price %s",

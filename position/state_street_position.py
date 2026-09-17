@@ -107,6 +107,10 @@ def ssga_product_url_exists(isin: str) -> bool:
     except urllib.error.URLError as e:
         exists = False
         logger.warning("SSGA product page check failed for %s (%s)", isin, e)
+    except OSError as e:
+        # Read timeouts, resets, DNS/SSL failures: bail to cached data.
+        exists = False
+        logger.warning("SSGA product page check connection failed for %s (%s)", isin, e)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
         exists = False
         logger.warning("SSGA product page parse failed for %s (%s)", isin, e)
@@ -225,6 +229,10 @@ class StateStreetPosition(JustETFPosition):
         except urllib.error.HTTPError as e:
             raise RuntimeError(
                 f"SSGA HTTP {e.code} while fetching countries for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"SSGA connection failed while fetching countries for {self._isin}: {e}"
             ) from e
         except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
             raise RuntimeError(
