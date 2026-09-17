@@ -358,6 +358,20 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('data-original="220.00"', page)
         self.assertIn('<script src="constituents.js"></script>', page)
 
+    def test_overview_only_updates_when_dirty(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # A successful save stages an update...
+        self.assertIn("let dirty = false", js)
+        self.assertIn("dirty = true", js)
+        # ...while a clean Overview navigates straight to the dashboard.
+        self.assertIn("if (!dirty)", js)
+        self.assertIn('window.location.href = "/dashboard"', js)
+
 
 class TestStoreConstituentValue(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:

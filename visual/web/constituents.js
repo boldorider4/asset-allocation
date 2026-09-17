@@ -1,12 +1,18 @@
 /* Constituents editing: POST changed cells to /api/constituents.
  *
  * A single delegated "change" listener covers Enter, Tab, and click-away.
- * Success flashes the cell and records the typed text as the new baseline;
+ * Success flashes the cell, records the typed text as the new baseline,
+ * and stages an update (Overview runs it, otherwise navigates directly);
  * any failure reverts to the last-known-good value. Locked cells never
  * fire this.
  */
 (function () {
   "use strict";
+
+  // Staged-update flag: set on every successfully persisted cell edit.
+  // Overview only runs the lite update when this is set; otherwise it
+  // navigates straight to the dashboard.
+  let dirty = false;
 
   function flash(input) {
     input.classList.remove("saved-flash");
@@ -45,6 +51,7 @@
       return;
     }
     input.dataset.original = input.value;
+    dirty = true;
     flash(input);
   }
 
@@ -75,6 +82,10 @@
     event.preventDefault();
     const link = event.currentTarget;
     if (link.dataset.busy === "1") {
+      return;
+    }
+    if (!dirty) {
+      window.location.href = "/dashboard";
       return;
     }
     link.dataset.busy = "1";
