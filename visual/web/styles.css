@@ -387,6 +387,11 @@ td {
 input.cell-box.editable {
   margin: 0;
   border-color: var(--line);
+  transition: background-color 0.5s ease;
+}
+
+input.cell-box.editable.saved-flash {
+  background-color: #2e5b34;
 }
 
 .unit {

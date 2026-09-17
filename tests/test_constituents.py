@@ -12,7 +12,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from visual.constituents import load_constituents, render_constituents_page
+from visual.constituents import (
+    load_constituents,
+    render_constituents_page,
+    store_constituent_value,
+)
 from visual.serve import DashboardHandler
 
 _ASSETS = {
@@ -290,6 +294,77 @@ class TestRenderConstituentsPage(unittest.TestCase):
         page = self._page()
         self.assertIn('<a class="nav-button" href="/dashboard">Overview</a>', page)
 
+    def test_editable_inputs_carry_identity_and_baseline(self) -> None:
+        page = self._page()
+        self.assertIn('data-bucket="equity_portfolio"', page)
+        self.assertIn('data-index="0"', page)
+        self.assertIn('data-field="shares"', page)
+        self.assertIn('data-original="220.00"', page)
+        self.assertIn('<script src="constituents.js"></script>', page)
+
+
+class TestStoreConstituentValue(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def _read(self, assets: Path):
+        return json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_valid_shares_edit_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            stored = store_constituent_value(
+                assets, "equity_portfolio", 0, "shares", "230.5"
+            )
+            self.assertEqual(stored, 230.5)
+            data = self._read(assets)
+            self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
+            # Untouched rows survive the round-trip.
+            self.assertEqual(data["equity_portfolio"][1]["shares"], 10)
+            json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_empty_value_means_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            stored = store_constituent_value(
+                assets, "cash_portfolio", 0, "value", "   "
+            )
+            self.assertEqual(stored, 0.0)
+            self.assertEqual(self._read(assets)["cash_portfolio"][0]["value"], 0.0)
+
+    def test_rejects_bad_address_field_and_junk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for bucket, index, field, value in [
+                ("nope", 0, "shares", "1"),
+                ("equity_portfolio", 99, "shares", "1"),
+                ("equity_portfolio", 0, "price", "1"),
+                ("equity_portfolio", 0, "shares", "abc"),
+                ("equity_portfolio", 0, "shares", float("nan")),
+                ("equity_portfolio", 0, "shares", True),
+            ]:
+                with self.subTest(bucket=bucket, index=index, field=field, value=value):
+                    with self.assertRaises(ValueError):
+                        store_constituent_value(assets, bucket, index, field, value)
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+    def test_rejects_locked_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            # Oskar shares are locked...
+            with self.assertRaises(ValueError):
+                store_constituent_value(assets, "cash_portfolio", 1, "shares", "5")
+            # ...as is a plain locked value cell.
+            with self.assertRaises(ValueError):
+                store_constituent_value(
+                    assets, "equity_portfolio", 1, "value", "5"
+                )
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
 
 class TestNumberFormatting(unittest.TestCase):
     def _page(self) -> str:
@@ -453,6 +528,68 @@ class TestConstituentsRoute(unittest.TestCase):
             self.assertIn("Amundi Core", body)
             self.assertIn("81.25", body)
             self.assertIn("<table>", body)
+
+    def _post(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_edit_persists_to_disk(self) -> None:
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 0,
+                "field": "shares",
+                "value": "230.5",
+            }
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"value": 230.5})
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
+
+    def test_post_empty_means_zero(self) -> None:
+        status, body = self._post(
+            {"bucket": "cash_portfolio", "index": 0, "field": "value", "value": ""}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"value": 0.0})
+
+    def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "index": 0, "field": "shares", "value": "1"},
+            {"bucket": "equity_portfolio", "index": 9, "field": "shares", "value": "1"},
+            {"bucket": "equity_portfolio", "index": 0, "field": "price", "value": "1"},
+            {"bucket": "equity_portfolio", "index": 0, "field": "shares", "value": "abc"},
+            # Forged edit of a locked Oskar cell.
+            {"bucket": "cash_portfolio", "index": 1, "field": "shares", "value": "5"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def test_post_unknown_endpoint_is_404(self) -> None:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/nope",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req)
+            self.fail("expected HTTPError")
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 404)
 
     def test_missing_files_yield_502_without_traceback(self) -> None:
         handler = functools.partial(

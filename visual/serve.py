@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import functools
 import http.server
+import json
 import logging
 from urllib.parse import parse_qs, urlsplit
 
@@ -105,6 +106,61 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
         return True
 
+    def _store_constituent(self) -> bool:
+        """Handle ``POST /api/constituents``; plain-text statuses on failure."""
+        from visual.constituents import store_constituent_value
+
+        if urlsplit(self.path).path != "/api/constituents":
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return True
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return True
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            value = store_constituent_value(
+                self._assets_file,
+                payload.get("bucket"),
+                payload.get("index"),
+                payload.get("field"),
+                payload.get("value"),
+            )
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("constituents store failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps({"value": value}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _plain_status(self, status: int, reason: str) -> None:
+        body = reason.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def do_GET(self) -> None:
         if not self._redirect_root() and not self._serve_constituents():
             super().do_GET()
@@ -112,6 +168,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_HEAD(self) -> None:
         if not self._redirect_root() and not self._serve_constituents():
             super().do_HEAD()
+
+    def do_POST(self) -> None:
+        if not self._store_constituent():
+            self._plain_status(404, "unknown endpoint")
 
     def translate_path(self, path: str) -> str:
         url_path = urlsplit(path).path

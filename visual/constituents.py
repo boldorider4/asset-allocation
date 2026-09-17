@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -82,11 +83,14 @@ def _text(value: Any) -> str:
     return str(value)
 
 
-def _editable_box(value: Any, *, name: str) -> str:
+def _editable_box(value: Any, *, name: str, bucket: str, index: int) -> str:
     text = "" if value is None else _text(value)
     return (
         f'<input class="cell-box editable" value="{html.escape(text, quote=True)}" '
         f'data-field="{html.escape(name, quote=True)}" '
+        f'data-bucket="{html.escape(bucket, quote=True)}" '
+        f'data-index="{index}" '
+        f'data-original="{html.escape(text, quote=True)}" '
         f'aria-label="{html.escape(name, quote=True)}" />'
     )
 
@@ -125,7 +129,7 @@ def load_constituents(
         if not isinstance(rows, list):
             continue
         display: list[dict[str, Any]] = []
-        for row in rows:
+        for position, row in enumerate(rows):
             if not isinstance(row, dict):
                 continue
             isin = row.get("ISIN")
@@ -144,6 +148,7 @@ def load_constituents(
                 or key == _PENSION_BUCKET
                 or broker_key == _CHECK24
             )
+            fields = updatable_fields(key, row)
             display.append(
                 {
                     "name": row.get("name"),
@@ -151,10 +156,10 @@ def load_constituents(
                     "shares": row.get("shares"),
                     "price": price,
                     "broker": broker,
-                    "editable_shares": broker != _OSKAR and not no_quote,
-                    "editable_value": cashlike
-                    or key == _PENSION_BUCKET
-                    or broker_key == _CHECK24,
+                    "bucket": key,
+                    "index": position,
+                    "editable_shares": "shares" in fields,
+                    "editable_value": "value" in fields,
                     "no_quote": no_quote,
                 }
             )
@@ -162,6 +167,87 @@ def load_constituents(
     return sections
 
 
+def updatable_fields(bucket_key: str, row: dict[str, Any]) -> set[str]:
+    """Editable fields for a row, mirroring the render rules.
+
+    ``shares`` unless the broker is Oskar or the row has no quote;
+    ``value`` only for cash-like, pension, or check24 rows.
+    """
+    broker = row.get("broker") or ""
+    broker_key = broker.strip().casefold()
+    cashlike = isinstance(row.get("name"), str) and (
+        row["name"].strip().casefold() in _CASHLIKE_NAMES
+    )
+    no_quote = (
+        cashlike
+        or bucket_key == _PENSION_BUCKET
+        or broker_key == _CHECK24
+    )
+    fields: set[str] = set()
+    if broker != _OSKAR and not no_quote:
+        fields.add("shares")
+    if cashlike or bucket_key == _PENSION_BUCKET or broker_key == _CHECK24:
+        fields.add("value")
+    return fields
+
+
+def _parse_stored_value(raw: Any) -> float:
+    """Parse a posted cell value; empty means 0.0, junk raises ValueError."""
+    if raw is None:
+        return 0.0
+    if isinstance(raw, bool):
+        raise ValueError("value must be a number")
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return 0.0
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"value is not a number: {raw!r}") from None
+    else:
+        raise ValueError(f"value must be a number, got {type(raw).__name__}")
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(f"value must be finite: {raw!r}")
+    return value
+
+
+def store_constituent_value(
+    assets_path: str | Path, bucket: str, index: int, field: str, raw_value: Any
+) -> float:
+    """Persist one editable cell into the assets file (atomic write).
+
+    Raises ``ValueError`` for invalid addresses, locked fields, or junk
+    values; ``OSError``/``json`` errors propagate for missing/corrupt files.
+    """
+    if field not in ("shares", "value"):
+        raise ValueError(f"field must be shares or value, got {field!r}")
+    with open(assets_path, encoding="utf-8") as f:
+        assets = json.load(f)
+    if not isinstance(assets, dict):
+        raise ValueError("assets root must be a JSON object")
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    if not isinstance(index, bool) and isinstance(index, int) and 0 <= index < len(rows):
+        row = rows[index]
+    else:
+        raise ValueError(f"row index out of range: {index!r}")
+    if not isinstance(row, dict):
+        raise ValueError(f"row {index} in {bucket!r} is not an object")
+    if field not in updatable_fields(bucket, row):
+        raise ValueError(f"field {field!r} is not editable for this row")
+    value = _parse_stored_value(raw_value)
+    row[field] = value
+    path = Path(assets_path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(assets, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, path)
+    return value
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
@@ -183,14 +269,24 @@ def render_constituents_page(
                 price_cell = _locked_box(_NO_QUOTE, name="price")
             else:
                 shares_cell = (
-                    _editable_box(row["shares"], name="shares")
+                    _editable_box(
+                        row["shares"],
+                        name="shares",
+                        bucket=row["bucket"],
+                        index=row["index"],
+                    )
                     if row["editable_shares"]
                     else _locked_box(row["shares"], name="shares")
                 )
                 price_cell = _locked_box(row["price"], name="price")
             name_text = _text(row["name"])
             if row["editable_value"]:
-                value_cell = _editable_box(row["value"], name="value")
+                value_cell = _editable_box(
+                    row["value"],
+                    name="value",
+                    bucket=row["bucket"],
+                    index=row["index"],
+                )
             else:
                 value_cell = _locked_box(row["value"], name="value")
             parts.append(
@@ -220,6 +316,7 @@ def render_constituents_page(
       <a class="nav-button" href="/dashboard">Overview</a>
     </header>
     <main>{"".join(parts)}</main>
+    <script src="constituents.js"></script>
   </body>
 </html>
 """
