@@ -34,7 +34,6 @@ _OSKAR = "oskar"
 # bucket; check24 matches by broker but only inside fixed maturity.
 _CASHLIKE_NAMES = frozenset({"cash", "tagesgeld"})
 _PENSION_BUCKET = "pension_portfolio"
-_FIXED_MATURITY_BUCKET = "fixed_maturity_bond_portfolio"
 _CHECK24 = "check24"
 
 # Broker icons served from visual/web/icons/ (copied by `make web`).
@@ -136,16 +135,14 @@ def load_constituents(
                 if isinstance(entry, dict):
                     price = entry.get("price")
             broker = row.get("broker") or ""
+            broker_key = broker.strip().casefold()
             cashlike = isinstance(row.get("name"), str) and (
                 row["name"].strip().casefold() in _CASHLIKE_NAMES
             )
             no_quote = (
                 cashlike
                 or key == _PENSION_BUCKET
-                or (
-                    key == _FIXED_MATURITY_BUCKET
-                    and broker.strip().casefold() == _CHECK24
-                )
+                or broker_key == _CHECK24
             )
             display.append(
                 {
@@ -155,7 +152,9 @@ def load_constituents(
                     "price": price,
                     "broker": broker,
                     "editable_shares": broker != _OSKAR and not no_quote,
-                    "editable_value": cashlike or key == _PENSION_BUCKET,
+                    "editable_value": cashlike
+                    or key == _PENSION_BUCKET
+                    or broker_key == _CHECK24,
                     "no_quote": no_quote,
                 }
             )

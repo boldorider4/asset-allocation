@@ -226,7 +226,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             page,
         )
 
-    def test_check24_fixed_maturity_rows_show_dashes(self) -> None:
+    def test_check24_rows_show_dashes_in_any_bucket(self) -> None:
         assets = {
             "fixed_maturity_bond_portfolio": [
                 {
@@ -256,10 +256,24 @@ class TestRenderConstituentsPage(unittest.TestCase):
             sections = load_constituents(assets_path, cache_path)
         by_label = dict(sections)
         self.assertFalse(by_label["Fixed Maturity"][0]["editable_shares"])
-        self.assertTrue(by_label["Equity"][0]["editable_shares"])
+        self.assertFalse(by_label["Equity"][0]["editable_shares"])
+        self.assertTrue(by_label["Fixed Maturity"][0]["no_quote"])
+        self.assertTrue(by_label["Equity"][0]["no_quote"])
         page = render_constituents_page(sections)
-        self.assertIn(
-            '<span class="cell-box locked" data-field="shares">-</span>', page
+        self.assertEqual(
+            page.count('<span class="cell-box locked" data-field="shares">-</span>'),
+            2,
+        )
+        self.assertEqual(
+            page.count('<span class="cell-box locked" data-field="price">-</span>'),
+            2,
+        )
+        # Value stays editable with the booked amount, like pensions.
+        self.assertEqual(
+            page.count(
+                '<input class="cell-box editable" value="700.00" data-field="value"'
+            ),
+            2,
         )
 
     def test_broker_marks_and_escaping(self) -> None:
