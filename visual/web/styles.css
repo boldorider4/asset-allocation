@@ -267,3 +267,141 @@ code {
     font-size: 0.72rem;
   }
 }
+
+.masthead {
+  position: relative;
+}
+
+.nav-button {
+  position: absolute;
+  top: 0.4rem;
+  right: 0;
+  display: inline-block;
+  padding: 0.45rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--text);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.nav-button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.section-rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.6rem auto;
+  max-width: 100rem;
+}
+
+table {
+  width: 100%;
+  max-width: 100rem;
+  margin: 0 auto 0.4rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.85rem;
+}
+
+.table-scroll {
+  max-width: 100rem;
+  margin: 0 auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll table {
+  min-width: 52rem;
+}
+
+th:nth-child(1),
+td:nth-child(1) {
+  width: 36%;
+}
+
+th:nth-child(2),
+td:nth-child(2),
+th:nth-child(4),
+td:nth-child(4) {
+  width: 19%;
+}
+
+th:nth-child(3),
+td:nth-child(3) {
+  width: 14%;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
+  width: 12%;
+}
+
+td.name {
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+th,
+td {
+  text-align: right;
+}
+
+td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.cell-box {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 6rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid transparent;
+  background: var(--paper);
+  color: #ffffff;
+  font: inherit;
+  text-align: right;
+}
+
+.cell-box.locked {
+  background: #4a443c;
+  color: #ffffff;
+}
+
+input.cell-box.editable {
+  margin: 0;
+  border-color: var(--line);
+  transition: background-color 0.5s ease;
+}
+
+input.cell-box.editable.saved-flash {
+  background-color: #2e5b34;
+}
+
+.unit {
+  margin-left: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.broker-mark {
+  display: inline-block;
+  line-height: 0;
+}

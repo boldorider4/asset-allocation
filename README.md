@@ -82,6 +82,10 @@ asalloc serve
 
 Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the clear charts, or `http://localhost:8765/dashboard?incognito=true` for the incognito set — same gallery, only the data root differs (`data/clear/` vs `data/incognito/`).
 
+`http://localhost:8765/constituents` shows the holdings from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
+
+Clicking Overview runs a lite refresh first (`POST /api/update`: no scraping flags, clear charts only, log level ERROR) and navigates to the dashboard once it completes. A missing cached price is live-fetched once for that position and written back to the cache. For admin use, `make service` also copies `systemd/asalloc-lite-update.service` (same lite update) but leaves it disabled — start it yourself when needed.
+
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 
 | Target | What it does |
