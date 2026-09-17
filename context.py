@@ -219,9 +219,9 @@ class RuntimeContext:
 
     @property
     def output_data_dir(self) -> Path:
-        """Chart output dir: ``data/incognito`` for incognito runs, else ``data``."""
+        """Chart output dir: ``data/incognito`` for incognito runs, else ``data/clear``."""
         base = self.config.server.directory / "data"
-        return base / "incognito" if self.config.incognito else base
+        return base / "incognito" if self.config.incognito else base / "clear"
 
     def configure_web_output(self):  # type: ignore[no-untyped-def]
         """Point WebChart file output at :prop:`output_data_dir`; reset seq."""

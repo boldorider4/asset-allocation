@@ -65,7 +65,7 @@ Useful `update` flags:
 
 ## Web visualizer
 
-The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/`. Scaffold the JS app (without touching existing raw files) with:
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/clear/` — or `data/incognito/` when `asalloc update --incognito` is used. Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
 make web
@@ -79,7 +79,7 @@ make serve
 asalloc serve
 ```
 
-Stop it with `make stop-serve`.
+Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the clear charts, or `http://localhost:8765/dashboard?incognito=true` for the incognito set — same gallery, only the data root differs (`data/clear/` vs `data/incognito/`).
 
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 

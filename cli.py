@@ -49,12 +49,15 @@ def cmd_serve(_args: argparse.Namespace) -> None:
     cfg = load_server_config()
     cfg.directory.mkdir(parents=True, exist_ok=True)
     (cfg.directory / "data").mkdir(exist_ok=True)
+    (cfg.directory / "data" / "clear").mkdir(exist_ok=True)
+    (cfg.directory / "data" / "incognito").mkdir(exist_ok=True)
     pid_file = cfg.directory / ".serve.pid"
     proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
-            "http.server",
+            "visual.serve",
+            "--port",
             str(cfg.port),
             "--bind",
             cfg.address,
@@ -68,7 +71,7 @@ def cmd_serve(_args: argparse.Namespace) -> None:
     )
     pid_file.write_text(str(proc.pid), encoding="utf-8")
     logger.info(
-        "Serving %s in the background on http://%s:%s (pid %s)",
+        "Serving %s in the background on http://%s:%s/dashboard (pid %s)",
         cfg.directory,
         cfg.address,
         cfg.port,

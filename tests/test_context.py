@@ -187,15 +187,17 @@ class TestIncognitoOutputDir(unittest.TestCase):
         WebChart._slug_counts = self._orig_counts
         WebChart._plot_seq = self._orig_seq
 
-    def test_plain_run_writes_to_data(self) -> None:
+    def test_plain_run_writes_to_data_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(config=AppConfig(server=_server(server)))
-            self.assertEqual(ctx.output_data_dir, server / "data")
+            self.assertEqual(ctx.output_data_dir, server / "data" / "clear")
             ctx.configure_web_output()
             from visual.web_chart import WebChart
 
-            self.assertEqual(WebChart.data_dir, server / "data")
+            self.assertEqual(WebChart.data_dir, server / "data" / "clear")
+            WebChart(data={"A": 1.0}, title="Clear check").plot()
+            self.assertTrue((server / "data" / "clear" / "01-clear-check.raw").is_file())
 
     def test_incognito_run_writes_to_data_incognito(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
