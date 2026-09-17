@@ -81,12 +81,12 @@ class TestPlotIncognitoKwarg(unittest.TestCase):
             ctx, [_stub(value=100.0, sectors=None)], cls=RegionalPortfolio
         )
         port.plot_geosplit(closing_title="Total Value: {tot_value}", incognito=False)
-        self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 100.0")
+        self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 100.00")
         self.assertEqual(
             port._geosplit_visualizer.factor, {"value": 100.0, "unit": "Euro"}
         )
         port.plot_geosplit(closing_title="Total Value: {tot_value}", incognito=True)
-        self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 250.0")
+        self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 250.00")
         self.assertEqual(
             port._geosplit_visualizer.factor, {"value": 250.0, "unit": "Euro"}
         )
@@ -162,8 +162,8 @@ class TestBothPassesWriteBothDirs(unittest.TestCase):
         self.assertTrue(incognito_raw.is_file())
         clear_payload = json.loads(clear_raw.read_text(encoding="utf-8"))
         incognito_payload = json.loads(incognito_raw.read_text(encoding="utf-8"))
-        self.assertEqual(clear_payload["closing_title"], "Net Worth: 100.0")
-        self.assertEqual(incognito_payload["closing_title"], "Net Worth: 200.0")
+        self.assertEqual(clear_payload["closing_title"], "Net Worth: 100.00")
+        self.assertEqual(incognito_payload["closing_title"], "Net Worth: 200.00")
         self.assertEqual(clear_payload["factor"], {"value": 100.0, "unit": "Euro"})
         self.assertEqual(incognito_payload["factor"], {"value": 200.0, "unit": "Euro"})
         # Wedge fractions are scale-invariant.

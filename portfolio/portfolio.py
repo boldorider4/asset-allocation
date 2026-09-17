@@ -166,9 +166,9 @@ class Portfolio:
 
     @staticmethod
     def _render_closing_title(template: str | None, total: float) -> str | None:
-        """Format a ``{tot_value}`` template, passing other strings through."""
+        """Format a ``{tot_value}`` template (two decimals), passing other strings through."""
         if template is not None and "{tot_value}" in template:
-            return template.format(tot_value=total)
+            return template.format(tot_value=f"{total:.2f}")
         return template
 
     def _sync_factor(self, viz: Visual | None, total: float) -> None:
