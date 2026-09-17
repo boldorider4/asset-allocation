@@ -12,12 +12,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from visual.constituents import (
+from visual.web.backend.constituents import (
     load_constituents,
     render_constituents_page,
     store_constituent_value,
 )
-from visual.serve import DashboardHandler
+from visual.web.backend.serve import DashboardHandler
 
 _ASSETS = {
     "cash_portfolio": [
@@ -154,6 +154,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("overflow-x: auto", css)
@@ -307,6 +308,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn(".overlay {", css)
@@ -318,6 +320,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "index.html"
         ).read_text(encoding="utf-8")
         self.assertIn('id="sync-link"', index)
@@ -329,6 +332,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "index.html"
         ).read_text(encoding="utf-8")
         self.assertIn('id="edit-link"', index)
@@ -336,6 +340,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "dashboard.js"
         ).read_text(encoding="utf-8")
         self.assertIn("/api/cancel", dashboard_js)
@@ -344,6 +349,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "dashboard.js"
         ).read_text(encoding="utf-8")
         self.assertIn("mode:", dashboard_js)
@@ -363,6 +369,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "constituents.js"
         ).read_text(encoding="utf-8")
         # A successful save stages an update...
@@ -377,6 +384,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "constituents.js"
         ).read_text(encoding="utf-8")
         # Both boxes refresh from the response; red flare only when stale.
@@ -389,6 +397,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("input.cell-box.editable.stale-flash", css)
@@ -512,7 +521,7 @@ class TestStoreConstituentValue(unittest.TestCase):
             self.assertEqual(assets.read_text(encoding="utf-8"), before)
 
     def test_value_editable_wherever_shares_are(self) -> None:
-        from visual.constituents import updatable_fields
+        from visual.web.backend.constituents import updatable_fields
 
         self.assertIn(
             "value",
@@ -580,6 +589,7 @@ class TestNumberFormatting(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("th,\ntd {", css)
@@ -633,6 +643,7 @@ class TestNumberFormatting(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn("table-layout: fixed", css)
@@ -649,6 +660,7 @@ class TestNumberFormatting(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         # Headers, cells and box contents all align right.
@@ -662,6 +674,7 @@ class TestNumberFormatting(unittest.TestCase):
             Path(__file__).resolve().parent.parent
             / "visual"
             / "web"
+            / "frontend"
             / "styles.css"
         ).read_text(encoding="utf-8")
         # Title column shrinks, button column never overlaps and wraps.

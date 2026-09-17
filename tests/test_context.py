@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 
 from context import AppConfig, RuntimeContext
-from visual.pie_chart import PieChart
-from visual.web_chart import WebChart
+from visual.plot.pie_chart import PieChart
+from visual.plot.web_chart import WebChart
 
 
 def _update_ns(**overrides) -> argparse.Namespace:
@@ -174,7 +174,7 @@ class TestPlotterSelection(unittest.TestCase):
 
 class TestIncognitoOutputDir(unittest.TestCase):
     def setUp(self) -> None:
-        from visual.web_chart import WebChart
+        from visual.plot.web_chart import WebChart
 
         self._orig_dir = WebChart.data_dir
         self._orig_counts = dict(WebChart._slug_counts)
@@ -182,7 +182,7 @@ class TestIncognitoOutputDir(unittest.TestCase):
         self.addCleanup(self._restore_output_state)
 
     def _restore_output_state(self) -> None:
-        from visual.web_chart import WebChart
+        from visual.plot.web_chart import WebChart
 
         WebChart.data_dir = self._orig_dir
         WebChart._slug_counts = self._orig_counts
@@ -196,7 +196,7 @@ class TestIncognitoOutputDir(unittest.TestCase):
                 ctx.output_data_dir(incognito=False), server / "data" / "clear"
             )
             ctx.configure_web_output(incognito=False)
-            from visual.web_chart import WebChart
+            from visual.plot.web_chart import WebChart
 
             self.assertEqual(WebChart.data_dir, server / "data" / "clear")
             WebChart(data={"A": 1.0}, title="Clear check").plot()
@@ -212,7 +212,7 @@ class TestIncognitoOutputDir(unittest.TestCase):
                 ctx.output_data_dir(incognito=True), server / "data" / "incognito"
             )
             ctx.configure_web_output(incognito=True)
-            from visual.web_chart import WebChart
+            from visual.plot.web_chart import WebChart
 
             self.assertEqual(WebChart.data_dir, server / "data" / "incognito")
 
@@ -223,7 +223,7 @@ class TestIncognitoOutputDir(unittest.TestCase):
                 config=AppConfig(plot_incognito=True, server=_server(server))
             )
             ctx.configure_web_output(incognito=True)
-            from visual.web_chart import WebChart
+            from visual.plot.web_chart import WebChart
 
             WebChart(data={"A": 1.0}, title="Incognito check").plot()
             raw = ctx.output_data_dir(incognito=True) / "01-incognito-check.raw"

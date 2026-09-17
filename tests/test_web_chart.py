@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 from visual import PLOTTERS, SECTOR_PALETTE
-from visual.pie_chart import PieChart
-from visual.web_chart import WebChart, _TAB10
+from visual.plot.pie_chart import PieChart
+from visual.plot.web_chart import WebChart, _TAB10
 
 
 class TestWebChart(unittest.TestCase):

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from visual.constituents import load_constituents, render_constituents_page
+from .constituents import load_constituents, render_constituents_page
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def _store_constituent(self) -> bool:
         """Handle ``POST /api/constituents``; plain-text statuses on failure."""
-        from visual.constituents import store_constituent_value
+        from .constituents import store_constituent_value
 
         if urlsplit(self.path).path != "/api/constituents":
             return False

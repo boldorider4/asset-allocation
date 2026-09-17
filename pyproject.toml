@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation"
-version = "2.6.2"
+version = "2.6.3"
 description = "Personal asset allocation and position pricing"
 requires-python = ">=3.10"
 dependencies = [
@@ -34,4 +34,4 @@ log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
 py-modules = ["allocation", "cli", "common", "context", "logger", "utils"]
-packages = ["position", "visual", "portfolio", "scrape"]
+packages = ["position", "visual", "visual.plot", "visual.web", "visual.web.backend", "portfolio", "scrape"]

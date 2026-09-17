@@ -136,7 +136,7 @@ class TestBothPassesWriteBothDirs(unittest.TestCase):
             )
         )
         ctx.value_factor = 2.0
-        from visual.web_chart import WebChart
+        from visual.plot.web_chart import WebChart
 
         orig = (WebChart.data_dir, dict(WebChart._slug_counts), WebChart._plot_seq)
         self.addCleanup(

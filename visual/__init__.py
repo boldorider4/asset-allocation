@@ -1,6 +1,6 @@
-from .visual import SECTOR_PALETTE, Visual
-from .web_chart import WebChart
-from .pie_chart import PieChart
+from .plot.visual import SECTOR_PALETTE, Visual
+from .plot.web_chart import WebChart
+from .plot.pie_chart import PieChart
 
 PLOTTERS = {
     "web": WebChart,

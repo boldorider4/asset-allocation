@@ -232,7 +232,7 @@ class RuntimeContext:
 
     def configure_web_output(self, *, incognito: bool = False):  # type: ignore[no-untyped-def]
         """Point WebChart file output at the pass's dir; reset seq."""
-        from visual.web_chart import WebChart
+        from visual.plot.web_chart import WebChart
 
         WebChart.data_dir = self.output_data_dir(incognito=incognito)
         WebChart._slug_counts = {}

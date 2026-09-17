@@ -1,6 +1,6 @@
 """Write example ``*.raw`` chart files for the JS visualizer."""
 
-from .web_chart import WebChart
+from visual.plot.web_chart import WebChart
 
 
 def main() -> None:

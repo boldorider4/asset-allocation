@@ -54,7 +54,7 @@ def _pid_is_server(pid: int) -> bool:
             cmdline = f.read().decode(errors="replace")
     except OSError:
         return False
-    return "visual.serve" in cmdline or "http.server" in cmdline
+    return "visual.web.backend.serve" in cmdline or "http.server" in cmdline
 
 
 def cmd_stop(_args: argparse.Namespace) -> None:
@@ -100,7 +100,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         [
             sys.executable,
             "-m",
-            "visual.serve",
+            "visual.web.backend.serve",
             "--port",
             str(cfg.port),
             "--bind",

@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from visual.serve import DashboardHandler
+from visual.web.backend.serve import DashboardHandler
 
 
 class TestDashboardEndpoint(unittest.TestCase):

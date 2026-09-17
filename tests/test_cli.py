@@ -12,8 +12,8 @@ from unittest.mock import patch
 from cli import cmd_stop, cmd_update, load_server_config
 from context import AppConfig, ServerConfig
 from visual import PLOTTERS, plotter_class
-from visual.pie_chart import PieChart
-from visual.web_chart import WebChart
+from visual.plot.pie_chart import PieChart
+from visual.plot.web_chart import WebChart
 
 
 class TestCliPlotFlags(unittest.TestCase):

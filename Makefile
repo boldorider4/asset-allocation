@@ -1,7 +1,7 @@
 .PHONY: install web web-example web-clean clean serve stop-serve service stop-service
 
 VISUALIZER := $(HOME)/.local/asalloc/visualizer
-TEMPLATE := visual/web
+TEMPLATE := visual/web/frontend
 INSTALL_ROOT := $(HOME)/.local/asalloc
 INSTALL_VIS := $(INSTALL_ROOT)/visualizer
 SYSTEMD_USER := $(HOME)/.config/systemd/user
@@ -23,10 +23,10 @@ web:
 	mkdir -p $(VISUALIZER)/data
 	cp -R $(TEMPLATE)/. $(VISUALIZER)/
 	mkdir -p $(VISUALIZER)/data
-	python -m visual.stamp_web $(VISUALIZER)/index.html
+	python -m visual.web.backend.stamp_web $(VISUALIZER)/index.html
 
 web-example: web
-	python -m visual.web_example
+	python -m visual.web.backend.web_example
 
 web-clean:
 	find $(VISUALIZER)/data -name '*.raw' -delete 2>/dev/null || true

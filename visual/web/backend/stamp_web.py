@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _PLACEHOLDER_VERSION = "__ASALLOC_VERSION__"
 _PLACEHOLDER_REPO = "__ASALLOC_REPO_URL__"
 
