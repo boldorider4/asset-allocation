@@ -1,5 +1,7 @@
 import argparse
 import logging
+import os
+import signal
 import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
@@ -43,6 +45,44 @@ def cmd_update(args: argparse.Namespace) -> None:
     config = AppConfig.from_cli(args)
     ctx = RuntimeContext(config=config)
     run_update(ctx)
+
+
+def _pid_is_server(pid: int) -> bool:
+    """True when /proc shows *pid* as a visualizer server process."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = f.read().decode(errors="replace")
+    except OSError:
+        return False
+    return "visual.serve" in cmdline or "http.server" in cmdline
+
+
+def cmd_stop(_args: argparse.Namespace) -> None:
+    # Resolves the pid file from the same config `serve` used, so custom
+    # ASALLOC_CONFIG files and relative `directory` values agree on location.
+    cfg = load_server_config()
+    pid_file = cfg.directory / ".serve.pid"
+    if not pid_file.is_file():
+        logger.warning("No visualizer server pid file at %s; nothing to stop.", pid_file)
+        return
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except ValueError:
+        logger.warning("Ignoring malformed pid file at %s.", pid_file)
+        pid_file.unlink(missing_ok=True)
+        return
+    try:
+        if _pid_is_server(pid):
+            os.kill(pid, signal.SIGTERM)
+            logger.info("Stopped visualizer server (pid %s).", pid)
+        else:
+            logger.warning("Visualizer server pid %s is not running.", pid)
+    except ProcessLookupError:
+        logger.warning("Visualizer server pid %s is not running.", pid)
+    except PermissionError:
+        logger.warning("No permission to stop pid %s; leaving pid file.", pid)
+        return
+    pid_file.unlink(missing_ok=True)
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
@@ -196,6 +236,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
     )
     serve.set_defaults(func=cmd_serve)
+
+    stop_serve = subparsers.add_parser(
+        "stop-serve",
+        help="Stop the background visualizer server started by serve (pid file from config.ini).",
+    )
+    stop_serve.set_defaults(func=cmd_stop)
 
     args = parser.parse_args(argv)
     configure_cli_logging(getattr(logging, args.log_level))

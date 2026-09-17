@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli import cmd_update, load_server_config
-from context import AppConfig
+from cli import cmd_stop, cmd_update, load_server_config
+from context import AppConfig, ServerConfig
 from visual import PLOTTERS, plotter_class
 from visual.pie_chart import PieChart
 from visual.web_chart import WebChart
@@ -86,3 +87,60 @@ class TestServerConfig(unittest.TestCase):
             self.assertEqual(cfg.address, "0.0.0.0")
             self.assertEqual(cfg.port, 9000)
             self.assertEqual(cfg.directory, (Path(tmp) / "vis").resolve())
+
+
+class TestStop(unittest.TestCase):
+    def _cfg(self, tmp: str):
+        directory = Path(tmp) / "visualizer"
+        directory.mkdir(parents=True, exist_ok=True)
+        return ServerConfig(port=8765, address="localhost", directory=directory)
+
+    def test_missing_pid_file_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("cli.load_server_config", return_value=self._cfg(tmp)):
+                cmd_stop(argparse.Namespace())  # must not raise
+
+    def test_malformed_pid_file_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "visualizer" / ".serve.pid"
+            self._cfg(tmp)  # ensures directory exists
+            pid_file.write_text("not-a-pid", encoding="utf-8")
+            with patch("cli.load_server_config", return_value=self._cfg(tmp)):
+                cmd_stop(argparse.Namespace())
+            self.assertFalse(pid_file.exists())
+
+    def test_dead_pid_is_reaped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+            pid_file = cfg.directory / ".serve.pid"
+            pid_file.write_text("999999999", encoding="utf-8")
+            with patch("cli.load_server_config", return_value=cfg):
+                cmd_stop(argparse.Namespace())
+            self.assertFalse(pid_file.exists())
+
+    def test_live_server_pid_gets_sigterm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+            pid_file = cfg.directory / ".serve.pid"
+            proc = subprocess.Popen(["sleep", "60"])
+            self.addCleanup(lambda: proc.kill() if proc.poll() is None else None)
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
+            with (
+                patch("cli.load_server_config", return_value=cfg),
+                patch("cli._pid_is_server", return_value=True),
+            ):
+                cmd_stop(argparse.Namespace())
+            self.assertIsNotNone(proc.wait(timeout=10))
+            self.assertFalse(pid_file.exists())
+
+    def test_foreign_pid_is_not_killed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+            pid_file = cfg.directory / ".serve.pid"
+            proc = subprocess.Popen(["sleep", "60"])
+            self.addCleanup(lambda: proc.kill() if proc.poll() is None else None)
+            pid_file.write_text(str(proc.pid), encoding="utf-8")
+            with patch("cli.load_server_config", return_value=cfg):
+                cmd_stop(argparse.Namespace())  # sleep has no serve marker
+            self.assertIsNone(proc.poll())
+            self.assertFalse(pid_file.exists())
