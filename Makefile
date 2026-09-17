@@ -20,6 +20,7 @@ web-example: web
 	python -m visual.web_example
 
 web-clean:
+	find $(VISUALIZER)/data -name '*.raw' -delete 2>/dev/null || true
 	rm -rf $(VISUALIZER)
 
 serve:
