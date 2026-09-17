@@ -85,10 +85,11 @@ The bind address, HTTP port, and directory come from `config.ini` (`[server] add
 
 | Target | What it does |
 | --- | --- |
-| `make install` | `pip install -e .` so `asalloc` is on your PATH |
+| `make install` | `pip install -e .`, plus a `~/.local/bin/asalloc` symlink to wherever `pip` put the entry point (venv/conda-aware, so systemd finds it) |
 | `make web` | Copy `visual/web` into `~/.local/asalloc/visualizer`, stamp version and GitHub URL |
 | `make web-example` | Same, plus sample `*.raw` files (no server, no browser) |
-| `make serve` | Background HTTP server for the visualizer dir (from `config.ini`); fails if `asalloc` is not callable |
+| `make serve` | Scaffold the web app, then background HTTP server for the visualizer dir (from `config.ini`); fails if `asalloc` is not callable |
+| `make clean` | Same as `make web-clean` (so `make clean web` rebuilds the visualizer from scratch) |
 | `make stop-serve` | Stop the background visualizer server |
 | `make service` | Linux: install systemd user units, enable serve + 3-hour update timer |
 | `make stop-service` | Linux: stop and disable those user units |

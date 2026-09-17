@@ -8,7 +8,7 @@ PIDFile=%h/.local/asalloc/visualizer/.serve.pid
 Environment=ASALLOC_CONFIG=%h/.local/asalloc/config.ini
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/.local/asalloc
-ExecStart=asalloc serve
+ExecStart=%h/.local/bin/asalloc serve
 Restart=on-failure
 
 [Install]

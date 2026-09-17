@@ -1,4 +1,4 @@
-.PHONY: install web web-example web-clean serve stop-serve service stop-service
+.PHONY: install web web-example web-clean clean serve stop-serve service stop-service
 
 VISUALIZER := $(HOME)/.local/asalloc/visualizer
 TEMPLATE := visual/web
@@ -9,6 +9,16 @@ SYSTEMD_USER := $(HOME)/.config/systemd/user
 
 install:
 	pip install -e .
+	mkdir -p $(HOME)/.local/bin
+	@asalloc_bin="$$(command -v asalloc)" && \
+	if [ -z "$$asalloc_bin" ]; then \
+		echo "asalloc is not callable after install; check your PATH." >&2; exit 1; \
+	elif [ "$$asalloc_bin" != "$(HOME)/.local/bin/asalloc" ]; then \
+		ln -sf "$$asalloc_bin" $(HOME)/.local/bin/asalloc; \
+		echo "Linked $(HOME)/.local/bin/asalloc -> $$asalloc_bin"; \
+	else \
+		echo "asalloc already provided by $(HOME)/.local/bin"; \
+	fi
 
 web:
 	mkdir -p $(VISUALIZER)/data
@@ -23,7 +33,9 @@ web-clean:
 	find $(VISUALIZER)/data -name '*.raw' -delete 2>/dev/null || true
 	rm -rf $(VISUALIZER)
 
-serve:
+clean: web-clean
+
+serve: web
 	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
 	asalloc serve
 
