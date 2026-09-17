@@ -113,6 +113,12 @@ class TestJustETFCountryScrapeFailure(unittest.TestCase):
             self._position(_HTTP_403)
         self.assertIn(_ISIN, "\n".join(logs.output))
 
+    def test_cancellation_is_never_swallowed_by_fallbacks(self) -> None:
+        from position.factory import UpdateCancelled
+
+        with self.assertRaises(UpdateCancelled):
+            self._position(UpdateCancelled("cancelled by user"))
+
 
 if __name__ == "__main__":
     unittest.main()

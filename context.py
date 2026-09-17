@@ -21,6 +21,7 @@ import configparser
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -166,6 +167,9 @@ class RuntimeContext:
     # Display-only value scaler for incognito plots (computed once per run;
     # stored clear values are never mutated).
     value_factor: float = 1.0
+    # Cooperative cancellation for endpoint-triggered runs. Checked per
+    # position in ``position.factory``; ``None`` means non-cancellable.
+    cancel_event: threading.Event | None = None
 
     # -- portfolio --
     def load_portfolio(self, path: Path | None = None) -> None:

@@ -510,6 +510,20 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(self.ctx.cache, before)
         self.assertFalse(self.ctx.cache_dirty)
 
+    def test_cancel_event_aborts_before_any_network(self) -> None:
+        import threading
+
+        from position.factory import UpdateCancelled
+
+        self.ctx.cancel_event = threading.Event()
+        self.ctx.cancel_event.set()
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("must not touch the network"),
+        ):
+            with self.assertRaises(UpdateCancelled):
+                self._factory()
+
 
 if __name__ == "__main__":
     unittest.main()

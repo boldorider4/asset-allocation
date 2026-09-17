@@ -39,6 +39,14 @@ YFINANCE = "yfinance"
 JUSTETF = "justetf"
 
 
+class UpdateCancelled(Exception):
+    """Cooperative cancellation of an endpoint-triggered update run.
+
+    Deliberately *not* a ``RuntimeError``/``OSError`` so the resilient
+    price/geosplit/sector fallbacks never swallow it.
+    """
+
+
 def _name_looks_like_ubs(name: str | None) -> bool:
     return bool(name) and "ubs" in name.casefold()
 
@@ -97,6 +105,8 @@ def factory(
     ctx: RuntimeContext,
     price: float | None = None,
 ) -> JustETFPosition | YFinancePosition:
+    if ctx.cancel_event is not None and ctx.cancel_event.is_set():
+        raise UpdateCancelled(f"cancelled before building position {isin}")
     cache = ctx.ensure_cache_loaded()
     cached_price, cached_countries, cached_sectors = parse_cache_entry(cache.get(isin))
     fetch_prices = ctx.config.fetch_prices

@@ -64,6 +64,13 @@
     status.hidden = !text;
   }
 
+  function setOverlay(visible) {
+    const overlay = document.getElementById("update-overlay");
+    if (overlay) {
+      overlay.hidden = !visible;
+    }
+  }
+
   async function refreshAndGo(event) {
     event.preventDefault();
     const link = event.currentTarget;
@@ -71,7 +78,7 @@
       return;
     }
     link.dataset.busy = "1";
-    setStatus("Updating charts…");
+    setOverlay(true);
     try {
       const response = await fetch("/api/update", { method: "POST" });
       if (!response.ok) {
@@ -79,6 +86,7 @@
       }
       window.location.href = "/dashboard";
     } catch (err) {
+      setOverlay(false);
       setStatus("Update failed: " + (err && err.message ? err.message : err));
       link.dataset.busy = "";
     }

@@ -317,10 +317,15 @@ def render_constituents_page(
   <body>
     <header class="masthead">
       <h1>Constituents</h1>
-      <a id="overview-link" class="nav-button" href="/dashboard">Overview</a>
+      <div class="nav-buttons">
+        <a id="overview-link" class="nav-button" href="/dashboard">Overview</a>
+      </div>
       <p id="update-status" class="status" hidden></p>
     </header>
     <main>{"".join(parts)}</main>
+    <div id="update-overlay" class="overlay" hidden>
+      <span>Updating charts…</span>
+    </div>
     <script src="constituents.js"></script>
   </body>
 </html>

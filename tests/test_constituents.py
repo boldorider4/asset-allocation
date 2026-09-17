@@ -292,11 +292,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_overview_button_top_right(self) -> None:
         page = self._page()
+        self.assertIn('<div class="nav-buttons">', page)
         self.assertIn(
             '<a id="overview-link" class="nav-button" href="/dashboard">Overview</a>',
             page,
         )
         self.assertIn('id="update-status"', page)
+
+    def test_blocking_update_overlay(self) -> None:
+        page = self._page()
+        self.assertIn('id="update-overlay" class="overlay" hidden', page)
+        self.assertIn("Updating charts…", page)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".overlay {", css)
+        self.assertIn("position: fixed", css)
+        self.assertIn(".overlay[hidden]", css)
 
     def test_dashboard_has_sync_prices_button(self) -> None:
         index = (
@@ -308,6 +323,23 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('id="sync-link"', index)
         self.assertIn(">Sync Prices</a>", index)
         self.assertIn('<script src="dashboard.js"></script>', index)
+
+    def test_dashboard_edit_link_cancels_then_navigates(self) -> None:
+        index = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn('id="edit-link"', index)
+        dashboard_js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "dashboard.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("/api/cancel", dashboard_js)
+        self.assertIn("/constituents", dashboard_js)
         dashboard_js = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -526,6 +558,19 @@ class TestNumberFormatting(unittest.TestCase):
         self.assertIn(".cell-box {", css)
         box_rule = css.split(".cell-box {", 1)[1].split("}", 1)[0]
         self.assertIn("text-align: right", box_rule)
+
+    def test_masthead_keeps_title_and_buttons_in_reserved_columns(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        # Title column shrinks, button column never overlaps and wraps.
+        self.assertIn(".masthead h1 {", css)
+        self.assertIn("justify-content: space-between", css)
+        self.assertIn("flex-wrap: wrap", css)
+        self.assertIn("white-space: nowrap", css)
 
 
 class TestConstituentsRoute(unittest.TestCase):
@@ -748,6 +793,129 @@ class TestConstituentsRoute(unittest.TestCase):
             body = exc.read().decode("utf-8", errors="replace")
             self.assertIn("constituents unavailable", body)
             self.assertNotIn("Traceback", body)
+
+
+class TestUpdateCancellation(unittest.TestCase):
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.root = tmp / "visualizer"
+        self.root.mkdir()
+        (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
+        self.assets, self.cache = _write_files(tmp)
+        handler = functools.partial(
+            DashboardHandler,
+            directory=str(self.root),
+            assets_file=str(self.assets),
+            cache_file=str(self.cache),
+        )
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.addCleanup(self._httpd.shutdown)
+
+    def _post_path(self, path: str, payload: dict | None = None) -> tuple[int, str]:
+        data = (
+            json.dumps(payload).encode("utf-8")
+            if payload is not None
+            else b"{}"
+        )
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_cancel_without_job(self) -> None:
+        status, body = self._post_path("/api/cancel")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"cancelled": False})
+
+    def test_overlapping_update_returns_409(self) -> None:
+        import threading as _threading
+        from unittest.mock import patch
+
+        entered = _threading.Event()
+        release = _threading.Event()
+        self.addCleanup(release.set)
+
+        def fake_main(ctx) -> None:
+            entered.set()
+            release.wait(timeout=30)
+
+        results: dict = {}
+
+        def first() -> None:
+            try:
+                with patch("allocation.main", side_effect=fake_main):
+                    results["first"] = self._post_path("/api/update")
+            except Exception as exc:  # never lose thread errors silently
+                results["error"] = exc
+
+        thread = _threading.Thread(target=first, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(timeout=30))
+            with patch("allocation.main") as no_run:
+                status, body = self._post_path("/api/update")
+                no_run.assert_not_called()
+            self.assertEqual(status, 409)
+            self.assertIn("already in progress", body)
+        finally:
+            release.set()
+            thread.join(timeout=30)
+        self.assertFalse(thread.is_alive(), "first update thread did not finish")
+        self.assertNotIn("error", results)
+        self.assertEqual(results["first"][0], 200)
+
+    def test_cancel_stops_running_update(self) -> None:
+        import threading as _threading
+        from unittest.mock import patch
+
+        from position.factory import UpdateCancelled
+
+        entered = _threading.Event()
+
+        def fake_main(ctx) -> None:
+            self.assertIsNotNone(ctx.cancel_event)
+            entered.set()
+            if not ctx.cancel_event.wait(timeout=30):
+                raise RuntimeError("cancel never arrived")
+            raise UpdateCancelled("cancelled by user")
+
+        results: dict = {}
+
+        def run_update() -> None:
+            try:
+                with patch("allocation.main", side_effect=fake_main):
+                    results["update"] = self._post_path("/api/update")
+            except Exception as exc:  # never lose thread errors silently
+                results["error"] = exc
+
+        thread = _threading.Thread(target=run_update, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(timeout=30))
+            status, body = self._post_path("/api/cancel")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {"cancelled": True})
+            thread.join(timeout=30)
+        finally:
+            if thread.is_alive():
+                # Never leave a wedged server thread behind.
+                self.fail("update thread did not finish after cancel")
+        self.assertNotIn("error", results)
+        status, body = results["update"]
+        self.assertEqual(status, 409)
+        self.assertIn("cancelled", body)
 
 
 if __name__ == "__main__":

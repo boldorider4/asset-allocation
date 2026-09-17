@@ -231,6 +231,24 @@ code {
     padding: 1rem 0.75rem 4rem;
   }
 
+  .masthead {
+    gap: 0.6rem;
+  }
+
+  .masthead h1 {
+    font-size: 1.3rem;
+    white-space: nowrap;
+  }
+
+  .nav-button {
+    padding: 0.35rem 0.8rem;
+    font-size: 0.78rem;
+  }
+
+  main section h2 {
+    font-size: 1.0rem;
+  }
+
   .gallery {
     grid-template-columns: 1fr;
     gap: 1rem;
@@ -272,11 +290,24 @@ code {
   position: relative;
 }
 
-.nav-buttons {
-  position: absolute;
-  top: 0.4rem;
-  right: 0;
+.masthead {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.masthead h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.nav-buttons {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.6rem;
 }
 
@@ -306,6 +337,12 @@ code {
   border-top: 1px solid var(--line);
   margin: 1.6rem auto;
   max-width: 100rem;
+}
+
+main section h2 {
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin: 0 0 0.6rem;
 }
 
 table {
@@ -414,4 +451,27 @@ input.cell-box.editable.saved-flash {
 .broker-mark {
   display: inline-block;
   line-height: 0;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.overlay span {
+  padding: 1rem 1.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--paper);
+  color: var(--text);
+  font-size: 1rem;
 }

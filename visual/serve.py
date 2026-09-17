@@ -21,14 +21,23 @@ from __future__ import annotations
 import argparse
 import functools
 import http.server
+import itertools
 import json
 import logging
+import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from visual.constituents import load_constituents, render_constituents_page
 
 logger = logging.getLogger(__name__)
+
+# At most one endpoint-triggered update runs per server process. Guarded by
+# ``_update_lock``; timer/systemd runs live in other processes and are
+# unaffected by cancellation here.
+_update_lock = threading.Lock()
+_update_job: dict | None = None
+_update_ids = itertools.count(1)
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
@@ -187,9 +196,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return "lite"
 
     def _run_update(self) -> bool:
-        """Handle ``POST /api/update``: lite refresh, or fat with ``{"mode": "fat"}``."""
+        """Handle ``POST /api/update``: lite refresh, or fat with ``{"mode": "fat"}``.
+
+        Runs blocking in the handler thread with a cooperative cancel event;
+        a second POST while one runs gets 409. ``UpdateCancelled`` maps to
+        409 as well (someone asked for cancellation, nothing is broken).
+        """
         from allocation import main as run_update
         from context import AppConfig, RuntimeContext, ServerConfig
+        from position.factory import UpdateCancelled
 
         if urlsplit(self.path).path != "/api/update":
             return False
@@ -212,13 +227,34 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 ),
             )
             ctx = RuntimeContext(config=config)
-            root = logging.getLogger()
-            old_level = root.level
-            root.setLevel(logging.ERROR)
+            ctx.cancel_event = threading.Event()
+            global _update_job
+            with _update_lock:
+                if _update_job is not None:
+                    self._json_status(409, {"error": "update already in progress"})
+                    return True
+                job_id = next(_update_ids)
+                _update_job = {"id": job_id, "cancel": ctx.cancel_event}
             try:
-                run_update(ctx)
+                root = logging.getLogger()
+                old_level = root.level
+                root.setLevel(logging.ERROR)
+                try:
+                    run_update(ctx)
+                finally:
+                    root.setLevel(old_level)
+            except UpdateCancelled as exc:
+                logger.info("programmatic update cancelled: %s", exc)
+                self._json_status(409, {"error": f"update cancelled: {exc}"})
+                return True
+            except Exception as exc:
+                logger.warning("programmatic update failed: %s", exc)
+                self._plain_status(500, f"update failed: {exc}")
+                return True
             finally:
-                root.setLevel(old_level)
+                with _update_lock:
+                    if _update_job is not None and _update_job["id"] == job_id:
+                        _update_job = None
         except Exception as exc:
             logger.warning("programmatic update failed: %s", exc)
             self._plain_status(500, f"update failed: {exc}")
@@ -231,8 +267,37 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def _json_status(self, status: int, payload: dict) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _cancel_update(self) -> bool:
+        """Handle ``POST /api/cancel``: flag the running endpoint update, if any."""
+        if urlsplit(self.path).path != "/api/cancel":
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length > 0:
+            self.rfile.read(min(length, 65536))
+        with _update_lock:
+            job = _update_job
+            if job is not None:
+                job["cancel"].set()
+        self._json_status(200, {"cancelled": job is not None})
+        return True
+
     def do_POST(self) -> None:
-        if not self._store_constituent() and not self._run_update():
+        if not (
+            self._store_constituent()
+            or self._run_update()
+            or self._cancel_update()
+        ):
             self._plain_status(404, "unknown endpoint")
 
     def translate_path(self, path: str) -> str:
