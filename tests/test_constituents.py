@@ -70,6 +70,33 @@ class TestLoadConstituents(unittest.TestCase):
             [label for label, _ in sections], ["Equity", "Cash", "Weird Bucket"]
         )
 
+    def test_full_label_mapping_and_order(self) -> None:
+        buckets = {
+            "pension_portfolio": [],
+            "commodity_portfolio": [],
+            "cash_portfolio": [],
+            "bond_portfolio": [],
+            "equity_portfolio": [],
+            "fixed_maturity_bond_portfolio": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            cache = Path(tmp) / "cache.json"
+            assets.write_text(json.dumps(buckets), encoding="utf-8")
+            cache.write_text("{}", encoding="utf-8")
+            sections = load_constituents(assets, cache)
+        self.assertEqual(
+            [label for label, _ in sections],
+            [
+                "Equity",
+                "Fixed Income",
+                "Commodities / Inflation",
+                "Fixed Maturity",
+                "Cash",
+                "Pensions",
+            ],
+        )
+
     def test_row_fields_and_cache_price(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets, cache = _write_files(Path(tmp))
@@ -82,6 +109,9 @@ class TestLoadConstituents(unittest.TestCase):
         cash = dict(sections)["Cash"]
         self.assertIsNone(cash[0]["price"])
         self.assertFalse(cash[1]["editable_shares"])
+        # Tagesgeld rows are cash-like: locked shares, regardless of broker.
+        self.assertFalse(cash[0]["editable_shares"])
+        self.assertTrue(cash[0]["no_quote"])
 
     def test_missing_cache_file_means_no_prices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -129,9 +159,96 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertNotIn('data-field="shares" readonly', page)
         # Oskar row shares render as a locked box instead of an input.
         oskar_locked = (
-            '<span class="cell-box locked" data-field="shares">80</span>'
+            '<span class="cell-box locked" data-field="shares">80.00</span>'
         )
         self.assertIn(oskar_locked, page)
+
+    def test_cashlike_rows_show_dashes(self) -> None:
+        page = self._page()
+        # Tagesgeld (scalable broker): locked "-" for shares and price...
+        self.assertIn(
+            '<span class="cell-box locked" data-field="shares">-</span>', page
+        )
+        self.assertIn(
+            '<span class="cell-box locked" data-field="price">-</span>', page
+        )
+        # ...while its value cell is editable with the booked amount.
+        self.assertIn(
+            '<input class="cell-box editable" value="100.00" data-field="value"',
+            page,
+        )
+
+    def test_pension_rows_show_dashes(self) -> None:
+        assets = {
+            "pension_portfolio": [
+                {
+                    "name": "bAV",
+                    "shares": 10,
+                    "value": 5000,
+                    "broker": "scalable",
+                    "ISIN": "IE00X",
+                }
+            ]
+        }
+        cache = {"IE00X": {"price": 50.0}}
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text(json.dumps(cache), encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        self.assertEqual([label for label, _ in sections], ["Pensions"])
+        row = dict(sections)["Pensions"][0]
+        self.assertFalse(row["editable_shares"])
+        self.assertTrue(row["no_quote"])
+        page = render_constituents_page(sections)
+        self.assertIn(
+            '<span class="cell-box locked" data-field="shares">-</span>', page
+        )
+        self.assertIn(
+            '<span class="cell-box locked" data-field="price">-</span>', page
+        )
+        # Value stays editable with the booked amount.
+        self.assertIn(
+            '<input class="cell-box editable" value="5000.00" data-field="value"',
+            page,
+        )
+
+    def test_check24_fixed_maturity_rows_show_dashes(self) -> None:
+        assets = {
+            "fixed_maturity_bond_portfolio": [
+                {
+                    "name": "Check Bond",
+                    "shares": 7,
+                    "value": 700,
+                    "broker": "check24",
+                    "ISIN": "IE00Y",
+                }
+            ],
+            "equity_portfolio": [
+                {
+                    "name": "Check ETF",
+                    "shares": 7,
+                    "value": 700,
+                    "broker": "check24",
+                    "ISIN": "IE00Y",
+                }
+            ],
+        }
+        cache = {"IE00Y": {"price": 10.0}}
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text(json.dumps(cache), encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        by_label = dict(sections)
+        self.assertFalse(by_label["Fixed Maturity"][0]["editable_shares"])
+        self.assertTrue(by_label["Equity"][0]["editable_shares"])
+        page = render_constituents_page(sections)
+        self.assertIn(
+            '<span class="cell-box locked" data-field="shares">-</span>', page
+        )
 
     def test_broker_marks_and_escaping(self) -> None:
         page = self._page()
@@ -166,13 +283,37 @@ class TestNumberFormatting(unittest.TestCase):
             sections = load_constituents(assets_path, cache_path)
         return render_constituents_page(sections)
 
-    def test_two_decimals_tops(self) -> None:
+    def test_exactly_two_decimals(self) -> None:
         page = self._page()
         self.assertIn(">81.26<", page)
-        self.assertIn(">500.5<", page)
-        self.assertIn('value="220"', page)
+        self.assertIn(">500.50<", page)
+        self.assertIn('value="220.00"', page)
         self.assertNotIn("81.256", page)
-        self.assertNotIn("500.50", page)
+
+    def test_euro_suffix_outside_value_and_price_boxes(self) -> None:
+        page = self._page()
+        self.assertEqual(page.count('<span class="unit">Euro</span>'), 2)
+        self.assertIn(
+            '<span class="cell-box locked" data-field="value">500.50</span> '
+            '<span class="unit">Euro</span>',
+            page,
+        )
+        self.assertIn(
+            '<span class="cell-box locked" data-field="price">81.26</span> '
+            '<span class="unit">Euro</span>',
+            page,
+        )
+
+    def test_headers_right_justified_with_fixed_columns(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("th,\ntd {", css)
+        self.assertIn("width: 6rem", css)
+        self.assertIn("input.cell-box.editable", css)
 
     def test_alte_leipziger_broker_mark(self) -> None:
         assets = {
@@ -233,6 +374,19 @@ class TestNumberFormatting(unittest.TestCase):
             sections = load_constituents(assets, cache)
         page = render_constituents_page(sections)
         self.assertIn('<td class="name"', page)
+
+    def test_everything_right_justified(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        # Headers, cells and box contents all align right.
+        self.assertRegex(css, r"th,\s*\ntd \{\s*\n\s*text-align: right;")
+        self.assertIn(".cell-box {", css)
+        box_rule = css.split(".cell-box {", 1)[1].split("}", 1)[0]
+        self.assertIn("text-align: right", box_rule)
 
 
 class TestConstituentsRoute(unittest.TestCase):

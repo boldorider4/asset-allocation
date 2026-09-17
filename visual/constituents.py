@@ -17,16 +17,25 @@ from typing import Any
 # appended after these, prettified.
 SECTION_ORDER: tuple[tuple[str, str], ...] = (
     ("equity_portfolio", "Equity"),
-    ("bond_portfolio", "Bonds"),
+    ("bond_portfolio", "Fixed Income"),
+    ("commodity_portfolio", "Commodities / Inflation"),
     ("fixed_maturity_bond_portfolio", "Fixed Maturity"),
     ("cash_portfolio", "Cash"),
-    ("commodity_portfolio", "Commodities"),
-    ("pension_portfolio", "Pension"),
+    ("pension_portfolio", "Pensions"),
 )
 
 _MISSING = "—"
+_NO_QUOTE = "-"
 
 _OSKAR = "oskar"
+
+# Constituents without a tradeable quote: shares and price render as locked
+# "-" boxes, like Oskar rows. Cash-likes match by name; pensions match by
+# bucket; check24 matches by broker but only inside fixed maturity.
+_CASHLIKE_NAMES = frozenset({"cash", "tagesgeld"})
+_PENSION_BUCKET = "pension_portfolio"
+_FIXED_MATURITY_BUCKET = "fixed_maturity_bond_portfolio"
+_CHECK24 = "check24"
 
 # Placeholder broker marks (inline SVG, swappable for real uploads later).
 _BROKER_MARKS: dict[str, tuple[str, str]] = {
@@ -62,11 +71,8 @@ def _text(value: Any) -> str:
         return _MISSING
     if isinstance(value, bool):
         return str(value)
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        # Two decimals tops: round, then drop trailing zeros.
-        return f"{value:.2f}".rstrip("0").rstrip(".") or "0"
+    if isinstance(value, (int, float)):
+        return f"{value:.2f}"
     return str(value)
 
 
@@ -122,14 +128,28 @@ def load_constituents(
                 entry = cache.get(isin)
                 if isinstance(entry, dict):
                     price = entry.get("price")
+            broker = row.get("broker") or ""
+            cashlike = isinstance(row.get("name"), str) and (
+                row["name"].strip().casefold() in _CASHLIKE_NAMES
+            )
+            no_quote = (
+                cashlike
+                or key == _PENSION_BUCKET
+                or (
+                    key == _FIXED_MATURITY_BUCKET
+                    and broker.strip().casefold() == _CHECK24
+                )
+            )
             display.append(
                 {
                     "name": row.get("name"),
                     "value": row.get("value"),
                     "shares": row.get("shares"),
                     "price": price,
-                    "broker": row.get("broker"),
-                    "editable_shares": (row.get("broker") or "") != _OSKAR,
+                    "broker": broker,
+                    "editable_shares": broker != _OSKAR and not no_quote,
+                    "editable_value": cashlike or key == _PENSION_BUCKET,
+                    "no_quote": no_quote,
                 }
             )
         sections.append((labels.get(key, _prettify_bucket(key)), display))
@@ -151,19 +171,30 @@ def render_constituents_page(
             "</tr></thead><tbody>"
         )
         for row in rows:
-            shares_cell = (
-                _editable_box(row["shares"], name="shares")
-                if row["editable_shares"]
-                else _locked_box(row["shares"], name="shares")
-            )
+            if row["no_quote"]:
+                shares_cell = _locked_box(_NO_QUOTE, name="shares")
+                price_cell = _locked_box(_NO_QUOTE, name="price")
+            else:
+                shares_cell = (
+                    _editable_box(row["shares"], name="shares")
+                    if row["editable_shares"]
+                    else _locked_box(row["shares"], name="shares")
+                )
+                price_cell = _locked_box(row["price"], name="price")
             name_text = _text(row["name"])
+            if row["editable_value"]:
+                value_cell = _editable_box(row["value"], name="value")
+            else:
+                value_cell = _locked_box(row["value"], name="value")
             parts.append(
                 "<tr>"
                 f'<td class="name" title="{html.escape(name_text, quote=True)}">'
                 f"{html.escape(name_text, quote=False)}</td>"
-                f"<td>{_locked_box(row['value'], name='value')}</td>"
+                f"<td>{value_cell} "
+                '<span class="unit">Euro</span></td>'
                 f"<td>{shares_cell}</td>"
-                f"<td>{_locked_box(row['price'], name='price')}</td>"
+                f"<td>{price_cell} "
+                '<span class="unit">Euro</span></td>'
                 f"<td>{_broker_mark(row['broker'])}</td>"
                 "</tr>"
             )
