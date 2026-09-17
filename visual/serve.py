@@ -26,6 +26,7 @@ import json
 import logging
 import threading
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from visual.constituents import load_constituents, render_constituents_page
@@ -140,12 +141,22 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if not self._assets_file:
                 raise RuntimeError("assets file not configured")
-            value = store_constituent_value(
+            cache: dict[str, Any] = {}
+            if self._cache_file:
+                try:
+                    with open(self._cache_file, encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        cache = loaded
+                except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+                    logger.warning("constituents cache unreadable: %s", exc)
+            result = store_constituent_value(
                 self._assets_file,
                 payload.get("bucket"),
                 payload.get("index"),
                 payload.get("field"),
                 payload.get("value"),
+                cache,
             )
         except ValueError as exc:
             self._plain_status(400, str(exc))
@@ -154,7 +165,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             logger.warning("constituents store failed: %s", exc)
             self._plain_status(502, f"constituents unavailable: {exc}")
             return True
-        body = json.dumps({"value": value}).encode("utf-8")
+        body = json.dumps(result).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

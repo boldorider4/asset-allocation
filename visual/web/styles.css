@@ -441,6 +441,10 @@ input.cell-box.editable.saved-flash {
   background-color: #2e5b34;
 }
 
+input.cell-box.editable.stale-flash {
+  background-color: #6e2a22;
+}
+
 .unit {
   margin-left: 0.4rem;
   color: var(--muted);

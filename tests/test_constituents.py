@@ -372,6 +372,24 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("if (!dirty)", js)
         self.assertIn('window.location.href = "/dashboard"', js)
 
+    def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # Both boxes refresh from the response; red flare only when stale.
+        self.assertIn('closest("tr")', js)
+        self.assertIn("stale-flash", js)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("input.cell-box.editable.stale-flash", css)
+
 
 class TestStoreConstituentValue(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
@@ -385,35 +403,78 @@ class TestStoreConstituentValue(unittest.TestCase):
     def test_valid_shares_edit_persists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            stored = store_constituent_value(
+            result = store_constituent_value(
                 assets, "equity_portfolio", 0, "shares", "230.5"
             )
-            self.assertEqual(stored, 230.5)
+            self.assertEqual(result["shares"], 230.5)
             data = self._read(assets)
             self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
             # Untouched rows survive the round-trip.
             self.assertEqual(data["equity_portfolio"][1]["shares"], 10)
             json.loads(assets.read_text(encoding="utf-8"))
 
-    def test_shares_edit_nulls_stored_value(self) -> None:
-        """The next update recomputes value from shares × cached price."""
+    def test_shares_edit_recomputes_value_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            self.assertEqual(
-                self._read(assets)["equity_portfolio"][1]["value"], 500.5
+            cache = {"IE00B4YBJ215": {"price": 99.5}}
+            result = store_constituent_value(
+                assets, "equity_portfolio", 1, "shares", "12", cache
             )
-            store_constituent_value(assets, "equity_portfolio", 1, "shares", "12")
+            self.assertEqual(result["shares"], 12.0)
+            self.assertAlmostEqual(result["value"], 12.0 * 99.5)
+            self.assertTrue(result["recomputed"])
             data = self._read(assets)
             self.assertEqual(data["equity_portfolio"][1]["shares"], 12.0)
-            self.assertIsNone(data["equity_portfolio"][1]["value"])
+            self.assertAlmostEqual(data["equity_portfolio"][1]["value"], 12.0 * 99.5)
+
+    def test_value_edit_recomputes_shares_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            cache = {"IE00B4YBJ215": {"price": 99.5}}
+            result = store_constituent_value(
+                assets, "equity_portfolio", 1, "value", "199", cache
+            )
+            self.assertEqual(result["value"], 199.0)
+            self.assertAlmostEqual(result["shares"], 199.0 / 99.5)
+            self.assertTrue(result["recomputed"])
+            data = self._read(assets)
+            self.assertAlmostEqual(data["equity_portfolio"][1]["shares"], 199.0 / 99.5)
+
+    def test_recompute_needs_cached_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            # Shares edit without a cached price: value untouched, flagged.
+            result = store_constituent_value(
+                assets, "equity_portfolio", 1, "shares", "12", {}
+            )
+            self.assertEqual(result["shares"], 12.0)
+            self.assertEqual(result["value"], 500.5)
+            self.assertFalse(result["recomputed"])
+            # Value edit with existing shares but no price: shares untouched.
+            result = store_constituent_value(
+                assets, "equity_portfolio", 1, "value", "199", {}
+            )
+            self.assertEqual(result["shares"], 12.0)
+            self.assertFalse(result["recomputed"])
+            # Zero price counts as missing (no division by zero).
+            result = store_constituent_value(
+                assets,
+                "equity_portfolio",
+                1,
+                "shares",
+                "12",
+                {"IE00B4YBJ215": {"price": 0.0}},
+            )
+            self.assertFalse(result["recomputed"])
 
     def test_empty_value_means_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            stored = store_constituent_value(
+            result = store_constituent_value(
                 assets, "cash_portfolio", 0, "value", "   "
             )
-            self.assertEqual(stored, 0.0)
+            self.assertEqual(result["value"], 0.0)
+            self.assertTrue(result["recomputed"])
             self.assertEqual(self._read(assets)["cash_portfolio"][0]["value"], 0.0)
 
     def test_rejects_bad_address_field_and_junk(self) -> None:
@@ -440,12 +501,30 @@ class TestStoreConstituentValue(unittest.TestCase):
             # Oskar shares are locked...
             with self.assertRaises(ValueError):
                 store_constituent_value(assets, "cash_portfolio", 1, "shares", "5")
-            # ...as is a plain locked value cell.
+            # ...as is an Oskar value cell.
             with self.assertRaises(ValueError):
                 store_constituent_value(
-                    assets, "equity_portfolio", 1, "value", "5"
+                    assets, "cash_portfolio", 1, "value", "5"
                 )
             self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+    def test_value_editable_wherever_shares_are(self) -> None:
+        from visual.constituents import updatable_fields
+
+        self.assertIn(
+            "value",
+            updatable_fields(
+                "equity_portfolio",
+                {"name": "X", "broker": "scalable", "ISIN": "IE00X"},
+            ),
+        )
+        self.assertNotIn(
+            "value",
+            updatable_fields(
+                "equity_portfolio",
+                {"name": "X", "broker": "oskar", "ISIN": "IE00X"},
+            ),
+        )
 
 
 class TestNumberFormatting(unittest.TestCase):
@@ -473,7 +552,7 @@ class TestNumberFormatting(unittest.TestCase):
     def test_exactly_two_decimals(self) -> None:
         page = self._page()
         self.assertIn(">81.26<", page)
-        self.assertIn(">500.50<", page)
+        self.assertIn('value="500.50"', page)
         self.assertIn('value="220.00"', page)
         self.assertNotIn("81.256", page)
 
@@ -481,7 +560,9 @@ class TestNumberFormatting(unittest.TestCase):
         page = self._page()
         self.assertEqual(page.count('<span class="unit">Euro</span>'), 2)
         self.assertIn(
-            '<span class="cell-box locked" data-field="value">500.50</span> '
+            '<input class="cell-box editable" value="500.50" '
+            'data-field="value" data-bucket="equity_portfolio" data-index="0" '
+            'data-original="500.50" aria-label="value" /> '
             '<span class="unit">Euro</span>',
             page,
         )
@@ -647,16 +728,22 @@ class TestConstituentsRoute(unittest.TestCase):
             }
         )
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), {"value": 230.5})
+        payload = json.loads(body)
+        self.assertEqual(payload["shares"], 230.5)
+        self.assertAlmostEqual(payload["value"], 230.5 * 81.25)
+        self.assertTrue(payload["recomputed"])
         data = json.loads(self.assets.read_text(encoding="utf-8"))
         self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
+        self.assertAlmostEqual(data["equity_portfolio"][0]["value"], 230.5 * 81.25)
 
     def test_post_empty_means_zero(self) -> None:
         status, body = self._post(
             {"bucket": "cash_portfolio", "index": 0, "field": "value", "value": ""}
         )
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), {"value": 0.0})
+        self.assertEqual(
+            json.loads(body), {"value": 0.0, "shares": None, "recomputed": True}
+        )
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")

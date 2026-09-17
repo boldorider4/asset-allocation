@@ -477,7 +477,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertTrue(self.ctx.cache_dirty)
 
     def test_nulled_value_row_uses_shares_times_cached_price(self) -> None:
-        """A shares edit nulls the file value, so shares × quote wins."""
+        """A missing file value resolves to shares × quote."""
         self.ctx.config.fetch_prices = False
         self.ctx.config.fetch_scalable = False
         self.ctx.portfolio.clear()

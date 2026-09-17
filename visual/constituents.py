@@ -171,7 +171,8 @@ def updatable_fields(bucket_key: str, row: dict[str, Any]) -> set[str]:
     """Editable fields for a row, mirroring the render rules.
 
     ``shares`` unless the broker is Oskar or the row has no quote;
-    ``value`` only for cash-like, pension, or check24 rows.
+    ``value`` for cash-like, pension, or check24 rows, plus every row
+    whose shares are editable.
     """
     broker = row.get("broker") or ""
     broker_key = broker.strip().casefold()
@@ -186,9 +187,28 @@ def updatable_fields(bucket_key: str, row: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     if broker != _OSKAR and not no_quote:
         fields.add("shares")
-    if cashlike or bucket_key == _PENSION_BUCKET or broker_key == _CHECK24:
+    if (
+        cashlike
+        or bucket_key == _PENSION_BUCKET
+        or broker_key == _CHECK24
+        or "shares" in fields
+    ):
         fields.add("value")
     return fields
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _cached_price_for(cache: dict[str, Any] | None, isin: Any) -> float | None:
+    if not isinstance(cache, dict) or not isinstance(isin, str) or not isin:
+        return None
+    entry = cache.get(isin)
+    if not isinstance(entry, dict):
+        return None
+    price = entry.get("price")
+    return float(price) if _is_number(price) else None
 
 
 def _parse_stored_value(raw: Any) -> float:
@@ -215,9 +235,23 @@ def _parse_stored_value(raw: Any) -> float:
 
 
 def store_constituent_value(
-    assets_path: str | Path, bucket: str, index: int, field: str, raw_value: Any
-) -> float:
+    assets_path: str | Path,
+    bucket: str,
+    index: int,
+    field: str,
+    raw_value: Any,
+    cache: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Persist one editable cell into the assets file (atomic write).
+
+    The sibling figure is recomputed immediately from the cached quote so
+    the stored pair stays consistent: shares edits set
+    ``value = shares × price``, value edits set ``shares = value / price``.
+    Without a usable cached price the sibling is left untouched.
+
+    Returns ``{"value": ..., "shares": ..., "recomputed": bool}``;
+    ``recomputed`` is False only when a needed sibling recompute was
+    impossible for lack of price.
 
     Raises ``ValueError`` for invalid addresses, locked fields, or junk
     values; ``OSError``/``json`` errors propagate for missing/corrupt files.
@@ -241,17 +275,22 @@ def store_constituent_value(
         raise ValueError(f"field {field!r} is not editable for this row")
     value = _parse_stored_value(raw_value)
     row[field] = value
-    if field == "shares":
-        # Clear the stored value so the next update recomputes it from
-        # shares × cached price instead of reusing the stale figure.
-        row["value"] = None
+    price = _cached_price_for(cache, row.get("ISIN"))
+    recomputed = True
+    if price:
+        if field == "shares":
+            row["value"] = value * price
+        elif field == "value" and _is_number(row.get("shares")):
+            row["shares"] = value / price
+    elif field == "shares" or _is_number(row.get("shares")):
+        recomputed = False
     path = Path(assets_path)
     tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(assets, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.replace(tmp_path, path)
-    return value
+    return {"value": row.get("value"), "shares": row.get("shares"), "recomputed": recomputed}
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
