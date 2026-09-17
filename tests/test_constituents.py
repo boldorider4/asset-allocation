@@ -294,7 +294,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         page = self._page()
         self.assertIn('<div class="nav-buttons">', page)
         self.assertIn(
-            '<a id="overview-link" class="nav-button" href="/dashboard">Overview</a>',
+            '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
             page,
         )
         self.assertIn('id="update-status"', page)
@@ -382,6 +382,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Both boxes refresh from the response; red flare only when stale.
         self.assertIn('closest("tr")', js)
         self.assertIn("stale-flash", js)
+        # Accepted saves flash green on both boxes of the pair.
+        self.assertIn("for (const box of updated)", js)
+        self.assertIn('flash(box, "saved-flash")', js)
         css = (
             Path(__file__).resolve().parent.parent
             / "visual"

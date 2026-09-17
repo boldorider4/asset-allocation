@@ -2,16 +2,16 @@
  *
  * A single delegated "change" listener covers Enter, Tab, and click-away.
  * Success refreshes both boxes of the pair from the response, records the
- * new baselines, and stages an update (Overview runs it, otherwise navigates
- * directly); green flash, or red flare on the edited box when no cached
- * price allowed a recompute. Any failure reverts to the last-known-good
- * value. Locked cells never fire this.
+ * new baselines, and stages an update (Dashboard runs it, otherwise navigates
+ * directly); green flash on both boxes, or red flare on the edited box when
+ * no cached price allowed a recompute. Any failure reverts to the
+ * last-known-good value. Locked cells never fire this.
  */
 (function () {
   "use strict";
 
   // Staged-update flag: set on every successfully persisted cell edit.
-  // Overview only runs the lite update when this is set; otherwise it
+  // Dashboard only runs the lite update when this is set; otherwise it
   // navigates straight to the dashboard.
   let dirty = false;
 
@@ -38,6 +38,7 @@
   }
 
   function refreshPair(input, data) {
+    const updated = [];
     const row = input.closest("tr");
     const fields = { shares: null, value: null };
     if (row) {
@@ -49,8 +50,10 @@
       if (box && data[name] !== undefined) {
         box.value = formatFigure(data[name]);
         box.dataset.original = box.value;
+        updated.push(box);
       }
     }
+    return updated;
   }
 
   async function save(input) {
@@ -75,10 +78,16 @@
       revert(input);
       return;
     }
-    refreshPair(input, data);
+    const updated = refreshPair(input, data);
     input.dataset.original = input.value;
     dirty = true;
-    flash(input, data && data.recomputed === false ? "stale-flash" : "saved-flash");
+    if (data && data.recomputed === false) {
+      flash(input, "stale-flash");
+    } else {
+      for (const box of updated) {
+        flash(box, "saved-flash");
+      }
+    }
   }
 
   document.addEventListener("change", function (event) {

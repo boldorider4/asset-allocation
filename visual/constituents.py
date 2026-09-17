@@ -357,7 +357,7 @@ def render_constituents_page(
     <header class="masthead">
       <h1>Constituents</h1>
       <div class="nav-buttons">
-        <a id="overview-link" class="nav-button" href="/dashboard">Overview</a>
+        <a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>
       </div>
       <p id="update-status" class="status" hidden></p>
     </header>
