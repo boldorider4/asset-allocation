@@ -207,7 +207,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
         page = render_constituents_page(sections)
         self.assertIn(
-            "<th>Name</th><th>Label</th><th>ISIN</th>"
+            "<th>Name</th><th>Group</th><th>ISIN</th>"
             "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>",
             page,
         )

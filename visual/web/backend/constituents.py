@@ -320,7 +320,7 @@ def render_constituents_page(
         parts.append(
             '<div class="table-scroll">'
             "<table><thead><tr>"
-            "<th>Name</th><th>Label</th><th>ISIN</th>"
+            "<th>Name</th><th>Group</th><th>ISIN</th>"
             "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
             "</tr></thead><tbody>"
         )
