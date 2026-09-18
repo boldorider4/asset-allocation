@@ -303,13 +303,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def _serve_constituents(self) -> bool:
         """Render the constituents page; 502 with a plain reason on failure."""
-        if urlsplit(self.path).path not in CONSTITUENTS_PATHS:
+        parts = urlsplit(self.path)
+        if parts.path not in CONSTITUENTS_PATHS:
             return False
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
             body = render_constituents_page(
-                load_constituents(self._assets_file, self._cache_file)
+                load_constituents(self._assets_file, self._cache_file),
+                incognito=incognito_flag(parts.query),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
         except Exception as exc:

@@ -399,8 +399,10 @@ def delete_constituent(
 
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
+    incognito: bool = False,
 ) -> str:
     """Render display sections as a full standalone HTML page."""
+    overview_href = "/dashboard?incognito=true" if incognito else "/dashboard"
     parts: list[str] = []
     for index, (label, rows) in enumerate(sections):
         if index:
@@ -485,7 +487,7 @@ def render_constituents_page(
     <header class="masthead">
       <h1>Constituents</h1>
       <div class="nav-buttons">
-        <a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>
+        <a id="overview-link" class="nav-button" href="{overview_href}">Dashboard</a>
       </div>
       <p id="update-status" class="status" hidden></p>
     </header>

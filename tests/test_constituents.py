@@ -453,6 +453,20 @@ class TestRenderConstituentsPage(unittest.TestCase):
         )
         self.assertIn('id="update-status"', page)
 
+    def test_overview_button_holds_incognito_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
+            render_constituents_page(sections),
+        )
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" '
+            'href="/dashboard?incognito=true">Dashboard</a>',
+            render_constituents_page(sections, incognito=True),
+        )
+
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
         self.assertIn('id="update-overlay" class="overlay" hidden', page)
@@ -521,6 +535,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("/api/cancel", dashboard_js)
         self.assertIn("/constituents", dashboard_js)
+        # Edit navigates via the link href (which carries ?incognito=true
+        # when active) instead of a hardcoded path.
+        self.assertIn('getAttribute("href")', dashboard_js)
         dashboard_js = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -553,7 +570,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("dirty = true", js)
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
-        self.assertIn('window.location.href = "/dashboard"', js)
+        self.assertIn("window.location.href = target", js)
         # Only shares/value edits and row deletes stage an update: one
         # dirty flag in the pair-refresh path, one in the delete flow.
         # Label edits and reorders persist silently.
@@ -1117,6 +1134,77 @@ class TestConstituentsRoute(unittest.TestCase):
             self.assertIn("Amundi Core", body)
             self.assertIn("81.25", body)
             self.assertIn("<table>", body)
+
+    def test_constituents_holds_incognito_in_overview_link(self) -> None:
+        status, body = self._get("/constituents?incognito=true")
+        self.assertEqual(status, 200)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" '
+            'href="/dashboard?incognito=true">Dashboard</a>',
+            body,
+        )
+        status, body = self._get("/constituents")
+        self.assertEqual(status, 200)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
+            body,
+        )
+
+    def test_dashboard_has_incognito_button(self) -> None:
+        index = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn('id="incognito-link"', index)
+        self.assertIn('href="/dashboard?incognito=true"', index)
+        self.assertIn('aria-label="Incognito mode"', index)
+        self.assertIn('class="incognito-glyph"', index)
+        self.assertTrue(
+            (
+                Path(__file__).resolve().parent.parent
+                / "visual"
+                / "web"
+                / "frontend"
+                / "icons"
+                / "incognito.svg"
+            ).is_file()
+        )
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".incognito-glyph", css)
+        self.assertIn('url("icons/incognito.svg")', css)
+        self.assertIn('[aria-pressed="true"]', css)
+        dashboard_js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "dashboard.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("wireIncognitoToggle", dashboard_js)
+        self.assertIn("URLSearchParams", dashboard_js)
+        self.assertIn("aria-pressed", dashboard_js)
+        self.assertIn("/constituents?incognito=true", dashboard_js)
+
+    def test_overview_navigates_via_link_href(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # The Dashboard href carries the gallery mode; the return trip
+        # must use it instead of a hardcoded path.
+        self.assertIn('link.getAttribute("href")', js)
 
     def _post(self, payload: dict) -> tuple[int, str]:
         req = urllib.request.Request(

@@ -415,8 +415,12 @@
     if (link.dataset.busy === "1") {
       return;
     }
+    // The server renders the Dashboard href with the gallery mode baked
+    // in (?incognito=true when active); navigate via the link so the
+    // round trip through Constituents holds the state.
+    const target = link.getAttribute("href") || "/dashboard";
     if (!dirty) {
-      window.location.href = "/dashboard";
+      window.location.href = target;
       return;
     }
     link.dataset.busy = "1";
@@ -426,7 +430,7 @@
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      window.location.href = "/dashboard";
+      window.location.href = target;
     } catch (err) {
       setOverlay(false);
       setStatus("Update failed: " + (err && err.message ? err.message : err));
