@@ -112,9 +112,13 @@ class TestLoadConstituents(unittest.TestCase):
         self.assertEqual(equity[1]["price"], 99.5)
         cash = dict(sections)["Cash"]
         self.assertIsNone(cash[0]["price"])
-        self.assertFalse(cash[1]["editable_shares"])
-        # Tagesgeld rows are cash-like: locked shares, regardless of broker.
+        # Editability follows the ISIN, not the broker: the Oskar row has
+        # one, so its shares are editable...
+        self.assertTrue(cash[1]["editable_shares"])
+        self.assertTrue(cash[1]["editable_value"])
+        # ...while the ISIN-less Tagesgeld row locks shares regardless of broker.
         self.assertFalse(cash[0]["editable_shares"])
+        self.assertTrue(cash[0]["editable_value"])
         self.assertTrue(cash[0]["no_quote"])
 
     def test_missing_cache_file_means_no_prices(self) -> None:
@@ -163,7 +167,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
     def test_cells_and_placeholders(self) -> None:
         page = self._page()
         self.assertIn("Amundi Core", page)
-        # Editable shares for non-Oskar rows.
+        # Editable shares for rows carrying an ISIN.
         self.assertIn('class="cell-box editable"', page)
         # Locked value and price boxes.
         self.assertIn('class="cell-box locked"', page)
@@ -171,14 +175,76 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("—", page)
         self.assertNotIn(">None<", page)
 
-    def test_oskar_shares_not_editable(self) -> None:
+    def test_label_and_isin_columns(self) -> None:
+        assets = {
+            "equity_portfolio": [
+                {
+                    "name": "Amundi Core",
+                    "short_name": "Amundi",
+                    "shares": 220,
+                    "value": None,
+                    "broker": "scalable",
+                    "ISIN": "IE000BI8OT95",
+                },
+                {
+                    "name": "<evil> & co",
+                    "short_name": None,
+                    "shares": 10,
+                    "value": 500.5,
+                    "broker": "traderepublic",
+                    "ISIN": "IE00B4YBJ215",
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            assets_path = Path(tmp) / "assets.json"
+            cache_path = Path(tmp) / "cache.json"
+            assets_path.write_text(json.dumps(assets), encoding="utf-8")
+            cache_path.write_text("{}", encoding="utf-8")
+            sections = load_constituents(assets_path, cache_path)
+        equity = dict(sections)["Equity"]
+        self.assertEqual(equity[0]["short_name"], "Amundi")
+        self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
+        page = render_constituents_page(sections)
+        self.assertIn(
+            "<th>Name</th><th>Label</th><th>ISIN</th>"
+            "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>",
+            page,
+        )
+        # Label maps short_name into an always-editable box...
+        self.assertIn(
+            '<input class="cell-box editable text" value="Amundi" '
+            'data-field="short_name"',
+            page,
+        )
+        # ...missing short_name renders as an empty box, never "None".
+        self.assertIn('value="" data-field="short_name"', page)
+        # Boxes cap accepted characters (Name is plain text, not a box).
+        short_name_tag = page.split('data-field="short_name"')[1].split("/>")[0]
+        self.assertIn('maxlength="32"', short_name_tag)
+        shares_tag = page.split('data-field="shares"')[1].split("/>")[0]
+        self.assertIn('maxlength="16"', shares_tag)
+        # ISIN renders as plain text like Name, never a box or an input.
+        self.assertIn("<td>IE000BI8OT95</td>", page)
+        self.assertNotIn('data-field="ISIN"', page)
+        # Evil names stay escaped in both name and label cells.
+        self.assertIn("&lt;evil&gt; &amp; co", page)
+        self.assertNotIn("<evil>", page)
+
+    def test_shares_locked_only_without_isin(self) -> None:
         page = self._page()
         self.assertNotIn('data-field="shares" readonly', page)
-        # Oskar row shares render as a locked box instead of an input.
-        oskar_locked = (
-            '<span class="cell-box locked" data-field="shares">80.00</span>'
+        # The Oskar row carries an ISIN, so the broker does not lock its
+        # shares: they render as an editable input like any ISIN row.
+        self.assertIn(
+            '<input class="cell-box editable" value="80.00" '
+            'data-field="shares"',
+            page,
         )
-        self.assertIn(oskar_locked, page)
+        # Rows without an ISIN lock shares as "-" instead.
+        self.assertIn(
+            '<span class="cell-box locked" data-field="shares">-</span>', page
+        )
 
     def test_cashlike_rows_show_dashes(self) -> None:
         page = self._page()
@@ -196,6 +262,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
         )
 
     def test_pension_rows_show_dashes(self) -> None:
+        # Pensions carry no ISIN, so shares/price lock as "-"; the bucket
+        # itself plays no role in the rule.
         assets = {
             "pension_portfolio": [
                 {
@@ -203,16 +271,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
                     "shares": 10,
                     "value": 5000,
                     "broker": "scalable",
-                    "ISIN": "IE00X",
+                    "ISIN": None,
                 }
             ]
         }
-        cache = {"IE00X": {"price": 50.0}}
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
             assets_path.write_text(json.dumps(assets), encoding="utf-8")
-            cache_path.write_text(json.dumps(cache), encoding="utf-8")
+            cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         self.assertEqual([label for label, _ in sections], ["Pensions"])
         row = dict(sections)["Pensions"][0]
@@ -231,7 +298,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
             page,
         )
 
-    def test_check24_rows_show_dashes_in_any_bucket(self) -> None:
+    def test_broker_does_not_affect_editability(self) -> None:
+        # check24 rows carrying an ISIN behave like any other ISIN row, in
+        # every bucket: editable shares and value, locked quoted price.
         assets = {
             "fixed_maturity_bond_portfolio": [
                 {
@@ -260,20 +329,22 @@ class TestRenderConstituentsPage(unittest.TestCase):
             cache_path.write_text(json.dumps(cache), encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         by_label = dict(sections)
-        self.assertFalse(by_label["Fixed Maturity"][0]["editable_shares"])
-        self.assertFalse(by_label["Equity"][0]["editable_shares"])
-        self.assertTrue(by_label["Fixed Maturity"][0]["no_quote"])
-        self.assertTrue(by_label["Equity"][0]["no_quote"])
+        self.assertTrue(by_label["Fixed Maturity"][0]["editable_shares"])
+        self.assertTrue(by_label["Equity"][0]["editable_shares"])
+        self.assertFalse(by_label["Fixed Maturity"][0]["no_quote"])
+        self.assertFalse(by_label["Equity"][0]["no_quote"])
         page = render_constituents_page(sections)
         self.assertEqual(
-            page.count('<span class="cell-box locked" data-field="shares">-</span>'),
+            page.count(
+                '<input class="cell-box editable" value="7.00" data-field="shares"'
+            ),
             2,
         )
         self.assertEqual(
-            page.count('<span class="cell-box locked" data-field="price">-</span>'),
+            page.count('<span class="cell-box locked" data-field="price">10.00</span>'),
             2,
         )
-        # Value stays editable with the booked amount, like pensions.
+        # Value stays editable with the booked amount.
         self.assertEqual(
             page.count(
                 '<input class="cell-box editable" value="700.00" data-field="value"'
@@ -489,6 +560,41 @@ class TestStoreConstituentValue(unittest.TestCase):
             self.assertTrue(result["recomputed"])
             self.assertEqual(self._read(assets)["cash_portfolio"][0]["value"], 0.0)
 
+    def test_short_name_edit_persists_without_recompute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = store_constituent_value(
+                assets, "equity_portfolio", 0, "short_name", "Amundi"
+            )
+            self.assertEqual(result["short_name"], "Amundi")
+            self.assertTrue(result["recomputed"])
+            data = self._read(assets)
+            self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
+            # Numbers are untouched by a label edit.
+            self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
+            self.assertIsNone(data["equity_portfolio"][0]["value"])
+
+    def test_short_name_editable_even_on_locked_rows(self) -> None:
+        from visual.web.backend.constituents import updatable_fields
+
+        # ISIN-less rows lock shares, but the label stays editable.
+        self.assertIn(
+            "short_name",
+            updatable_fields(
+                "cash_portfolio",
+                {"name": "Tagesgeld", "broker": "scalable", "ISIN": None},
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = store_constituent_value(
+                assets, "cash_portfolio", 1, "short_name", "Oskar ETF"
+            )
+            self.assertEqual(result["short_name"], "Oskar ETF")
+            data = self._read(assets)
+            self.assertEqual(data["cash_portfolio"][1]["short_name"], "Oskar ETF")
+            self.assertEqual(data["cash_portfolio"][1]["shares"], 80)
+
     def test_rejects_bad_address_field_and_junk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
@@ -497,9 +603,14 @@ class TestStoreConstituentValue(unittest.TestCase):
                 ("nope", 0, "shares", "1"),
                 ("equity_portfolio", 99, "shares", "1"),
                 ("equity_portfolio", 0, "price", "1"),
+                ("equity_portfolio", 0, "ISIN", "IE00X"),
                 ("equity_portfolio", 0, "shares", "abc"),
                 ("equity_portfolio", 0, "shares", float("nan")),
                 ("equity_portfolio", 0, "shares", True),
+                ("equity_portfolio", 0, "short_name", True),
+                ("equity_portfolio", 0, "short_name", 123),
+                ("equity_portfolio", 0, "short_name", "x" * 33),
+                ("equity_portfolio", 0, "shares", "1" * 17),
             ]:
                 with self.subTest(bucket=bucket, index=index, field=field, value=value):
                     with self.assertRaises(ValueError):
@@ -509,32 +620,48 @@ class TestStoreConstituentValue(unittest.TestCase):
     def test_rejects_locked_cells(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
-            # Oskar shares are locked...
+            # Shares without an ISIN are locked...
             with self.assertRaises(ValueError):
-                store_constituent_value(assets, "cash_portfolio", 1, "shares", "5")
-            # ...as is an Oskar value cell.
-            with self.assertRaises(ValueError):
-                store_constituent_value(
-                    assets, "cash_portfolio", 1, "value", "5"
-                )
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+                store_constituent_value(assets, "cash_portfolio", 0, "shares", "5")
+            # ...but value stays editable on the very same row...
+            result = store_constituent_value(
+                assets, "cash_portfolio", 0, "value", "150"
+            )
+            self.assertEqual(result["value"], 150.0)
+            # ...and shares are editable wherever an ISIN exists,
+            # regardless of broker.
+            result = store_constituent_value(
+                assets, "cash_portfolio", 1, "shares", "81", {}
+            )
+            self.assertEqual(result["shares"], 81.0)
+            self.assertFalse(result["recomputed"])
+            # Only the two accepted edits touched the file.
+            data = self._read(assets)
+            self.assertEqual(data["cash_portfolio"][0]["value"], 150.0)
+            self.assertEqual(data["cash_portfolio"][1]["shares"], 81.0)
+            self.assertEqual(data["cash_portfolio"][1]["value"], 10100)
 
-    def test_value_editable_wherever_shares_are(self) -> None:
+    def test_editability_follows_isin_not_broker(self) -> None:
         from visual.web.backend.constituents import updatable_fields
 
-        self.assertIn(
-            "value",
-            updatable_fields(
-                "equity_portfolio",
-                {"name": "X", "broker": "scalable", "ISIN": "IE00X"},
-            ),
-        )
+        for broker in ("scalable", "oskar", "check24", "tf-bank"):
+            with self.subTest(broker=broker):
+                fields = updatable_fields(
+                    "equity_portfolio",
+                    {"name": "X", "broker": broker, "ISIN": "IE00X"},
+                )
+                self.assertEqual(fields, {"short_name", "value", "shares"})
+                fields = updatable_fields(
+                    "equity_portfolio",
+                    {"name": "X", "broker": broker, "ISIN": None},
+                )
+                self.assertEqual(fields, {"short_name", "value"})
+        # Blank strings count as missing.
         self.assertNotIn(
-            "value",
+            "shares",
             updatable_fields(
                 "equity_portfolio",
-                {"name": "X", "broker": "oskar", "ISIN": "IE00X"},
+                {"name": "X", "broker": "scalable", "ISIN": "   "},
             ),
         )
 
@@ -574,7 +701,7 @@ class TestNumberFormatting(unittest.TestCase):
         self.assertIn(
             '<input class="cell-box editable" value="500.50" '
             'data-field="value" data-bucket="equity_portfolio" data-index="0" '
-            'data-original="500.50" aria-label="value" /> '
+            'data-original="500.50" aria-label="value" maxlength="16" /> '
             '<span class="unit">Euro</span>',
             page,
         )
@@ -758,8 +885,26 @@ class TestConstituentsRoute(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(
-            json.loads(body), {"value": 0.0, "shares": None, "recomputed": True}
+            json.loads(body),
+            {"value": 0.0, "shares": None, "short_name": None, "recomputed": True},
         )
+
+    def test_post_short_name_persists_to_disk(self) -> None:
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 0,
+                "field": "short_name",
+                "value": "Amundi",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["short_name"], "Amundi")
+        self.assertTrue(payload["recomputed"])
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
+        self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")
@@ -768,8 +913,8 @@ class TestConstituentsRoute(unittest.TestCase):
             {"bucket": "equity_portfolio", "index": 9, "field": "shares", "value": "1"},
             {"bucket": "equity_portfolio", "index": 0, "field": "price", "value": "1"},
             {"bucket": "equity_portfolio", "index": 0, "field": "shares", "value": "abc"},
-            # Forged edit of a locked Oskar cell.
-            {"bucket": "cash_portfolio", "index": 1, "field": "shares", "value": "5"},
+            # Forged edit of a locked shares cell (row without ISIN).
+            {"bucket": "cash_portfolio", "index": 0, "field": "shares", "value": "5"},
         ]:
             with self.subTest(payload=payload):
                 status, _ = self._post(payload)
