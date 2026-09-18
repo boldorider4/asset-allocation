@@ -544,6 +544,17 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
         self.assertIn('window.location.href = "/dashboard"', js)
+        # Only shares/value edits stage an update: a single dirty flag in
+        # the pair-refresh path. Label edits and reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 1)
+        self.assertLess(
+            js.index("const updated = refreshPair(input, data);"),
+            js.index("dirty = true"),
+        )
+        persist = js.split("async function persistOrder")[1].split(
+            "document.addEventListener("
+        )[0]
+        self.assertNotIn("dirty", persist)
 
     def test_rows_drag_to_reorder_and_persist(self) -> None:
         js = (

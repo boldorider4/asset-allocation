@@ -5,8 +5,8 @@
  * record the new baselines, and stage an update (Dashboard runs it,
  * otherwise navigates directly); green flash on both boxes, or red flare
  * on the edited box when no cached price allowed a recompute. Label edits
- * store text as-is and flash the edited box. Any failure reverts to the
- * last-known-good value. Locked cells never fire this.
+ * and row reorders persist silently and never stage an update. Any failure
+ * reverts to the last-known-good value. Locked cells never fire this.
  *
  * Rows also reorder within their section via the grip handle (Pointer
  * Events, so mouse and touch both work). A real drop POSTs the new index
@@ -17,9 +17,9 @@
 (function () {
   "use strict";
 
-  // Staged-update flag: set on every successfully persisted cell edit.
-  // Dashboard only runs the lite update when this is set; otherwise it
-  // navigates straight to the dashboard.
+  // Staged-update flag: set only by successfully persisted shares/value
+  // edits. Dashboard only runs the lite update when this is set;
+  // otherwise it navigates straight to the dashboard.
   let dirty = false;
 
   function flash(input, className) {
@@ -88,7 +88,6 @@
     if (input.dataset.field === "short_name") {
       input.value = data && data.short_name !== undefined ? String(data.short_name) : input.value;
       input.dataset.original = input.value;
-      dirty = true;
       flash(input, "saved-flash");
       return;
     }
@@ -291,7 +290,6 @@
         input.dataset.original = input.value;
       });
     });
-    dirty = true;
   }
 
   document.addEventListener(
