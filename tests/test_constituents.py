@@ -444,6 +444,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("&lt;evil&gt; &amp; co", page)
         self.assertNotIn("<evil>", page)
 
+    def test_page_uses_dashboard_favicon(self) -> None:
+        page = self._page()
+        self.assertIn(
+            '<link rel="icon" type="image/png" href="favicon.png" />', page
+        )
+
     def test_overview_button_top_right(self) -> None:
         page = self._page()
         self.assertIn('<div class="nav-buttons">', page)
