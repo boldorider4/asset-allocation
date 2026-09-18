@@ -395,7 +395,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
             / "index.html"
         ).read_text(encoding="utf-8")
         self.assertIn('id="sync-link"', index)
-        self.assertIn(">Sync Prices</a>", index)
+        self.assertIn('aria-label="Sync Prices"', index)
+        self.assertIn('src="icons/sync.svg"', index)
+        self.assertTrue(
+            (
+                Path(__file__).resolve().parent.parent
+                / "visual"
+                / "web"
+                / "frontend"
+                / "icons"
+                / "sync.svg"
+            ).is_file()
+        )
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".nav-button.icon-button", css)
         self.assertIn('<script src="dashboard.js"></script>', index)
 
     def test_dashboard_edit_link_cancels_then_navigates(self) -> None:
@@ -958,7 +977,11 @@ class TestConstituentsRoute(unittest.TestCase):
             seen["level"] = logging.getLogger().level
 
         before = logging.getLogger().level
-        with patch("allocation.main", side_effect=fake_main):
+        with (
+            patch("allocation.main", side_effect=fake_main),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
             status, body = self._post_update()
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"updated": True})
@@ -979,7 +1002,11 @@ class TestConstituentsRoute(unittest.TestCase):
     def test_post_update_failure_is_500(self) -> None:
         from unittest.mock import patch
 
-        with patch("allocation.main", side_effect=RuntimeError("boom")):
+        with (
+            patch("allocation.main", side_effect=RuntimeError("boom")),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
             status, body = self._post_update()
         self.assertEqual(status, 500)
         self.assertIn("boom", body)
@@ -996,7 +1023,11 @@ class TestConstituentsRoute(unittest.TestCase):
             seen["level"] = logging.getLogger().level
 
         before = logging.getLogger().level
-        with patch("allocation.main", side_effect=fake_main):
+        with (
+            patch("allocation.main", side_effect=fake_main),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
             status, body = self._post_update({"mode": "fat"})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"updated": True})
@@ -1020,7 +1051,11 @@ class TestConstituentsRoute(unittest.TestCase):
         def fake_main(ctx) -> None:
             seen["config"] = ctx.config
 
-        with patch("allocation.main", side_effect=fake_main):
+        with (
+            patch("allocation.main", side_effect=fake_main),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
             req = urllib.request.Request(
                 f"http://127.0.0.1:{self.port}/api/update",
                 data=b"not json{{{",
@@ -1033,6 +1068,133 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(seen["config"].fetch_prices)
         self.assertTrue(seen["config"].plot_clear)
         self.assertFalse(seen["config"].plot_incognito)
+
+    def test_update_status_idle(self) -> None:
+        status, body = self._get("/api/update")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertFalse(payload["updating"])
+        self.assertIn("last_ok", payload)
+        self.assertIn("last_error", payload)
+
+    def test_update_status_tracks_running_job(self) -> None:
+        import threading as _threading
+        from unittest.mock import patch
+
+        entered = _threading.Event()
+        release = _threading.Event()
+        self.addCleanup(release.set)
+
+        def fake_main(ctx) -> None:
+            entered.set()
+            release.wait(timeout=30)
+
+        results: dict = {}
+
+        def run() -> None:
+            try:
+                with (
+                    patch("allocation.main", side_effect=fake_main),
+                    patch("visual.web.backend.serve._quiesce_update_units"),
+                    patch("visual.web.backend.serve._restore_update_timer"),
+                ):
+                    results["update"] = self._post_update()
+            except Exception as exc:  # never lose thread errors silently
+                results["error"] = exc
+
+        thread = _threading.Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(timeout=30))
+            status, body = self._get("/api/update")
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["updating"])
+        finally:
+            release.set()
+            thread.join(timeout=30)
+        self.assertFalse(thread.is_alive(), "update thread did not finish")
+        self.assertNotIn("error", results)
+        self.assertEqual(results["update"][0], 200)
+        status, body = self._get("/api/update")
+        payload = json.loads(body)
+        self.assertFalse(payload["updating"])
+        self.assertTrue(payload["last_ok"])
+
+    def test_quiesce_failure_aborts_update(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "visual.web.backend.serve._quiesce_update_units",
+                side_effect=RuntimeError("no systemd"),
+            ),
+            patch("allocation.main") as no_run,
+            patch(
+                "visual.web.backend.serve._restore_update_timer"
+            ) as no_restore,
+        ):
+            status, body = self._post_update()
+        self.assertEqual(status, 500)
+        self.assertIn("update not started", body)
+        no_run.assert_not_called()
+        no_restore.assert_not_called()
+        # The job flag clears, so a later update is not stuck at 409.
+        with (
+            patch("allocation.main"),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
+            status, _ = self._post_update()
+        self.assertEqual(status, 200)
+
+    def test_timer_restored_after_successful_update(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch("allocation.main"),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch(
+                "visual.web.backend.serve._restore_update_timer"
+            ) as restore,
+        ):
+            status, _ = self._post_update()
+        self.assertEqual(status, 200)
+        restore.assert_called_once_with()
+
+    def test_timer_restored_after_failed_update(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch("allocation.main", side_effect=RuntimeError("boom")),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch(
+                "visual.web.backend.serve._restore_update_timer"
+            ) as restore,
+        ):
+            status, _ = self._post_update()
+        self.assertEqual(status, 500)
+        restore.assert_called_once_with()
+
+    def test_dashboard_sync_button_polls_status(self) -> None:
+        dashboard_js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "dashboard.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("pollUpdateStatus", dashboard_js)
+        self.assertIn("/api/update", dashboard_js)
+        self.assertIn("last_ok", dashboard_js)
+        self.assertIn("aria-disabled", dashboard_js)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("sync-spin", css)
 
     def test_missing_files_yield_502_without_traceback(self) -> None:
         handler = functools.partial(
@@ -1117,7 +1279,11 @@ class TestUpdateCancellation(unittest.TestCase):
 
         def first() -> None:
             try:
-                with patch("allocation.main", side_effect=fake_main):
+                with (
+                    patch("allocation.main", side_effect=fake_main),
+                    patch("visual.web.backend.serve._quiesce_update_units"),
+                    patch("visual.web.backend.serve._restore_update_timer"),
+                ):
                     results["first"] = self._post_path("/api/update")
             except Exception as exc:  # never lose thread errors silently
                 results["error"] = exc
@@ -1157,7 +1323,11 @@ class TestUpdateCancellation(unittest.TestCase):
 
         def run_update() -> None:
             try:
-                with patch("allocation.main", side_effect=fake_main):
+                with (
+                    patch("allocation.main", side_effect=fake_main),
+                    patch("visual.web.backend.serve._quiesce_update_units"),
+                    patch("visual.web.backend.serve._restore_update_timer"),
+                ):
                     results["update"] = self._post_path("/api/update")
             except Exception as exc:  # never lose thread errors silently
                 results["error"] = exc
@@ -1178,6 +1348,90 @@ class TestUpdateCancellation(unittest.TestCase):
         status, body = results["update"]
         self.assertEqual(status, 409)
         self.assertIn("cancelled", body)
+
+
+class TestUpdateUnits(unittest.TestCase):
+    def test_run_systemctl_success(self) -> None:
+        from unittest.mock import Mock, patch
+
+        with patch("subprocess.run") as run:
+            run.return_value = Mock(returncode=0, stdout="", stderr="")
+            from visual.web.backend.serve import _run_systemctl
+
+            _run_systemctl("stop", "asalloc-update.timer")
+        run.assert_called_once_with(
+            ["systemctl", "--user", "stop", "asalloc-update.timer"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_run_systemctl_failure_reports_stderr(self) -> None:
+        from unittest.mock import Mock, patch
+
+        from visual.web.backend.serve import _run_systemctl
+
+        with patch("subprocess.run") as run:
+            run.return_value = Mock(
+                returncode=1, stdout="", stderr="Unit not found."
+            )
+            with self.assertRaisesRegex(RuntimeError, "Unit not found"):
+                _run_systemctl("stop", "asalloc-update.timer")
+
+    def test_run_systemctl_missing_binary(self) -> None:
+        from unittest.mock import patch
+
+        from visual.web.backend.serve import _run_systemctl
+
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(RuntimeError, "systemctl not found"):
+                _run_systemctl("stop", "asalloc-update.timer")
+
+    def test_run_systemctl_timeout(self) -> None:
+        import subprocess
+        from unittest.mock import patch
+
+        from visual.web.backend.serve import _run_systemctl
+
+        with patch(
+            "subprocess.run", side_effect=subprocess.TimeoutExpired("x", 60)
+        ):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                _run_systemctl("stop", "asalloc-update.timer")
+
+    def test_quiesce_partial_failure_restores_service(self) -> None:
+        from unittest.mock import patch
+
+        from visual.web.backend.serve import _quiesce_update_units
+
+        calls = []
+
+        def fake_run(*args: str) -> None:
+            calls.append(args)
+            if args[:2] == ("stop", "asalloc-update.timer"):
+                raise RuntimeError("timer stop failed")
+
+        with patch(
+            "visual.web.backend.serve._run_systemctl", side_effect=fake_run
+        ):
+            with self.assertRaisesRegex(RuntimeError, "timer stop failed"):
+                _quiesce_update_units()
+        self.assertEqual(
+            calls,
+            [
+                ("stop", "asalloc-update.service"),
+                ("stop", "asalloc-update.timer"),
+                ("start", "asalloc-update.service"),
+            ],
+        )
+
+    def test_status_payload_shape(self) -> None:
+        from visual.web.backend.serve import _update_status_payload
+
+        payload = _update_status_payload()
+        self.assertFalse(payload["updating"])
+        self.assertIn("last_ok", payload)
+        self.assertIn("last_error", payload)
 
 
 if __name__ == "__main__":

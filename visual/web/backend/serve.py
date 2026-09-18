@@ -24,6 +24,7 @@ import http.server
 import itertools
 import json
 import logging
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,14 @@ logger = logging.getLogger(__name__)
 _update_lock = threading.Lock()
 _update_job: dict | None = None
 _update_ids = itertools.count(1)
+# Outcome of the most recent finished endpoint update (``None`` until the
+# first run completes): ``{"ok": bool, "error": str}``.
+_update_last: dict | None = None
+
+# Systemd units quiesced around every endpoint-triggered update so a timer
+# run can never overlap it. Restored afterwards (timer only, by design).
+_UPDATE_SERVICE = "asalloc-update.service"
+_UPDATE_TIMER = "asalloc-update.timer"
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
@@ -73,6 +82,93 @@ def referer_incognito(headers) -> bool | None:
     return incognito_flag(parts.query)
 
 
+def _run_systemctl(*args: str) -> None:
+    """Run one ``systemctl --user`` command; raise RuntimeError on failure."""
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("systemctl not found; need a systemd Linux host")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"systemctl --user {' '.join(args)} timed out")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(
+            f"systemctl --user {' '.join(args)} failed: "
+            f"{detail or f'exit {proc.returncode}'}"
+        )
+
+
+def _quiesce_update_units() -> None:
+    """Stop the update service + timer; both must succeed or nothing runs.
+
+    On a partial failure (service stopped, timer stop failed) the service
+    is best-effort restored before raising, so a failed quiesce never
+    leaves units stranger than it found them.
+    """
+    service_stopped = False
+    try:
+        _run_systemctl("stop", _UPDATE_SERVICE)
+        service_stopped = True
+        _run_systemctl("stop", _UPDATE_TIMER)
+    except RuntimeError:
+        if service_stopped:
+            try:
+                _run_systemctl("start", _UPDATE_SERVICE)
+            except RuntimeError as exc:
+                logger.warning("update service restore failed: %s", exc)
+        raise
+
+
+def _restore_update_timer() -> None:
+    """Restart the update timer after an endpoint-triggered update."""
+    _run_systemctl("start", _UPDATE_TIMER)
+
+
+def _clear_update_job(job_id: int) -> None:
+    global _update_job
+    with _update_lock:
+        if _update_job is not None and _update_job["id"] == job_id:
+            _update_job = None
+
+
+def _record_update_result(ok: bool, error: str) -> None:
+    global _update_last
+    with _update_lock:
+        _update_last = {"ok": ok, "error": error}
+
+
+def _finish_update_job(job_id: int, ok: bool, error: str) -> None:
+    """Record the outcome, restore the timer, then clear the running flag.
+
+    Restoring before clearing keeps the pressed button state covering the
+    whole operation. A failed restore is logged but never masks the
+    update's own outcome.
+    """
+    _record_update_result(ok, error)
+    try:
+        _restore_update_timer()
+    except RuntimeError as exc:
+        logger.warning("update timer restore failed: %s", exc)
+    finally:
+        _clear_update_job(job_id)
+
+
+def _update_status_payload() -> dict:
+    with _update_lock:
+        updating = _update_job is not None
+        last = dict(_update_last) if _update_last is not None else None
+    return {
+        "updating": updating,
+        "last_ok": last["ok"] if last is not None else None,
+        "last_error": last["error"] if last is not None else "",
+    }
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """Static visualizer server with ``/dashboard`` + clear/incognito roots."""
 
@@ -93,6 +189,19 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._assets_file = assets_file
         self._cache_file = cache_file
         super().__init__(*args, **kwargs)
+
+    def _serve_update_status(self) -> bool:
+        """Serve ``GET /api/update`` with the run state for the sync button."""
+        if urlsplit(self.path).path != "/api/update":
+            return False
+        body = json.dumps(_update_status_payload()).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+        return True
 
     def _serve_constituents(self) -> bool:
         """Render the constituents page; 502 with a plain reason on failure."""
@@ -183,11 +292,19 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if not self._redirect_root() and not self._serve_constituents():
+        if not (
+            self._redirect_root()
+            or self._serve_update_status()
+            or self._serve_constituents()
+        ):
             super().do_GET()
 
     def do_HEAD(self) -> None:
-        if not self._redirect_root() and not self._serve_constituents():
+        if not (
+            self._redirect_root()
+            or self._serve_update_status()
+            or self._serve_constituents()
+        ):
             super().do_HEAD()
 
     def _update_mode(self) -> str:
@@ -209,8 +326,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def _run_update(self) -> bool:
         """Handle ``POST /api/update``: lite refresh, or fat with ``{"mode": "fat"}``.
 
-        Runs blocking in the handler thread with a cooperative cancel event;
-        a second POST while one runs gets 409. ``UpdateCancelled`` maps to
+        Quiesces the systemd update units first (both stops must succeed or
+        nothing runs); then runs blocking in the handler thread with a
+        cooperative cancel event and restores the update timer before the
+        running flag clears, so the sync button stays pressed throughout.
+        A second POST while one runs gets 409. ``UpdateCancelled`` maps to
         409 as well (someone asked for cancellation, nothing is broken).
         """
         from allocation import main as run_update
@@ -247,6 +367,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 job_id = next(_update_ids)
                 _update_job = {"id": job_id, "cancel": ctx.cancel_event}
             try:
+                _quiesce_update_units()
+            except RuntimeError as exc:
+                logger.warning("update quiesce failed: %s", exc)
+                _clear_update_job(job_id)
+                self._plain_status(500, f"update not started: {exc}")
+                return True
+            try:
                 root = logging.getLogger()
                 old_level = root.level
                 root.setLevel(logging.ERROR)
@@ -256,10 +383,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     root.setLevel(old_level)
             except UpdateCancelled as exc:
                 logger.info("programmatic update cancelled: %s", exc)
+                _finish_update_job(job_id, False, f"update cancelled: {exc}")
                 self._json_status(409, {"error": f"update cancelled: {exc}"})
                 return True
             except Exception as exc:
                 logger.warning("programmatic update failed: %s", exc)
+                _finish_update_job(job_id, False, f"update failed: {exc}")
                 self._plain_status(500, f"update failed: {exc}")
                 return True
             finally:
@@ -270,6 +399,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             logger.warning("programmatic update failed: %s", exc)
             self._plain_status(500, f"update failed: {exc}")
             return True
+        _finish_update_job(job_id, True, "")
         body = json.dumps({"updated": True}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
