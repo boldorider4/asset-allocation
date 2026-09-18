@@ -9,6 +9,10 @@
  * page's own POST is in flight, and restored from GET /api/update on load
  * so refreshes mid-run keep showing it. A run observed finishing reloads
  * the page on success or reports the failure.
+ *
+ * The incognito button toggles the ?incognito=true gallery mode and shows
+ * its pressed state while active; it also carries the mode onto the Edit
+ * link so the round trip through Constituents holds the state.
  */
 (function () {
   "use strict";
@@ -68,6 +72,34 @@
     }
   }
 
+  function isIncognitoMode() {
+    try {
+      return (
+        new URLSearchParams(window.location.search).get("incognito") === "true"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function wireIncognitoToggle() {
+    const toggle = document.getElementById("incognito-link");
+    if (!toggle) {
+      return;
+    }
+    if (!isIncognitoMode()) {
+      return;
+    }
+    toggle.setAttribute("aria-pressed", "true");
+    toggle.setAttribute("href", "/dashboard");
+    toggle.setAttribute("title", "Exit incognito mode");
+    toggle.setAttribute("aria-label", "Exit incognito mode");
+    const edit = document.getElementById("edit-link");
+    if (edit) {
+      edit.setAttribute("href", "/constituents?incognito=true");
+    }
+  }
+
   async function fetchUpdateStatus() {
     const response = await fetch("/api/update", { cache: "no-store" });
     if (!response.ok) {
@@ -112,17 +144,21 @@
     // Fire-and-forget: stop any endpoint-triggered update, then leave.
     // Navigation happens regardless so Edit always works, even if the
     // server is unreachable. Timer/systemd runs live in other processes
-    // and are never affected.
+    // and are never affected. The link href carries the gallery mode
+    // (?incognito=true when active), so navigate via it to hold state.
     event.preventDefault();
+    const target =
+      event.currentTarget.getAttribute("href") || "/constituents";
     try {
       await fetch("/api/cancel", { method: "POST" });
     } catch {
       // Ignore: the constituents page is useful with or without a cancel.
     }
-    window.location.href = "/constituents";
+    window.location.href = target;
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    wireIncognitoToggle();
     const sync = document.getElementById("sync-link");
     if (sync) {
       sync.addEventListener("click", syncPrices);

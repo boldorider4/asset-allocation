@@ -187,7 +187,9 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-scalable",
         action="store_true",
-        help="Log into Scalable via sc and scrape broker holdings.",
+        help="Log into Scalable via a headless browser device login and scrape "
+        "broker holdings. Email/password are prompted in the terminal, 2FA "
+        "stays on your phone; needs an interactive terminal.",
     )
     update.add_argument(
         "--fetch-tr",

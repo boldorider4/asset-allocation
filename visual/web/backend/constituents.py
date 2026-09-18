@@ -112,6 +112,27 @@ def _locked_box(value: Any, *, name: str, extra_class: str = "") -> str:
     )
 
 
+def _trash_button(*, name: str, bucket: str, index: int) -> str:
+    label = f"Delete {name}"
+    return (
+        f'<button type="button" class="trash" '
+        f'data-bucket="{html.escape(bucket, quote=True)}" '
+        f'data-index="{index}" '
+        f'title="{html.escape(label, quote=True)}" '
+        f'aria-label="{html.escape(label, quote=True)}">'
+        '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" '
+        'fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M3 6h18"/>'
+        '<path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>'
+        '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>'
+        '<line x1="10" y1="10" x2="10" y2="17"/>'
+        '<line x1="12" y1="10" x2="12" y2="17"/>'
+        '<line x1="14" y1="10" x2="14" y2="17"/>'
+        "</svg></button>"
+    )
+
+
 def _has_isin(isin: Any) -> bool:
     """True when the row carries a usable ISIN (non-blank string)."""
     return isinstance(isin, str) and bool(isin.strip())
@@ -308,10 +329,80 @@ def store_constituent_value(
         "short_name": row.get("short_name"),
         "recomputed": recomputed,
     }
+
+
+def reorder_constituents(
+    assets_path: str | Path, bucket: str, order: list[int]
+) -> dict[str, Any]:
+    """Persist a new row order for one bucket (atomic write).
+
+    ``order`` must be an exact permutation of the row indices: every
+    index exactly once. Anything else raises ``ValueError`` and leaves
+    the file untouched, so a reorder can never drop or duplicate rows.
+
+    Returns ``{"order": [...]}`` echoing the stored order.
+    """
+    if (
+        not isinstance(order, list)
+        or not order
+        or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
+    ):
+        raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
+    with open(assets_path, encoding="utf-8") as f:
+        assets = json.load(f)
+    if not isinstance(assets, dict):
+        raise ValueError("assets root must be a JSON object")
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    if sorted(order) != list(range(len(rows))):
+        raise ValueError(f"order must list every row index once, got {order!r}")
+    assets[bucket] = [rows[i] for i in order]
+    path = Path(assets_path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(assets, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, path)
+    return {"order": list(order)}
+
+
+def delete_constituent(
+    assets_path: str | Path, bucket: str, index: int
+) -> dict[str, Any]:
+    """Delete one row from a bucket (atomic write).
+
+    Raises ``ValueError`` for unknown buckets or out-of-range indices
+    and leaves the file untouched.
+
+    Returns ``{"deleted": True, "rows": n}`` with the remaining row count.
+    """
+    with open(assets_path, encoding="utf-8") as f:
+        assets = json.load(f)
+    if not isinstance(assets, dict):
+        raise ValueError("assets root must be a JSON object")
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    if not isinstance(index, bool) and isinstance(index, int) and 0 <= index < len(rows):
+        del rows[index]
+    else:
+        raise ValueError(f"row index out of range: {index!r}")
+    path = Path(assets_path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(assets, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, path)
+    return {"deleted": True, "rows": len(rows)}
+
+
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
+    incognito: bool = False,
 ) -> str:
     """Render display sections as a full standalone HTML page."""
+    overview_href = "/dashboard?incognito=true" if incognito else "/dashboard"
     parts: list[str] = []
     for index, (label, rows) in enumerate(sections):
         if index:
@@ -320,8 +411,10 @@ def render_constituents_page(
         parts.append(
             '<div class="table-scroll">'
             "<table><thead><tr>"
+            '<th class="grip-head" aria-hidden="true"></th>'
             "<th>Name</th><th>Group</th><th>ISIN</th>"
             "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
+            '<th class="trash-head" aria-hidden="true"></th>'
             "</tr></thead><tbody>"
         )
         for row in rows:
@@ -341,6 +434,11 @@ def render_constituents_page(
                 )
                 price_cell = _locked_box(row["price"], name="price")
             name_text = _text(row["name"])
+            trash_cell = _trash_button(
+                name=name_text,
+                bucket=row["bucket"],
+                index=row["index"],
+            )
             label_cell = _editable_text_box(
                 row["short_name"],
                 name="short_name",
@@ -358,7 +456,11 @@ def render_constituents_page(
             else:
                 value_cell = _locked_box(row["value"], name="value")
             parts.append(
-                "<tr>"
+                f'<tr data-bucket="{html.escape(row["bucket"], quote=True)}" '
+                f'data-index="{row["index"]}">'
+                '<td class="grip-cell">'
+                '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>'
+                "</td>"
                 f'<td class="name" title="{html.escape(name_text, quote=True)}">'
                 f"{html.escape(name_text, quote=False)}</td>"
                 f"<td>{label_cell}</td>"
@@ -369,6 +471,7 @@ def render_constituents_page(
                 f"<td>{price_cell} "
                 '<span class="unit">Euro</span></td>'
                 f"<td>{_broker_mark(row['broker'])}</td>"
+                f'<td class="trash-cell">{trash_cell}</td>'
                 "</tr>"
             )
         parts.append("</tbody></table></div></section>")
@@ -378,13 +481,14 @@ def render_constituents_page(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Constituents</title>
+    <link rel="icon" type="image/png" href="favicon.png" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="masthead">
       <h1>Constituents</h1>
       <div class="nav-buttons">
-        <a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>
+        <a id="overview-link" class="nav-button" href="{overview_href}">Dashboard</a>
       </div>
       <p id="update-status" class="status" hidden></p>
     </header>

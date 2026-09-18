@@ -13,8 +13,10 @@ import urllib.request
 from pathlib import Path
 
 from visual.web.backend.constituents import (
+    delete_constituent,
     load_constituents,
     render_constituents_page,
+    reorder_constituents,
     store_constituent_value,
 )
 from visual.web.backend.serve import DashboardHandler
@@ -251,8 +253,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
         page = render_constituents_page(sections)
         self.assertIn(
+            '<th class="grip-head" aria-hidden="true"></th>'
             "<th>Name</th><th>Group</th><th>ISIN</th>"
-            "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>",
+            "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
+            '<th class="trash-head" aria-hidden="true"></th>',
             page,
         )
         # Label maps short_name into an always-editable box...
@@ -274,6 +278,40 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Evil names stay escaped in both name and label cells.
         self.assertIn("&lt;evil&gt; &amp; co", page)
         self.assertNotIn("<evil>", page)
+
+    def test_rows_carry_grip_and_position(self) -> None:
+        page = self._page()
+        # One grip cell per body row (5 rows across the fixture buckets).
+        self.assertEqual(page.count('<td class="grip-cell">'), 5)
+        self.assertIn(
+            '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>',
+            page,
+        )
+        # Rows expose their address for the drag permutation.
+        self.assertIn(
+            '<tr data-bucket="equity_portfolio" data-index="0">', page
+        )
+        self.assertIn(
+            '<tr data-bucket="cash_portfolio" data-index="1">', page
+        )
+        # One trash button per body row, addressed like the inputs.
+        self.assertEqual(page.count('<td class="trash-cell">'), 5)
+        self.assertIn(
+            '<button type="button" class="trash" '
+            'data-bucket="equity_portfolio" data-index="0"',
+            page,
+        )
+        self.assertIn('aria-label="Delete Amundi Core"', page)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("th:nth-child(8),", css)
+        self.assertIn(".grip {", css)
+        self.assertIn("touch-action: none", css)
 
     def test_shares_locked_only_without_isin(self) -> None:
         page = self._page()
@@ -406,6 +444,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("&lt;evil&gt; &amp; co", page)
         self.assertNotIn("<evil>", page)
 
+    def test_page_uses_dashboard_favicon(self) -> None:
+        page = self._page()
+        self.assertIn(
+            '<link rel="icon" type="image/png" href="favicon.png" />', page
+        )
+
     def test_overview_button_top_right(self) -> None:
         page = self._page()
         self.assertIn('<div class="nav-buttons">', page)
@@ -414,6 +458,20 @@ class TestRenderConstituentsPage(unittest.TestCase):
             page,
         )
         self.assertIn('id="update-status"', page)
+
+    def test_overview_button_holds_incognito_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
+            render_constituents_page(sections),
+        )
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" '
+            'href="/dashboard?incognito=true">Dashboard</a>',
+            render_constituents_page(sections, incognito=True),
+        )
 
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
@@ -483,6 +541,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("/api/cancel", dashboard_js)
         self.assertIn("/constituents", dashboard_js)
+        # Edit navigates via the link href (which carries ?incognito=true
+        # when active) instead of a hardcoded path.
+        self.assertIn('getAttribute("href")', dashboard_js)
         dashboard_js = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -515,7 +576,49 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("dirty = true", js)
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
-        self.assertIn('window.location.href = "/dashboard"', js)
+        self.assertIn("window.location.href = target", js)
+        # Only shares/value edits and row deletes stage an update: one
+        # dirty flag in the pair-refresh path, one in the delete flow.
+        # Label edits and reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 2)
+        self.assertLess(
+            js.index("const updated = refreshPair(input, data);"),
+            js.index("dirty = true"),
+        )
+        delete_flow = js.split("async function deleteRow")[1].split(
+            "document.addEventListener("
+        )[0]
+        self.assertIn("dirty = true", delete_flow)
+        persist = js.split("async function persistOrder")[1].split(
+            "document.addEventListener("
+        )[0]
+        self.assertNotIn("dirty", persist)
+        label_flow = js.split('field === "short_name"')[1].split(
+            "const updated = refreshPair"
+        )[0]
+        self.assertNotIn("dirty", label_flow)
+
+    def test_rows_drag_to_reorder_and_persist(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # Handle-initiated Pointer Events drag, same-tbody drops only...
+        self.assertIn('closest(".grip")', js)
+        self.assertIn("setPointerCapture", js)
+        self.assertIn("pointercancel", js)
+        self.assertIn("/api/constituents/order", js)
+        # ...with index rewrite after persist and DOM revert on failure.
+        self.assertIn('querySelectorAll("input[data-index]")', js)
+        self.assertIn("Reorder failed: ", js)
+        # Trash buttons delete via their own endpoint and stage an update.
+        self.assertIn('closest("button.trash")', js)
+        self.assertIn("async function deleteRow", js)
+        self.assertIn("/api/constituents/delete", js)
+        self.assertIn("Delete failed: ", js)
 
     def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
         js = (
@@ -733,6 +836,118 @@ class TestStoreConstituentValue(unittest.TestCase):
         )
 
 
+class TestReorderConstituents(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def _names(self, assets: Path, bucket: str = "equity_portfolio") -> list:
+        data = json.loads(assets.read_text(encoding="utf-8"))
+        return [row["name"] for row in data[bucket]]
+
+    def test_permute_persists_and_echoes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = reorder_constituents(assets, "equity_portfolio", [1, 0])
+            self.assertEqual(result, {"order": [1, 0]})
+            self.assertEqual(
+                self._names(assets), ["Trade Republic ETF", "Amundi Core"]
+            )
+            # Other buckets are untouched.
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(data["cash_portfolio"][0]["name"], "Tagesgeld")
+            json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_identity_order_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = json.loads(assets.read_text(encoding="utf-8"))
+            result = reorder_constituents(assets, "equity_portfolio", [0, 1])
+            self.assertEqual(result, {"order": [0, 1]})
+            self.assertEqual(
+                json.loads(assets.read_text(encoding="utf-8")), before
+            )
+
+    def test_rejects_bad_orders_and_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for bucket, order in [
+                ("nope", [0, 1]),
+                ("equity_portfolio", [0, 0]),
+                ("equity_portfolio", [0]),
+                ("equity_portfolio", [0, 1, 2]),
+                ("equity_portfolio", [1]),
+                ("equity_portfolio", []),
+                ("equity_portfolio", "01"),
+                ("equity_portfolio", [0, "1"]),
+                ("equity_portfolio", [0, True]),
+                ("equity_portfolio", None),
+                ("equity_portfolio", [0, -1]),
+            ]:
+                with self.subTest(bucket=bucket, order=order):
+                    with self.assertRaises(ValueError):
+                        reorder_constituents(assets, bucket, order)
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+    def test_rejects_non_list_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            assets.write_text(json.dumps({"equity_portfolio": {"a": 1}}))
+            with self.assertRaises(ValueError):
+                reorder_constituents(assets, "equity_portfolio", [0])
+
+
+class TestDeleteConstituent(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def test_delete_removes_row_and_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = delete_constituent(assets, "equity_portfolio", 0)
+            self.assertEqual(result, {"deleted": True, "rows": 1})
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [row["name"] for row in data["equity_portfolio"]],
+                ["Trade Republic ETF"],
+            )
+            # Other buckets are untouched.
+            self.assertEqual(len(data["cash_portfolio"]), 2)
+            json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_delete_last_row_empties_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            assets.write_text(
+                json.dumps({"equity_portfolio": [{"name": "Solo"}]})
+            )
+            result = delete_constituent(assets, "equity_portfolio", 0)
+            self.assertEqual(result, {"deleted": True, "rows": 0})
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(data["equity_portfolio"], [])
+
+    def test_rejects_bad_address_and_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for bucket, index in [
+                ("nope", 0),
+                ("equity_portfolio", 2),
+                ("equity_portfolio", -1),
+                ("equity_portfolio", "0"),
+                ("equity_portfolio", True),
+                ("equity_portfolio", None),
+            ]:
+                with self.subTest(bucket=bucket, index=index):
+                    with self.assertRaises(ValueError):
+                        delete_constituent(assets, bucket, index)
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+
 class TestNumberFormatting(unittest.TestCase):
     def _page(self) -> str:
         assets = {
@@ -926,6 +1141,77 @@ class TestConstituentsRoute(unittest.TestCase):
             self.assertIn("81.25", body)
             self.assertIn("<table>", body)
 
+    def test_constituents_holds_incognito_in_overview_link(self) -> None:
+        status, body = self._get("/constituents?incognito=true")
+        self.assertEqual(status, 200)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" '
+            'href="/dashboard?incognito=true">Dashboard</a>',
+            body,
+        )
+        status, body = self._get("/constituents")
+        self.assertEqual(status, 200)
+        self.assertIn(
+            '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
+            body,
+        )
+
+    def test_dashboard_has_incognito_button(self) -> None:
+        index = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn('id="incognito-link"', index)
+        self.assertIn('href="/dashboard?incognito=true"', index)
+        self.assertIn('aria-label="Incognito mode"', index)
+        self.assertIn('class="incognito-glyph"', index)
+        self.assertTrue(
+            (
+                Path(__file__).resolve().parent.parent
+                / "visual"
+                / "web"
+                / "frontend"
+                / "icons"
+                / "incognito.svg"
+            ).is_file()
+        )
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".incognito-glyph", css)
+        self.assertIn('url("icons/incognito.svg")', css)
+        self.assertIn('[aria-pressed="true"]', css)
+        dashboard_js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "dashboard.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("wireIncognitoToggle", dashboard_js)
+        self.assertIn("URLSearchParams", dashboard_js)
+        self.assertIn("aria-pressed", dashboard_js)
+        self.assertIn("/constituents?incognito=true", dashboard_js)
+
+    def test_overview_navigates_via_link_href(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # The Dashboard href carries the gallery mode; the return trip
+        # must use it instead of a hardcoded path.
+        self.assertIn('link.getAttribute("href")', js)
+
     def _post(self, payload: dict) -> tuple[int, str]:
         req = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/api/constituents",
@@ -983,6 +1269,84 @@ class TestConstituentsRoute(unittest.TestCase):
         data = json.loads(self.assets.read_text(encoding="utf-8"))
         self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
+
+    def _post_order(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/order",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_order_persists_to_disk(self) -> None:
+        status, body = self._post_order(
+            {"bucket": "equity_portfolio", "order": [1, 0]}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"order": [1, 0]})
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [row["name"] for row in data["equity_portfolio"]],
+            ["Trade Republic ETF", "Amundi Core"],
+        )
+
+    def test_post_order_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "order": [0, 1]},
+            {"bucket": "equity_portfolio", "order": [0, 0]},
+            {"bucket": "equity_portfolio", "order": [0]},
+            {"bucket": "equity_portfolio", "order": "nope"},
+            {"bucket": "equity_portfolio"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_order(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def _post_delete(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/delete",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_delete_persists_to_disk(self) -> None:
+        status, body = self._post_delete(
+            {"bucket": "equity_portfolio", "index": 0}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"deleted": True, "rows": 1})
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [row["name"] for row in data["equity_portfolio"]],
+            ["Trade Republic ETF"],
+        )
+
+    def test_post_delete_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "index": 0},
+            {"bucket": "equity_portfolio", "index": 5},
+            {"bucket": "equity_portfolio", "index": -1},
+            {"bucket": "equity_portfolio", "index": "0"},
+            {"bucket": "equity_portfolio"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_delete(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")

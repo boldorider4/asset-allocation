@@ -303,13 +303,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def _serve_constituents(self) -> bool:
         """Render the constituents page; 502 with a plain reason on failure."""
-        if urlsplit(self.path).path not in CONSTITUENTS_PATHS:
+        parts = urlsplit(self.path)
+        if parts.path not in CONSTITUENTS_PATHS:
             return False
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
             body = render_constituents_page(
-                load_constituents(self._assets_file, self._cache_file)
+                load_constituents(self._assets_file, self._cache_file),
+                incognito=incognito_flag(parts.query),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
         except Exception as exc:
@@ -370,6 +372,94 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return True
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("constituents store failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps(result).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _reorder_constituents(self) -> bool:
+        """Handle ``POST /api/constituents/order``; plain-text statuses on failure."""
+        from .constituents import reorder_constituents
+
+        if urlsplit(self.path).path != "/api/constituents/order":
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return True
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return True
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            result = reorder_constituents(
+                self._assets_file,
+                payload.get("bucket"),
+                payload.get("order"),
+            )
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("constituents reorder failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps(result).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _delete_constituent(self) -> bool:
+        """Handle ``POST /api/constituents/delete``; plain-text statuses on failure."""
+        from .constituents import delete_constituent
+
+        if urlsplit(self.path).path != "/api/constituents/delete":
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return True
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return True
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            result = delete_constituent(
+                self._assets_file,
+                payload.get("bucket"),
+                payload.get("index"),
+            )
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("constituents delete failed: %s", exc)
             self._plain_status(502, f"constituents unavailable: {exc}")
             return True
         body = json.dumps(result).encode("utf-8")
@@ -569,6 +659,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         if not (
             self._store_constituent()
+            or self._reorder_constituents()
+            or self._delete_constituent()
             or self._run_update()
             or self._cancel_update()
         ):
