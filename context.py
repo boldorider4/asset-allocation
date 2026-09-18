@@ -24,7 +24,10 @@ import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from multiprocessing.synchronize import Event as _MultiprocessingEvent
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +172,8 @@ class RuntimeContext:
     value_factor: float = 1.0
     # Cooperative cancellation for endpoint-triggered runs. Checked per
     # position in ``position.factory``; ``None`` means non-cancellable.
-    cancel_event: threading.Event | None = None
+    # Either a threading or a multiprocessing event (child-process runs).
+    cancel_event: threading.Event | _MultiprocessingEvent | None = None
 
     # -- portfolio --
     def load_portfolio(self, path: Path | None = None) -> None:
@@ -211,8 +215,12 @@ class RuntimeContext:
             return
         path = self.config.cache_file
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        # Atomic write (temp file + rename) so a killed update never
+        # leaves a torn cache behind.
+        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.cache, f, indent=2)
+        os.replace(tmp_path, path)
         self.cache_dirty = False
         logger.info("wrote cache to %s", path)
 

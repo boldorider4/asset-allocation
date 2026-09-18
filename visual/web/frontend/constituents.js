@@ -1,10 +1,11 @@
 /* Constituents editing: POST changed cells to /api/constituents.
  *
  * A single delegated "change" listener covers Enter, Tab, and click-away.
- * Success refreshes both boxes of the pair from the response, records the
- * new baselines, and stages an update (Dashboard runs it, otherwise navigates
- * directly); green flash on both boxes, or red flare on the edited box when
- * no cached price allowed a recompute. Any failure reverts to the
+ * Shares/value edits refresh both boxes of the pair from the response,
+ * record the new baselines, and stage an update (Dashboard runs it,
+ * otherwise navigates directly); green flash on both boxes, or red flare
+ * on the edited box when no cached price allowed a recompute. Label edits
+ * store text as-is and flash the edited box. Any failure reverts to the
  * last-known-good value. Locked cells never fire this.
  */
 (function () {
@@ -76,6 +77,13 @@
       data = await response.json();
     } catch {
       revert(input);
+      return;
+    }
+    if (input.dataset.field === "short_name") {
+      input.value = data && data.short_name !== undefined ? String(data.short_name) : input.value;
+      input.dataset.original = input.value;
+      dirty = true;
+      flash(input, "saved-flash");
       return;
     }
     const updated = refreshPair(input, data);

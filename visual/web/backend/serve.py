@@ -24,6 +24,8 @@ import http.server
 import itertools
 import json
 import logging
+import multiprocessing
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,21 @@ logger = logging.getLogger(__name__)
 _update_lock = threading.Lock()
 _update_job: dict | None = None
 _update_ids = itertools.count(1)
+# Outcome of the most recent finished endpoint update (``None`` until the
+# first run completes): ``{"ok": bool, "error": str}``.
+_update_last: dict | None = None
+
+# Systemd units quiesced around every endpoint-triggered update so a timer
+# run can never overlap it. Restored afterwards (timer only, by design).
+_UPDATE_SERVICE = "asalloc-update.service"
+_UPDATE_TIMER = "asalloc-update.timer"
+
+# Child-process machinery: updates run in a spawned worker (fresh
+# interpreter, no fork-from-threads hazards) so a cancel can SIGTERM it.
+# SIGKILL follows if it outlives the terminate grace period.
+_mp_ctx = multiprocessing.get_context("spawn")
+TERMINATE_GRACE_S = 5.0
+KILL_GRACE_S = 5.0
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
@@ -73,6 +90,183 @@ def referer_incognito(headers) -> bool | None:
     return incognito_flag(parts.query)
 
 
+def _run_systemctl(*args: str) -> None:
+    """Run one ``systemctl --user`` command; raise RuntimeError on failure."""
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("systemctl not found; need a systemd Linux host")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"systemctl --user {' '.join(args)} timed out")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(
+            f"systemctl --user {' '.join(args)} failed: "
+            f"{detail or f'exit {proc.returncode}'}"
+        )
+
+
+def _quiesce_update_units() -> None:
+    """Stop the update service + timer; both must succeed or nothing runs.
+
+    On a partial failure (service stopped, timer stop failed) the service
+    is best-effort restored before raising, so a failed quiesce never
+    leaves units stranger than it found them.
+    """
+    service_stopped = False
+    try:
+        _run_systemctl("stop", _UPDATE_SERVICE)
+        service_stopped = True
+        _run_systemctl("stop", _UPDATE_TIMER)
+    except RuntimeError:
+        if service_stopped:
+            try:
+                _run_systemctl("start", _UPDATE_SERVICE)
+            except RuntimeError as exc:
+                logger.warning("update service restore failed: %s", exc)
+        raise
+
+
+def _restore_update_timer() -> None:
+    """Restart the update timer after an endpoint-triggered update."""
+    _run_systemctl("start", _UPDATE_TIMER)
+
+
+def _clear_update_job(job_id: int) -> None:
+    global _update_job
+    with _update_lock:
+        if _update_job is not None and _update_job["id"] == job_id:
+            _update_job = None
+
+
+def _record_update_result(ok: bool, error: str) -> None:
+    global _update_last
+    with _update_lock:
+        _update_last = {"ok": ok, "error": error}
+
+
+def _finish_update_job(job_id: int, ok: bool, error: str) -> None:
+    """Record the outcome, restore the timer, then clear the running flag.
+
+    Restoring before clearing keeps the pressed button state covering the
+    whole operation. A failed restore is logged but never masks the
+    update's own outcome.
+    """
+    _record_update_result(ok, error)
+    try:
+        _restore_update_timer()
+    except RuntimeError as exc:
+        logger.warning("update timer restore failed: %s", exc)
+    finally:
+        _clear_update_job(job_id)
+
+
+def _update_status_payload() -> dict:
+    with _update_lock:
+        updating = _update_job is not None
+        last = dict(_update_last) if _update_last is not None else None
+    return {
+        "updating": updating,
+        "last_ok": last["ok"] if last is not None else None,
+        "last_error": last["error"] if last is not None else "",
+    }
+
+
+def _update_worker(
+    assets_file: str,
+    cache_file: str,
+    fat: bool,
+    directory: str,
+    result_conn,
+    cancel_event,
+) -> None:
+    """Child-process entry point: build a fresh context and run the update.
+
+    Only picklable arguments cross the boundary; the ``RuntimeContext``
+    and log suppression are constructed here. Sends ``{"ok", "error"}``
+    down the pipe; a killed child sends nothing and the parent reads the
+    exit code instead. The send lands in the OS pipe buffer, so it
+    survives the child dying with no flush dance.
+    """
+    from allocation import main as run_update
+    from context import AppConfig, RuntimeContext, ServerConfig
+    from position.factory import UpdateCancelled
+
+    config = AppConfig(
+        assets_file=Path(assets_file),
+        cache_file=Path(cache_file),
+        fetch_prices=fat,
+        fetch_geosplit=fat,
+        fetch_sectorsplit=fat,
+        plot_clear=True,
+        plot_incognito=fat,
+        server=ServerConfig(port=0, address="localhost", directory=Path(directory)),
+    )
+    ctx = RuntimeContext(config=config)
+    ctx.cancel_event = cancel_event
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.ERROR)
+    try:
+        run_update(ctx)
+    except UpdateCancelled as exc:
+        result_conn.send({"ok": False, "error": f"update cancelled: {exc}"})
+    except Exception as exc:
+        result_conn.send({"ok": False, "error": f"update failed: {exc}"})
+    else:
+        result_conn.send({"ok": True, "error": ""})
+    finally:
+        root.setLevel(old_level)
+        result_conn.close()
+
+
+def _spawn_update_process(target, args):
+    """Start the update worker in a spawned child process (seam for tests)."""
+    proc = _mp_ctx.Process(target=target, args=args, daemon=True)
+    proc.start()
+    return proc
+
+
+def _process_alive(proc) -> bool:
+    try:
+        return bool(proc.is_alive())
+    except (ValueError, AssertionError, OSError):
+        return False
+
+
+def _terminate_process(proc) -> bool:
+    """SIGTERM a runaway update, SIGKILL it past the grace period.
+
+    Returns True when the process is dead on return. Never raises: a
+    dead-or-dying process is already what we want.
+    """
+    for action, grace in (("terminate", TERMINATE_GRACE_S), ("kill", KILL_GRACE_S)):
+        try:
+            if proc.is_alive():
+                getattr(proc, action)()
+        except (ProcessLookupError, ValueError, AssertionError, OSError):
+            pass
+        try:
+            proc.join(grace)
+        except (ValueError, AssertionError):
+            pass
+        if not _process_alive(proc):
+            return True
+    logger.warning("update process survived SIGKILL; leaving it behind")
+    return False
+
+
+def _job_terminated(job_id: int) -> bool:
+    with _update_lock:
+        job = _update_job
+        return job is not None and job["id"] == job_id and job["terminated"]
+
+
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """Static visualizer server with ``/dashboard`` + clear/incognito roots."""
 
@@ -93,6 +287,19 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._assets_file = assets_file
         self._cache_file = cache_file
         super().__init__(*args, **kwargs)
+
+    def _serve_update_status(self) -> bool:
+        """Serve ``GET /api/update`` with the run state for the sync button."""
+        if urlsplit(self.path).path != "/api/update":
+            return False
+        body = json.dumps(_update_status_payload()).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+        return True
 
     def _serve_constituents(self) -> bool:
         """Render the constituents page; 502 with a plain reason on failure."""
@@ -183,11 +390,19 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if not self._redirect_root() and not self._serve_constituents():
+        if not (
+            self._redirect_root()
+            or self._serve_update_status()
+            or self._serve_constituents()
+        ):
             super().do_GET()
 
     def do_HEAD(self) -> None:
-        if not self._redirect_root() and not self._serve_constituents():
+        if not (
+            self._redirect_root()
+            or self._serve_update_status()
+            or self._serve_constituents()
+        ):
             super().do_HEAD()
 
     def _update_mode(self) -> str:
@@ -207,16 +422,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return "lite"
 
     def _run_update(self) -> bool:
-        """Handle ``POST /api/update``: lite refresh, or fat with ``{"mode": "fat"}``.
+        """Handle ``POST /api/update``: lite refresh, or         fat with ``{"mode": "fat"}``.
 
-        Runs blocking in the handler thread with a cooperative cancel event;
-        a second POST while one runs gets 409. ``UpdateCancelled`` maps to
-        409 as well (someone asked for cancellation, nothing is broken).
+
+        Quiesces the systemd update units first (both stops must succeed or
+        nothing runs); then runs the update in a spawned child process while
+        this handler thread blocks in ``join``, so the POST still answers
+        once the run is over. A cancel SIGTERMs the child (SIGKILL past a
+        grace period), which wakes this thread here; the timer is restored
+        before the running flag clears, so the sync button stays pressed
+        throughout. A second POST while one runs gets 409.
         """
-        from allocation import main as run_update
-        from context import AppConfig, RuntimeContext, ServerConfig
-        from position.factory import UpdateCancelled
-
         if urlsplit(self.path).path != "/api/update":
             return False
         try:
@@ -225,47 +441,82 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             fat = self._update_mode() == "fat"
             if fat:
                 logger.info("programmatic fat update requested")
-            config = AppConfig(
-                assets_file=Path(self._assets_file),
-                cache_file=Path(self._cache_file),
-                fetch_prices=fat,
-                fetch_geosplit=fat,
-                fetch_sectorsplit=fat,
-                plot_clear=True,
-                plot_incognito=fat,
-                server=ServerConfig(
-                    port=0, address="localhost", directory=Path(self.directory)
-                ),
-            )
-            ctx = RuntimeContext(config=config)
-            ctx.cancel_event = threading.Event()
             global _update_job
             with _update_lock:
                 if _update_job is not None:
                     self._json_status(409, {"error": "update already in progress"})
                     return True
                 job_id = next(_update_ids)
-                _update_job = {"id": job_id, "cancel": ctx.cancel_event}
+                cancel_event = _mp_ctx.Event()
+                recv_conn, send_conn = _mp_ctx.Pipe(duplex=False)
+                _update_job = {
+                    "id": job_id,
+                    "cancel": cancel_event,
+                    "process": None,
+                    "terminated": False,
+                }
             try:
-                root = logging.getLogger()
-                old_level = root.level
-                root.setLevel(logging.ERROR)
+                _quiesce_update_units()
+            except RuntimeError as exc:
+                logger.warning("update quiesce failed: %s", exc)
+                _clear_update_job(job_id)
+                self._plain_status(500, f"update not started: {exc}")
+                return True
+            proc = _spawn_update_process(
+                _update_worker,
+                (
+                    str(self._assets_file),
+                    str(self._cache_file),
+                    fat,
+                    str(self.directory),
+                    send_conn,
+                    cancel_event,
+                ),
+            )
+            with _update_lock:
+                if _update_job is not None and _update_job["id"] == job_id:
+                    _update_job["process"] = proc
+                    spawned_into_cancel = _update_job["terminated"]
+                else:
+                    spawned_into_cancel = True
+            if spawned_into_cancel:
+                # Cancelled while spawning: kill it straight away.
+                _terminate_process(proc)
+                _finish_update_job(job_id, False, "update cancelled: cancelled by user")
+                self._json_status(409, {"error": "update cancelled: cancelled by user"})
+                return True
+            proc.join()
+            if _job_terminated(job_id):
+                _finish_update_job(job_id, False, "update cancelled: cancelled by user")
+                self._json_status(409, {"error": "update cancelled: cancelled by user"})
+                return True
+            if proc.exitcode == 0:
                 try:
-                    run_update(ctx)
+                    # Blocking take: the send lands in the OS pipe buffer,
+                    # so this returns as soon as the result exists.
+                    result = recv_conn.recv() if recv_conn.poll(30) else None
+                except (EOFError, OSError):
+                    result = None
                 finally:
-                    root.setLevel(old_level)
-            except UpdateCancelled as exc:
-                logger.info("programmatic update cancelled: %s", exc)
-                self._json_status(409, {"error": f"update cancelled: {exc}"})
+                    recv_conn.close()
+                if not isinstance(result, dict):
+                    _finish_update_job(
+                        job_id, False, "update failed: worker reported nothing"
+                    )
+                    self._plain_status(500, "update failed: worker reported nothing")
+                    return True
+                if result.get("ok"):
+                    _finish_update_job(job_id, True, "")
+                else:
+                    error = result.get("error") or "update failed"
+                    _finish_update_job(job_id, False, error)
+                    self._plain_status(500, error)
+                    return True
+            else:
+                error = f"update failed: worker exited with code {proc.exitcode}"
+                _finish_update_job(job_id, False, error)
+                self._plain_status(500, error)
                 return True
-            except Exception as exc:
-                logger.warning("programmatic update failed: %s", exc)
-                self._plain_status(500, f"update failed: {exc}")
-                return True
-            finally:
-                with _update_lock:
-                    if _update_job is not None and _update_job["id"] == job_id:
-                        _update_job = None
         except Exception as exc:
             logger.warning("programmatic update failed: %s", exc)
             self._plain_status(500, f"update failed: {exc}")
@@ -287,7 +538,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cancel_update(self) -> bool:
-        """Handle ``POST /api/cancel``: flag the running endpoint update, if any."""
+        """Handle ``POST /api/cancel``: SIGTERM a running update, SIGKILL if needed.
+
+        Sets the cooperative flag too (a graceful checkpoint may beat the
+        signal), then kills outside the lock so status reads never block.
+        The blocked update POST wakes from its join, records the
+        cancellation, restores the timer, and answers 409 itself.
+        """
         if urlsplit(self.path).path != "/api/cancel":
             return False
         try:
@@ -300,7 +557,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             job = _update_job
             if job is not None:
                 job["cancel"].set()
-        self._json_status(200, {"cancelled": job is not None})
+                job["terminated"] = True
+                proc = job["process"]
+            else:
+                proc = None
+        if proc is not None:
+            _terminate_process(proc)
+        self._json_status(200, {"cancelled": proc is not None})
         return True
 
     def do_POST(self) -> None:
