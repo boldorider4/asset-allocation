@@ -5,8 +5,9 @@
  * record the new baselines, and stage an update (Dashboard runs it,
  * otherwise navigates directly); green flash on both boxes, or red flare
  * on the edited box when no cached price allowed a recompute. Label edits
- * and row reorders persist silently and never stage an update. Any failure
- * reverts to the last-known-good value. Locked cells never fire this.
+ * and row reorders persist silently and never stage an update. Row deletes
+ * remove the row and stage an update. Any failure reverts to the
+ * last-known-good value. Locked cells never fire this.
  *
  * Rows also reorder within their section via the grip handle (Pointer
  * Events, so mouse and touch both work). A real drop POSTs the new index
@@ -18,7 +19,7 @@
   "use strict";
 
   // Staged-update flag: set only by successfully persisted shares/value
-  // edits. Dashboard only runs the lite update when this is set;
+  // edits and row deletes. Dashboard runs the lite update when set,
   // otherwise it navigates straight to the dashboard.
   let dirty = false;
 
@@ -107,6 +108,65 @@
     const target = event.target;
     if (target instanceof HTMLInputElement && target.matches("input.cell-box.editable")) {
       save(target);
+    }
+  });
+
+  /* Row deletion via the trash button. Removes the row on success and
+   * rewrites every data-index in the section (rows AND their inputs, or
+   * later cell edits would hit the wrong rows); stages an update so
+   * Dashboard recomputes the charts. The row stays put on failure.
+   */
+  async function deleteRow(button) {
+    const row = button.closest("tr");
+    const tbody = row && row.parentElement;
+    if (!row || !tbody || button.dataset.busy === "1") {
+      return;
+    }
+    button.dataset.busy = "1";
+    button.setAttribute("aria-disabled", "true");
+    let data = null;
+    try {
+      const response = await fetch("/api/constituents/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket: button.dataset.bucket,
+          index: Number(button.dataset.index),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      data = await response.json();
+    } catch (err) {
+      setStatus("Delete failed: " + (err && err.message ? err.message : err));
+      button.dataset.busy = "";
+      button.removeAttribute("aria-disabled");
+      return;
+    }
+    if (!data || data.deleted !== true) {
+      setStatus("Delete failed: server did not confirm the deletion");
+      button.dataset.busy = "";
+      button.removeAttribute("aria-disabled");
+      return;
+    }
+    row.remove();
+    Array.prototype.forEach.call(tbody.children, function (sibling, position) {
+      sibling.dataset.index = String(position);
+      sibling.querySelectorAll("[data-index]").forEach(function (el) {
+        el.dataset.index = String(position);
+      });
+    });
+    dirty = true;
+  }
+
+  document.addEventListener("click", function (event) {
+    const target = event.target;
+    if (target instanceof Element) {
+      const button = target.closest("button.trash");
+      if (button) {
+        deleteRow(button);
+      }
     }
   });
 

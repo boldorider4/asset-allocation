@@ -406,7 +406,7 @@ table {
 }
 
 .table-scroll table {
-  min-width: 70rem;
+  min-width: 73rem;
 }
 
 /* Grip (drag handle) */
@@ -414,6 +414,8 @@ th:nth-child(1),
 td:nth-child(1) {
   width: 2.2rem;
   max-width: 2.2rem;
+  padding-left: 0.15rem;
+  padding-right: 0.15rem;
   text-align: center;
 }
 
@@ -453,6 +455,42 @@ th:nth-child(8),
 td:nth-child(8) {
   width: 3.5rem;
   max-width: 3.5rem;
+}
+
+/* Trash (row delete) */
+th:nth-child(9),
+td:nth-child(9) {
+  width: 2.5rem;
+  max-width: 2.5rem;
+  padding-left: 0.15rem;
+  padding-right: 0.15rem;
+  text-align: center;
+}
+
+.trash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.trash:hover {
+  background: #2a2521;
+  color: #d96a5f;
+}
+
+.trash[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .grip {

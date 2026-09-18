@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from visual.web.backend.constituents import (
+    delete_constituent,
     load_constituents,
     render_constituents_page,
     reorder_constituents,
@@ -254,7 +255,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(
             '<th class="grip-head" aria-hidden="true"></th>'
             "<th>Name</th><th>Group</th><th>ISIN</th>"
-            "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>",
+            "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
+            '<th class="trash-head" aria-hidden="true"></th>',
             page,
         )
         # Label maps short_name into an always-editable box...
@@ -292,6 +294,14 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(
             '<tr data-bucket="cash_portfolio" data-index="1">', page
         )
+        # One trash button per body row, addressed like the inputs.
+        self.assertEqual(page.count('<td class="trash-cell">'), 5)
+        self.assertIn(
+            '<button type="button" class="trash" '
+            'data-bucket="equity_portfolio" data-index="0"',
+            page,
+        )
+        self.assertIn('aria-label="Delete Amundi Core"', page)
         css = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -544,17 +554,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
         self.assertIn('window.location.href = "/dashboard"', js)
-        # Only shares/value edits stage an update: a single dirty flag in
-        # the pair-refresh path. Label edits and reorders persist silently.
-        self.assertEqual(js.count("dirty = true"), 1)
+        # Only shares/value edits and row deletes stage an update: one
+        # dirty flag in the pair-refresh path, one in the delete flow.
+        # Label edits and reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 2)
         self.assertLess(
             js.index("const updated = refreshPair(input, data);"),
             js.index("dirty = true"),
         )
+        delete_flow = js.split("async function deleteRow")[1].split(
+            "document.addEventListener("
+        )[0]
+        self.assertIn("dirty = true", delete_flow)
         persist = js.split("async function persistOrder")[1].split(
             "document.addEventListener("
         )[0]
         self.assertNotIn("dirty", persist)
+        label_flow = js.split('field === "short_name"')[1].split(
+            "const updated = refreshPair"
+        )[0]
+        self.assertNotIn("dirty", label_flow)
 
     def test_rows_drag_to_reorder_and_persist(self) -> None:
         js = (
@@ -572,6 +591,11 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...with index rewrite after persist and DOM revert on failure.
         self.assertIn('querySelectorAll("input[data-index]")', js)
         self.assertIn("Reorder failed: ", js)
+        # Trash buttons delete via their own endpoint and stage an update.
+        self.assertIn('closest("button.trash")', js)
+        self.assertIn("async function deleteRow", js)
+        self.assertIn("/api/constituents/delete", js)
+        self.assertIn("Delete failed: ", js)
 
     def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
         js = (
@@ -850,6 +874,55 @@ class TestReorderConstituents(unittest.TestCase):
             assets.write_text(json.dumps({"equity_portfolio": {"a": 1}}))
             with self.assertRaises(ValueError):
                 reorder_constituents(assets, "equity_portfolio", [0])
+
+
+class TestDeleteConstituent(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def test_delete_removes_row_and_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = delete_constituent(assets, "equity_portfolio", 0)
+            self.assertEqual(result, {"deleted": True, "rows": 1})
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [row["name"] for row in data["equity_portfolio"]],
+                ["Trade Republic ETF"],
+            )
+            # Other buckets are untouched.
+            self.assertEqual(len(data["cash_portfolio"]), 2)
+            json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_delete_last_row_empties_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            assets.write_text(
+                json.dumps({"equity_portfolio": [{"name": "Solo"}]})
+            )
+            result = delete_constituent(assets, "equity_portfolio", 0)
+            self.assertEqual(result, {"deleted": True, "rows": 0})
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(data["equity_portfolio"], [])
+
+    def test_rejects_bad_address_and_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for bucket, index in [
+                ("nope", 0),
+                ("equity_portfolio", 2),
+                ("equity_portfolio", -1),
+                ("equity_portfolio", "0"),
+                ("equity_portfolio", True),
+                ("equity_portfolio", None),
+            ]:
+                with self.subTest(bucket=bucket, index=index):
+                    with self.assertRaises(ValueError):
+                        delete_constituent(assets, bucket, index)
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
 
 
 class TestNumberFormatting(unittest.TestCase):
@@ -1139,6 +1212,45 @@ class TestConstituentsRoute(unittest.TestCase):
         ]:
             with self.subTest(payload=payload):
                 status, _ = self._post_order(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def _post_delete(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/delete",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_delete_persists_to_disk(self) -> None:
+        status, body = self._post_delete(
+            {"bucket": "equity_portfolio", "index": 0}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"deleted": True, "rows": 1})
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [row["name"] for row in data["equity_portfolio"]],
+            ["Trade Republic ETF"],
+        )
+
+    def test_post_delete_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "index": 0},
+            {"bucket": "equity_portfolio", "index": 5},
+            {"bucket": "equity_portfolio", "index": -1},
+            {"bucket": "equity_portfolio", "index": "0"},
+            {"bucket": "equity_portfolio"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_delete(payload)
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
 

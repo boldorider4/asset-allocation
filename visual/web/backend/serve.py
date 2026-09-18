@@ -424,6 +424,50 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def _delete_constituent(self) -> bool:
+        """Handle ``POST /api/constituents/delete``; plain-text statuses on failure."""
+        from .constituents import delete_constituent
+
+        if urlsplit(self.path).path != "/api/constituents/delete":
+            return False
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return True
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return True
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            result = delete_constituent(
+                self._assets_file,
+                payload.get("bucket"),
+                payload.get("index"),
+            )
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("constituents delete failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps(result).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _plain_status(self, status: int, reason: str) -> None:
         body = reason.encode("utf-8")
         self.send_response(status)
@@ -614,6 +658,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not (
             self._store_constituent()
             or self._reorder_constituents()
+            or self._delete_constituent()
             or self._run_update()
             or self._cancel_update()
         ):
