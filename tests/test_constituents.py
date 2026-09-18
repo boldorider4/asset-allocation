@@ -15,6 +15,7 @@ from pathlib import Path
 from visual.web.backend.constituents import (
     load_constituents,
     render_constituents_page,
+    reorder_constituents,
     store_constituent_value,
 )
 from visual.web.backend.serve import DashboardHandler
@@ -251,6 +252,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
         page = render_constituents_page(sections)
         self.assertIn(
+            '<th class="grip-head" aria-hidden="true"></th>'
             "<th>Name</th><th>Group</th><th>ISIN</th>"
             "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>",
             page,
@@ -274,6 +276,32 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Evil names stay escaped in both name and label cells.
         self.assertIn("&lt;evil&gt; &amp; co", page)
         self.assertNotIn("<evil>", page)
+
+    def test_rows_carry_grip_and_position(self) -> None:
+        page = self._page()
+        # One grip cell per body row (5 rows across the fixture buckets).
+        self.assertEqual(page.count('<td class="grip-cell">'), 5)
+        self.assertIn(
+            '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>',
+            page,
+        )
+        # Rows expose their address for the drag permutation.
+        self.assertIn(
+            '<tr data-bucket="equity_portfolio" data-index="0">', page
+        )
+        self.assertIn(
+            '<tr data-bucket="cash_portfolio" data-index="1">', page
+        )
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("th:nth-child(8),", css)
+        self.assertIn(".grip {", css)
+        self.assertIn("touch-action: none", css)
 
     def test_shares_locked_only_without_isin(self) -> None:
         page = self._page()
@@ -517,6 +545,23 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("if (!dirty)", js)
         self.assertIn('window.location.href = "/dashboard"', js)
 
+    def test_rows_drag_to_reorder_and_persist(self) -> None:
+        js = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "constituents.js"
+        ).read_text(encoding="utf-8")
+        # Handle-initiated Pointer Events drag, same-tbody drops only...
+        self.assertIn('closest(".grip")', js)
+        self.assertIn("setPointerCapture", js)
+        self.assertIn("pointercancel", js)
+        self.assertIn("/api/constituents/order", js)
+        # ...with index rewrite after persist and DOM revert on failure.
+        self.assertIn('querySelectorAll("input[data-index]")', js)
+        self.assertIn("Reorder failed: ", js)
+
     def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
         js = (
             Path(__file__).resolve().parent.parent
@@ -731,6 +776,69 @@ class TestStoreConstituentValue(unittest.TestCase):
                 {"name": "X", "broker": "scalable", "ISIN": "   "},
             ),
         )
+
+
+class TestReorderConstituents(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def _names(self, assets: Path, bucket: str = "equity_portfolio") -> list:
+        data = json.loads(assets.read_text(encoding="utf-8"))
+        return [row["name"] for row in data[bucket]]
+
+    def test_permute_persists_and_echoes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            result = reorder_constituents(assets, "equity_portfolio", [1, 0])
+            self.assertEqual(result, {"order": [1, 0]})
+            self.assertEqual(
+                self._names(assets), ["Trade Republic ETF", "Amundi Core"]
+            )
+            # Other buckets are untouched.
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            self.assertEqual(data["cash_portfolio"][0]["name"], "Tagesgeld")
+            json.loads(assets.read_text(encoding="utf-8"))
+
+    def test_identity_order_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = json.loads(assets.read_text(encoding="utf-8"))
+            result = reorder_constituents(assets, "equity_portfolio", [0, 1])
+            self.assertEqual(result, {"order": [0, 1]})
+            self.assertEqual(
+                json.loads(assets.read_text(encoding="utf-8")), before
+            )
+
+    def test_rejects_bad_orders_and_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for bucket, order in [
+                ("nope", [0, 1]),
+                ("equity_portfolio", [0, 0]),
+                ("equity_portfolio", [0]),
+                ("equity_portfolio", [0, 1, 2]),
+                ("equity_portfolio", [1]),
+                ("equity_portfolio", []),
+                ("equity_portfolio", "01"),
+                ("equity_portfolio", [0, "1"]),
+                ("equity_portfolio", [0, True]),
+                ("equity_portfolio", None),
+                ("equity_portfolio", [0, -1]),
+            ]:
+                with self.subTest(bucket=bucket, order=order):
+                    with self.assertRaises(ValueError):
+                        reorder_constituents(assets, bucket, order)
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+    def test_rejects_non_list_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            assets.write_text(json.dumps({"equity_portfolio": {"a": 1}}))
+            with self.assertRaises(ValueError):
+                reorder_constituents(assets, "equity_portfolio", [0])
 
 
 class TestNumberFormatting(unittest.TestCase):
@@ -983,6 +1091,45 @@ class TestConstituentsRoute(unittest.TestCase):
         data = json.loads(self.assets.read_text(encoding="utf-8"))
         self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
+
+    def _post_order(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/order",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_order_persists_to_disk(self) -> None:
+        status, body = self._post_order(
+            {"bucket": "equity_portfolio", "order": [1, 0]}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"order": [1, 0]})
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [row["name"] for row in data["equity_portfolio"]],
+            ["Trade Republic ETF", "Amundi Core"],
+        )
+
+    def test_post_order_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "order": [0, 1]},
+            {"bucket": "equity_portfolio", "order": [0, 0]},
+            {"bucket": "equity_portfolio", "order": [0]},
+            {"bucket": "equity_portfolio", "order": "nope"},
+            {"bucket": "equity_portfolio"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_order(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")

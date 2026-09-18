@@ -308,6 +308,44 @@ def store_constituent_value(
         "short_name": row.get("short_name"),
         "recomputed": recomputed,
     }
+
+
+def reorder_constituents(
+    assets_path: str | Path, bucket: str, order: list[int]
+) -> dict[str, Any]:
+    """Persist a new row order for one bucket (atomic write).
+
+    ``order`` must be an exact permutation of the row indices: every
+    index exactly once. Anything else raises ``ValueError`` and leaves
+    the file untouched, so a reorder can never drop or duplicate rows.
+
+    Returns ``{"order": [...]}`` echoing the stored order.
+    """
+    if (
+        not isinstance(order, list)
+        or not order
+        or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
+    ):
+        raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
+    with open(assets_path, encoding="utf-8") as f:
+        assets = json.load(f)
+    if not isinstance(assets, dict):
+        raise ValueError("assets root must be a JSON object")
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    if sorted(order) != list(range(len(rows))):
+        raise ValueError(f"order must list every row index once, got {order!r}")
+    assets[bucket] = [rows[i] for i in order]
+    path = Path(assets_path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(assets, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, path)
+    return {"order": list(order)}
+
+
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
 ) -> str:
@@ -320,6 +358,7 @@ def render_constituents_page(
         parts.append(
             '<div class="table-scroll">'
             "<table><thead><tr>"
+            '<th class="grip-head" aria-hidden="true"></th>'
             "<th>Name</th><th>Group</th><th>ISIN</th>"
             "<th>Value</th><th>Shares</th><th>Price</th><th>Broker</th>"
             "</tr></thead><tbody>"
@@ -358,7 +397,11 @@ def render_constituents_page(
             else:
                 value_cell = _locked_box(row["value"], name="value")
             parts.append(
-                "<tr>"
+                f'<tr data-bucket="{html.escape(row["bucket"], quote=True)}" '
+                f'data-index="{row["index"]}">'
+                '<td class="grip-cell">'
+                '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>'
+                "</td>"
                 f'<td class="name" title="{html.escape(name_text, quote=True)}">'
                 f"{html.escape(name_text, quote=False)}</td>"
                 f"<td>{label_cell}</td>"

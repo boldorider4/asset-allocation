@@ -406,40 +406,83 @@ table {
 }
 
 .table-scroll table {
-  min-width: 68rem;
+  min-width: 70rem;
 }
 
+/* Grip (drag handle) */
 th:nth-child(1),
 td:nth-child(1) {
+  width: 2.2rem;
+  max-width: 2.2rem;
+  text-align: center;
+}
+
+/* Name */
+th:nth-child(2),
+td:nth-child(2) {
   width: auto;
 }
 
-th:nth-child(2),
-td:nth-child(2) {
+/* Group */
+th:nth-child(3),
+td:nth-child(3) {
   width: 10rem;
   max-width: 10rem;
 }
 
-th:nth-child(3),
-td:nth-child(3) {
+/* ISIN */
+th:nth-child(4),
+td:nth-child(4) {
   width: 9rem;
   max-width: 9rem;
 }
 
-th:nth-child(4),
-td:nth-child(4),
+/* Value, Shares, Price */
 th:nth-child(5),
 td:nth-child(5),
 th:nth-child(6),
-td:nth-child(6) {
+td:nth-child(6),
+th:nth-child(7),
+td:nth-child(7) {
   width: 10rem;
   max-width: 10rem;
 }
 
-th:nth-child(7),
-td:nth-child(7) {
+/* Broker */
+th:nth-child(8),
+td:nth-child(8) {
   width: 3.5rem;
   max-width: 3.5rem;
+}
+
+.grip {
+  display: inline-block;
+  padding: 0.3rem 0.55rem;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 0.35rem;
+}
+
+tr.dragging {
+  opacity: 0.65;
+}
+
+tr.dragging .grip {
+  cursor: grabbing;
+  color: var(--gold);
+}
+
+body.rows-dragging,
+body.rows-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 td.name {
