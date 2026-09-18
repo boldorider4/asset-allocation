@@ -203,6 +203,161 @@ class FakeLoginProc(FakeProc):
         return None
 
 
+class TestConfirmationControls(unittest.TestCase):
+    """The real confirmation screen: prefilled bare code input + a
+    Bestätigen button sitting next to an Abbrechen lookalike."""
+
+    def _confirm_frame(self, *, confirm=None):
+        from unittest.mock import MagicMock
+
+        frame = MagicMock()
+
+        def get_by_role(role, name=None):
+            loc = MagicMock()
+            if (
+                confirm is not None
+                and name is not None
+                and hasattr(name, "search")
+                and name.search("Bestätigen")
+            ):
+                loc.count.return_value = 1
+                loc.first = confirm
+                confirm.is_visible.return_value = True
+            else:
+                loc.count.return_value = 0
+            return loc
+
+        frame.locator.side_effect = lambda sel: _hidden_locator()
+        frame.get_by_role.side_effect = get_by_role
+        return frame
+
+    def _page_with(self, frame):
+        from unittest.mock import MagicMock
+
+        page = MagicMock()
+        page.frames = [frame]
+        return page
+
+    def test_confirm_button_prefers_bestatigen(self) -> None:
+        from scrape.scalable import _find_confirm_button
+
+        confirm = _visible_locator()
+        page = self._page_with(self._confirm_frame(confirm=confirm))
+        self.assertIs(_find_confirm_button(page), confirm)
+
+    def test_confirm_button_never_bare_submit(self) -> None:
+        from scrape.scalable import _find_confirm_button
+
+        # A visible submit button with no confirm text must NOT match:
+        # on the real page that slot holds Abbrechen.
+        page = self._page_with(self._confirm_frame(confirm=None))
+        self.assertIsNone(_find_confirm_button(page))
+
+    def test_code_display_matches_bare_prefilled_input(self) -> None:
+        from unittest.mock import MagicMock
+
+        from scrape.scalable import _find_code_display
+
+        display = _visible_locator(value="SZWB-BMKC")
+        frame = MagicMock()
+
+        def locator(sel):
+            if sel == 'input[type="text"]':
+                found = MagicMock()
+                found.count.return_value = 1
+                found.nth.return_value = display
+                return found
+            return _hidden_locator()
+
+        frame.locator.side_effect = locator
+        self.assertIs(_find_code_display(self._page_with(frame)), display)
+
+    def test_code_display_ignores_non_code_values(self) -> None:
+        from unittest.mock import MagicMock
+
+        from scrape.scalable import _find_code_display
+
+        for value in ("joe@example.com", "hi", "12 34"):
+            email_like = _visible_locator(value=value)
+            frame = MagicMock()
+
+            def locator(sel, _loc=email_like):
+                if sel == 'input[type="text"]':
+                    found = MagicMock()
+                    found.count.return_value = 1
+                    found.nth.return_value = _loc
+                    return found
+                return _hidden_locator()
+
+            frame.locator.side_effect = locator
+            with self.subTest(value=value):
+                self.assertIsNone(_find_code_display(self._page_with(frame)))
+
+    def test_ensure_code_fills_when_empty(self) -> None:
+        from unittest.mock import MagicMock
+
+        from scrape.scalable import _ensure_code
+
+        display = _visible_locator(value="")
+        frame = MagicMock()
+
+        def locator(sel):
+            if sel == 'input[type="text"]':
+                found = MagicMock()
+                found.count.return_value = 1
+                found.nth.return_value = display
+                return found
+            return _hidden_locator()
+
+        frame.locator.side_effect = locator
+        self.assertTrue(_ensure_code(self._page_with(frame), "RNPH-QXWJ"))
+        display.fill.assert_called_with("RNPH-QXWJ", timeout=15_000)
+
+    def test_ensure_code_raises_on_mismatch(self) -> None:
+        from unittest.mock import MagicMock
+
+        from scrape.scalable import _ensure_code
+
+        display = _visible_locator(value="EVIL-CODE")
+        frame = MagicMock()
+
+        def locator(sel):
+            if sel == 'input[type="text"]':
+                found = MagicMock()
+                found.count.return_value = 1
+                found.nth.return_value = display
+                return found
+            return _hidden_locator()
+
+        frame.locator.side_effect = locator
+        with self.assertRaisesRegex(RuntimeError, "mismatch"):
+            _ensure_code(self._page_with(frame), "RNPH-QXWJ")
+
+    def test_find_visible_button_prefers_confirm_text(self) -> None:
+        from unittest.mock import MagicMock
+
+        from scrape.scalable import _find_visible_button
+
+        confirm = _visible_locator()
+        cancel = _visible_locator()
+        scope = MagicMock()
+        scope.locator.return_value = cancel
+        cancel.count.return_value = 1
+        cancel.first = cancel
+
+        def get_by_role(role, name=None):
+            loc = MagicMock()
+            if name is not None and hasattr(name, "search") and name.search("Bestätigen"):
+                loc.count.return_value = 1
+                loc.first = confirm
+            else:
+                loc.count.return_value = 0
+            return loc
+
+        scope.get_by_role.side_effect = get_by_role
+        self.assertIs(_find_visible_button(scope), confirm)
+
+
 class TestParseActivationOutput(unittest.TestCase):
     def test_parses_real_output(self) -> None:
         from scrape.scalable import parse_activation_output
@@ -303,7 +458,7 @@ class TestScalableBrowserLogin(unittest.TestCase):
         ):
             session = Scalable(sc_bin="sc")
             with self.assertRaisesRegex(RuntimeError, "boom"):
-                session.login_browser(timeout_s=10)
+                session.login(timeout_s=10)
 
     def test_no_activation_url_times_out(self) -> None:
         proc = FakeProc("Waiting for browser confirmation...\n", rc=0)
@@ -312,7 +467,7 @@ class TestScalableBrowserLogin(unittest.TestCase):
         ):
             session = Scalable(sc_bin="sc")
             with self.assertRaisesRegex(RuntimeError, "no activation URL"):
-                session.login_browser(timeout_s=2)
+                session.login(timeout_s=2)
 
     def test_full_browser_login_flow(self) -> None:
         import subprocess
@@ -331,7 +486,7 @@ class TestScalableBrowserLogin(unittest.TestCase):
             patch("playwright.sync_api.sync_playwright", return_value=pw),
         ):
             session = Scalable(sc_bin="sc")
-            session.login_browser(timeout_s=30)
+            session.login(timeout_s=30)
         # Browser answers for us: stdin is closed, not inherited.
         self.assertIs(seen.get("stdin"), subprocess.DEVNULL)
         browser.close.assert_called_once_with()

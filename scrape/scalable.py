@@ -100,9 +100,6 @@ class ScalableHolding:
     is_tagesgeld: bool = False
 
 
-
-
-
 def _stream_chunks(stream):
     """Yield a text stream one char at a time until EOF."""
     while True:
@@ -176,13 +173,13 @@ def _first_visible_locator(scope: Any, selectors: tuple[str, ...]) -> Any | None
 
 
 def _find_visible_button(scope: Any) -> Any | None:
-    """Visible submit/confirm button in *scope*, or None."""
-    try:
-        btn = scope.locator('button[type="submit"]')
-        if btn.count() > 0 and btn.first.is_visible():
-            return btn.first
-    except Exception:
-        pass
+    """Visible confirm/submit button in *scope*, or None.
+
+    Text-matched confirm buttons win over a bare ``button[type=submit]``:
+    confirmation screens pair them with lookalike cancel buttons
+    (e.g. Abbrechen first, Bestätigen second) and grabbing ``.first``
+    would click the wrong one.
+    """
     for pat in _CONFIRM_PATTERNS:
         try:
             loc = scope.get_by_role("button", name=pat)
@@ -193,25 +190,108 @@ def _find_visible_button(scope: Any) -> Any | None:
                 return loc.first
         except Exception:
             continue
+    try:
+        btn = scope.locator('button[type="submit"]')
+        if btn.count() > 0 and btn.first.is_visible():
+            return btn.first
+    except Exception:
+        pass
     return None
 
 
-def _find_activation_controls(page: Any) -> tuple[Any | None, Any | None, Any | None]:
-    """Return ``(code, submit)`` locators for the activation screen.
+def _find_confirm_button(page: Any) -> Any | None:
+    """Visible confirm button (Bestätigen/Confirm/…) on any frame, or None.
 
-    Frames are scanned because the form may live in a child frame.
-    Returns ``(None, None)`` when no activation screen is showing.
+    Text match only — never a bare submit fallback, so cancel buttons
+    can never be picked up here.
     """
     for fr in page.frames:
         try:
-            code = _first_visible_locator(fr, _CODE_INPUT_SELECTORS)
-            if code is None:
-                continue
-            return code, _find_visible_button(fr)
+            for pat in _CONFIRM_PATTERNS:
+                try:
+                    loc = fr.get_by_role("button", name=pat)
+                except Exception:
+                    continue
+                try:
+                    if loc.count() > 0 and loc.first.is_visible():
+                        return loc.first
+                except Exception:
+                    continue
         except Exception as exc:
-            logger.debug("scalable: activation scan skipped frame: %s", exc)
+            logger.debug("scalable: confirm scan skipped frame: %s", exc)
             continue
-    return None, None
+    return None
+
+
+_CODE_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{3,}$")
+
+
+def _find_code_display(page: Any) -> Any | None:
+    """Visible text input acting as the code field, or None.
+
+    The real confirmation screen renders the device code prefilled in a
+    bare ``<input type="text">`` (no name/id/placeholder), so attribute
+    selectors cannot see it — match an empty field or a code-shaped
+    value instead. Callers only invoke this on confirmation screens
+    (confirm button present), so stray text boxes elsewhere are out
+    of reach.
+    """
+    for fr in page.frames:
+        try:
+            loc = fr.locator('input[type="text"]')
+        except Exception:
+            continue
+        try:
+            count = loc.count()
+        except Exception:
+            continue
+        for i in range(count):
+            try:
+                item = loc.nth(i)
+                if not item.is_visible():
+                    continue
+                value = item.input_value(timeout=5_000)
+            except Exception:
+                continue
+            if not isinstance(value, str):
+                continue
+            if not value.strip() or _CODE_VALUE_RE.fullmatch(value.strip()):
+                return item
+    return None
+
+
+def _ensure_code(page: Any, user_code: str) -> bool:
+    """Reconcile the confirmation code field with ``user_code``.
+
+    Fills it when empty; raises on a mismatch (the page itself warns to
+    proceed only when both codes match — the wrong code would authorize
+    somebody else's session). Returns True when a code field was found.
+    """
+    display = _find_code_display(page)
+    if display is not None:
+        current = _locator_input_value(display).strip()
+        if not current:
+            logger.info("scalable: entering activation code")
+            display.fill(user_code, timeout=15_000)
+        elif current.upper() != user_code.strip().upper():
+            raise RuntimeError(
+                f"scalable: activation code mismatch: page shows {current!r}; "
+                "aborting instead of authorizing an unknown session"
+            )
+        return True
+    for fr in page.frames:
+        try:
+            code = _first_visible_locator(fr, _CODE_INPUT_SELECTORS)
+        except Exception as exc:
+            logger.debug("scalable: code scan skipped frame: %s", exc)
+            continue
+        if code is None:
+            continue
+        if not _locator_input_value(code).strip():
+            logger.info("scalable: entering activation code")
+            code.fill(user_code, timeout=15_000)
+        return True
+    return False
 
 
 def _find_login_controls(page: Any) -> tuple[Any | None, Any | None, Any | None]:
@@ -299,20 +379,8 @@ def playwright_device_login(
                 if sc_done():
                     logger.info("scalable: device login confirmed url=%s", page.url)
                     return
-                # Stage 1: activation code screen.
-                code, submit = _find_activation_controls(page)
-                if code is not None:
-                    if not _locator_input_value(code).strip():
-                        logger.info("scalable: entering activation code")
-                        code.fill(user_code, timeout=15_000)
-                        page.wait_for_timeout(300)
-                    if submit is not None and submit.is_visible():
-                        submit.click(timeout=15_000)
-                    else:
-                        code.press("Enter", timeout=15_000)
-                    page.wait_for_timeout(2_000)
-                    continue
-                # Stage 2: login form (credentials stay in the terminal).
+                # Stage 1: login form first — its submit button belongs to
+                # the form, so credential handling owns this iteration.
                 email, password, submit = _find_login_controls(page)
                 if email is not None or password is not None:
                     if email is not None and not _locator_input_value(email).strip():
@@ -355,6 +423,16 @@ def playwright_device_login(
                             "scalable: device login confirmed url=%s", page.url
                         )
                         return
+                    continue
+                # Stage 2: device confirmation screen — the code renders
+                # prefilled, so the click is the whole action (a mismatch
+                # aborts instead of authorizing an unknown session).
+                confirm = _find_confirm_button(page)
+                if confirm is not None:
+                    _ensure_code(page, user_code)
+                    logger.info("scalable: confirming device login")
+                    confirm.click(timeout=15_000)
+                    page.wait_for_timeout(2_000)
                     continue
                 # Stage 3: neither form is showing — 2FA happens on the
                 # phone now; just wait for sc to observe the confirmation.
@@ -419,10 +497,7 @@ class Scalable:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.logout()
 
-    def login(self) -> None:
-        self.login_browser()
-
-    def login_browser(self, *, timeout_s: float = _LOGIN_TIMEOUT_S) -> None:
+    def login(self, *, timeout_s: float = _LOGIN_TIMEOUT_S) -> None:
         """Device login completed in a headless browser session.
 
         Keeps ``sc login`` running (it must observe the server-side
