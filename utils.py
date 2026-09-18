@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -171,11 +172,17 @@ def load_portfolio(path: Path) -> dict[str, list[dict]]:
 
 
 def write_portfolio(path: Path, data: dict[str, list[dict]]) -> None:
-    """Overwrite the assets JSON file at ``path`` with ``data``."""
+    """Overwrite the assets JSON file at ``path`` with ``data``.
+
+    Written atomically (temp file + rename) so a killed update never
+    leaves a torn file behind.
+    """
     assets_path = Path(path)
-    with assets_path.open("w", encoding="utf-8") as f:
+    tmp_path = assets_path.with_name(f".{assets_path.name}.{os.getpid()}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
+    os.replace(tmp_path, assets_path)
 
 
 def persist_oskar_shares_in_portfolio(ctx: Any) -> None:

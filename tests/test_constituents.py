@@ -65,6 +65,50 @@ def _write_files(tmp: Path) -> tuple[Path, Path]:
     return assets, cache
 
 
+class _StubUpdateProcess:
+    """Test double for the spawned update worker.
+
+    Runs the target in a thread so ``allocation.main`` patches apply.
+    ``terminate``/``kill`` only mark the call; real stopping comes from
+    the cancel event, mirroring a graceful child shutdown.
+    """
+
+    def __init__(self, target, args) -> None:
+        self._target = target
+        self._args = args
+        self._thread = threading.Thread(target=target, args=args, daemon=True)
+        self.exitcode: int | None = None
+        self.terminate_called = False
+        self.kill_called = False
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def join(self, timeout: float | None = None) -> None:
+        self._thread.join(timeout)
+        if not self._thread.is_alive() and self.exitcode is None:
+            self.exitcode = 0
+
+    def terminate(self) -> None:
+        self.terminate_called = True
+
+    def kill(self) -> None:
+        self.kill_called = True
+
+
+_SPAWNED_STUBS: list[_StubUpdateProcess] = []
+
+
+def _stub_spawn_update_process(target, args) -> _StubUpdateProcess:
+    proc = _StubUpdateProcess(target, args)
+    _SPAWNED_STUBS.append(proc)
+    proc.start()
+    return proc
+
+
 class TestLoadConstituents(unittest.TestCase):
     def test_sections_in_canonical_order_with_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -396,7 +440,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('id="sync-link"', index)
         self.assertIn('aria-label="Sync Prices"', index)
-        self.assertIn('src="icons/sync.svg"', index)
+        self.assertIn('class="sync-glyph"', index)
         self.assertTrue(
             (
                 Path(__file__).resolve().parent.parent
@@ -415,6 +459,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
             / "styles.css"
         ).read_text(encoding="utf-8")
         self.assertIn(".nav-button.icon-button", css)
+        # The glyph reuses the asset as a mask so it matches the Edit
+        # button text color, tinting gold only on hover.
+        self.assertIn('url("icons/sync.svg")', css)
+        self.assertIn(".nav-button.icon-button:hover .sync-glyph", css)
         self.assertIn('<script src="dashboard.js"></script>', index)
 
     def test_dashboard_edit_link_cancels_then_navigates(self) -> None:
@@ -839,6 +887,17 @@ class TestConstituentsRoute(unittest.TestCase):
         self.root.mkdir()
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
+        # Updates run in stubbed child processes (threads), so
+        # ``allocation.main`` patches apply and no real worker spawns.
+        del _SPAWNED_STUBS[:]
+        from unittest.mock import patch
+
+        spawn_patch = patch(
+            "visual.web.backend.serve._spawn_update_process",
+            side_effect=_stub_spawn_update_process,
+        )
+        spawn_patch.start()
+        self.addCleanup(spawn_patch.stop)
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
@@ -1228,6 +1287,16 @@ class TestUpdateCancellation(unittest.TestCase):
         self.root.mkdir()
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
+        # Same stubbed spawning as TestConstituentsRoute (see above).
+        del _SPAWNED_STUBS[:]
+        from unittest.mock import patch
+
+        spawn_patch = patch(
+            "visual.web.backend.serve._spawn_update_process",
+            side_effect=_stub_spawn_update_process,
+        )
+        spawn_patch.start()
+        self.addCleanup(spawn_patch.stop)
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
@@ -1303,6 +1372,49 @@ class TestUpdateCancellation(unittest.TestCase):
         self.assertFalse(thread.is_alive(), "first update thread did not finish")
         self.assertNotIn("error", results)
         self.assertEqual(results["first"][0], 200)
+
+    def test_cancel_terminates_process(self) -> None:
+        import threading as _threading
+        from unittest.mock import patch
+
+        entered = _threading.Event()
+        release = _threading.Event()
+        self.addCleanup(release.set)
+
+        def fake_main(ctx) -> None:
+            entered.set()
+            release.wait(timeout=30)
+
+        results: dict = {}
+
+        def run_update() -> None:
+            try:
+                with (
+                    patch("allocation.main", side_effect=fake_main),
+                    patch("visual.web.backend.serve._quiesce_update_units"),
+                    patch("visual.web.backend.serve._restore_update_timer"),
+                ):
+                    results["update"] = self._post_path("/api/update")
+            except Exception as exc:  # never lose thread errors silently
+                results["error"] = exc
+
+        thread = _threading.Thread(target=run_update, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(timeout=30))
+            proc = _SPAWNED_STUBS[-1]
+            status, body = self._post_path("/api/cancel")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body), {"cancelled": True})
+            self.assertTrue(proc.terminate_called)
+        finally:
+            release.set()
+            thread.join(timeout=30)
+        self.assertFalse(thread.is_alive(), "update thread did not finish")
+        self.assertNotIn("error", results)
+        status, body = results["update"]
+        self.assertEqual(status, 409)
+        self.assertIn("cancelled", body)
 
     def test_cancel_stops_running_update(self) -> None:
         import threading as _threading
@@ -1432,6 +1544,58 @@ class TestUpdateUnits(unittest.TestCase):
         self.assertFalse(payload["updating"])
         self.assertIn("last_ok", payload)
         self.assertIn("last_error", payload)
+
+    def test_terminate_process_kills_real_process(self) -> None:
+        import multiprocessing
+        import time
+
+        from visual.web.backend.serve import _terminate_process
+
+        proc = multiprocessing.get_context("spawn").Process(
+            target=time.sleep, args=(60,), daemon=True
+        )
+        proc.start()
+        try:
+            self.assertTrue(proc.is_alive())
+            self.assertTrue(_terminate_process(proc))
+        finally:
+            if proc.is_alive():
+                proc.kill()
+            proc.join(timeout=10)
+        self.assertFalse(proc.is_alive())
+
+    def test_terminate_process_dead_is_noop(self) -> None:
+        from unittest.mock import Mock
+
+        from visual.web.backend.serve import _terminate_process
+
+        proc = Mock()
+        proc.is_alive.return_value = False
+        self.assertTrue(_terminate_process(proc))
+        proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
+
+    def test_terminate_process_escalates_to_kill(self) -> None:
+        from unittest.mock import Mock
+
+        from visual.web.backend.serve import _terminate_process
+
+        proc = Mock()
+        proc.is_alive.side_effect = [True, True, True, False]
+        self.assertTrue(_terminate_process(proc))
+        proc.terminate.assert_called_once_with()
+        proc.kill.assert_called_once_with()
+
+    def test_terminate_process_gives_up_on_unkillable(self) -> None:
+        from unittest.mock import Mock
+
+        from visual.web.backend.serve import _terminate_process
+
+        proc = Mock()
+        proc.is_alive.return_value = True
+        self.assertFalse(_terminate_process(proc))
+        proc.terminate.assert_called_once_with()
+        proc.kill.assert_called_once_with()
 
 
 if __name__ == "__main__":

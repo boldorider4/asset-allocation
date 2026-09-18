@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -124,7 +125,10 @@ class WebChart(Visual):
         type(self)._plot_seq += 1
         stem = f"{type(self)._plot_seq:02d}-{self._unique_stem(_slug(self._title))}"
         path = dest / f"{stem}.raw"
-        path.write_text(json.dumps(self._payload(palette), indent=2) + "\n", encoding="utf-8")
+        # Atomic write so a killed update never leaves a torn chart behind.
+        tmp_path = dest / f".{stem}.raw.{os.getpid()}.tmp"
+        tmp_path.write_text(json.dumps(self._payload(palette), indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_path, path)
 
     @classmethod
     def write_example(cls) -> None:
