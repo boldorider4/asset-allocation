@@ -349,6 +349,11 @@ class Position(ABC):
     def sectors(self) -> list[dict[str, float | str]] | None:
         return self._sectors
 
+    def invalidate_cache(self) -> None:
+        """Clear cached sectors and countries so they are refetched on next access."""
+        self._sectors = None
+        self._countries = None
+
     def __str__(self) -> str:
         countries_list = self._countries
         countries_str = ""

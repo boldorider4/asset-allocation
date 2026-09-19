@@ -149,6 +149,14 @@ class Portfolio:
                 consolidated[label] = consolidated.get(label, 0.0) + share
         return consolidated
 
+    def refresh_sectors(self) -> None:
+        """Refresh the cached sector aggregation from Position objects.
+
+        Call this after Position objects have had their sector cache invalidated
+        (e.g. after a data update that may have changed sector allocations).
+        """
+        self._sectors = self._calculate_sectors()
+
     def _live_total(self, *, incognito: bool) -> float:
         """Display total: stored clear value, scaled for incognito passes."""
         scale = self._ctx.value_factor if incognito else 1.0

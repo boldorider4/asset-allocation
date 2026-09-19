@@ -871,7 +871,7 @@ def _is_portfolio_position_scalable_tagesgeld(position: dict[str, Any]) -> bool:
     return pos_name == _TAGESGELD_NAME and pos_broker == _SCALABLE
 
 
-def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
+def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
     ctx.scalable_holdings = fetch_scalable_etfs()
     fetched = ctx.scalable_holdings
     if not fetched:
@@ -977,3 +977,5 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
 
     for bucket, position in to_remove:
         ctx.portfolio[bucket].remove(position)
+
+    return matched_isins

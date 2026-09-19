@@ -38,6 +38,14 @@ def main(ctx: RuntimeContext) -> None:
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
+    # Create Portfolio objects first (needed for cache invalidation after updates)
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True, ctx=ctx)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], consolidate=True, ctx=ctx)
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], consolidate=True, ctx=ctx)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
+
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
@@ -46,9 +54,22 @@ def main(ctx: RuntimeContext) -> None:
 
     if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
-        update_scalable_etfs_in_portfolio(ctx)
+        updated_isins = update_scalable_etfs_in_portfolio(ctx)
         ctx.flush_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
+        # Invalidate sector/country cache on affected Position objects and refresh Portfolio sector aggregation
+        for portfolio in [
+            equity_portfolio,
+            fixed_maturity_bond_portfolio,
+            cash_portfolio,
+            non_regional_bond_portfolio,
+            commodity_portfolio,
+            pension_portfolio,
+        ]:
+            for position in portfolio._positions:
+                if position.isin in updated_isins:
+                    position.invalidate_cache()
+            portfolio.refresh_sectors()
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
@@ -59,12 +80,6 @@ def main(ctx: RuntimeContext) -> None:
     logger.info("Computing incognito display factor")
     apply_incognito_scaling(ctx)
 
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], consolidate=True, ctx=ctx)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], consolidate=True, ctx=ctx)
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], consolidate=True, ctx=ctx)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
     persist_oskar_shares_in_portfolio(ctx)
     persist_fetched_values_in_portfolio(ctx)
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
