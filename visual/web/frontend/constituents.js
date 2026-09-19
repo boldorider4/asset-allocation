@@ -15,10 +15,12 @@
  * section; dropping back home sends nothing, and a failed POST restores
  * the original DOM order.
  *
- * New rows start as a draft behind each section's + button: broker first
- * (dropdown, then its icon), then name/group/ISIN/value, a JustETF ISIN
- * check unlocking shares, and OK to persist (server-rendered row swaps
- * in). Discard via the draft trash button or Escape.
+ * New rows start as a draft behind each section's + button: broker
+ * (dropdown, anytime before OK), name/group/ISIN/value editable from
+ * the start, a JustETF ISIN check unlocking shares, and OK to persist
+ * (server-rendered row swaps in). OK stays disabled until broker, name,
+ * and value-or-ISIN-plus-shares are set. Discard via the draft trash
+ * button or Escape.
  */
 (function () {
   "use strict";
@@ -203,9 +205,9 @@
   });
 
   /* Row creation via the + button. One draft per section: a draft <tr>
-   * with OK (far left), text/figure inputs, locked shares/price dashes,
-   * a broker <select>, and a discard button. Choosing a broker swaps the
-   * select for its icon and unlocks the text/figure inputs; a successful
+   * with OK (far left), text/figure inputs editable from the start,
+   * locked shares/price dashes, a broker <select>, and a discard button.
+   * Choosing a broker swaps the select for its icon; a successful
    * JustETF check on the ISIN unlocks shares. OK validates and POSTs the
    * row, swapping in the server-rendered <tr>; failures and discards
    * keep or drop the draft locally.
@@ -228,7 +230,6 @@
     const input = document.createElement("input");
     input.className = "cell-box editable " + cls;
     input.setAttribute("maxlength", String(maxlength));
-    input.disabled = true;
     return input;
   }
 
@@ -251,6 +252,28 @@
     const first = row.querySelector("input:not([disabled]), select");
     if (first) {
       first.focus();
+    }
+  }
+
+  /* OK is clickable only for a persistable draft: broker chosen, name
+   * given, and either a value or an ISIN-plus-shares pair. Backend
+   * validation in confirmDraft stays as the backstop.
+   */
+  function refreshOkState(row) {
+    const ok = row.querySelector("button.ok");
+    if (!ok || ok.dataset.busy === "1") {
+      return;
+    }
+    const ready =
+      (row.dataset.broker || "") !== "" &&
+      draftText(row, "draft-name").trim() !== "" &&
+      (draftText(row, "draft-value").trim() !== "" ||
+        (draftText(row, "draft-isin").trim() !== "" &&
+          draftText(row, "draft-shares").trim() !== ""));
+    if (ready) {
+      ok.removeAttribute("disabled");
+    } else {
+      ok.setAttribute("disabled", "");
     }
   }
 
@@ -326,6 +349,7 @@
     row.appendChild(trashCell);
 
     tbody.appendChild(row);
+    refreshOkState(row);
     focusDraft(row);
   }
 
@@ -346,9 +370,7 @@
     cell.innerHTML = "";
     cell.appendChild(icon);
     row.dataset.broker = select.value;
-    row.querySelectorAll("input.cell-box.editable:not(.draft-shares)").forEach(function (input) {
-      input.disabled = false;
-    });
+    refreshOkState(row);
     focusDraft(row);
   }
 
@@ -377,6 +399,7 @@
     const isin = isinInput.value.trim();
     lockDraftShares(row);
     if (!isin) {
+      refreshOkState(row);
       return;
     }
     isinInput.dataset.busy = "1";
@@ -395,22 +418,23 @@
       setStatus("ISIN check failed: " + (err && err.message ? err.message : err));
       isinInput.dataset.busy = "";
       flash(isinInput, "stale-flash");
+      refreshOkState(row);
       return;
     }
     isinInput.dataset.busy = "";
     if (!exists) {
       flash(isinInput, "stale-flash");
+      refreshOkState(row);
       return;
     }
     row.dataset.isinOk = "1";
     const cell = row.querySelector(".draft-shares-cell");
     if (cell && !cell.querySelector("input")) {
       cell.innerHTML = "";
-      const shares = draftInput("draft-shares", 16);
-      shares.disabled = false;
-      cell.appendChild(shares);
+      cell.appendChild(draftInput("draft-shares", 16));
     }
     flash(isinInput, "saved-flash");
+    refreshOkState(row);
   }
 
   function draftText(row, cls) {
@@ -510,6 +534,16 @@
         if (draft) {
           draft.remove();
         }
+      }
+    }
+  });
+
+  document.addEventListener("input", function (event) {
+    const target = event.target;
+    if (target instanceof HTMLInputElement) {
+      const row = target.closest("tr.draft");
+      if (row) {
+        refreshOkState(row);
       }
     }
   });

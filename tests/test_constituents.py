@@ -661,6 +661,19 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("/api/constituents/check-isin", js)
         self.assertIn("/api/constituents/add", js)
         self.assertIn("Add failed: ", js)
+        # Draft fields are editable from the start (shares still gated
+        # on the ISIN check); OK enables only for persistable drafts.
+        self.assertIn("refreshOkState", js)
+        self.assertIn('setAttribute("disabled"', js)
+        self.assertIn('removeAttribute("disabled")', js)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".ok:disabled", css)
 
     def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
         js = (

@@ -555,6 +555,16 @@ td:nth-child(9) {
   color: var(--gold);
 }
 
+.ok:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ok:disabled:hover {
+  background: transparent;
+  color: var(--muted);
+}
+
 tr.draft td {
   border-bottom: 1px dashed var(--gold);
 }
