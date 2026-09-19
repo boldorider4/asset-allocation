@@ -341,6 +341,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("tr.draft td", css)
         self.assertIn("select.broker-select", css)
         self.assertIn("input.cell-box.editable:disabled", css)
+        self.assertIn("input.cell-box.draft-isin", css)
 
     def test_shares_locked_only_without_isin(self) -> None:
         page = self._page()
@@ -661,6 +662,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("/api/constituents/check-isin", js)
         self.assertIn("/api/constituents/add", js)
         self.assertIn("Add failed: ", js)
+        # Draft value/price cells show the Euro unit like finalized rows.
+        self.assertIn("unitSpan", js)
         # Draft fields are editable from the start (shares still gated
         # on the ISIN check); OK enables only for persistable drafts.
         self.assertIn("refreshOkState", js)

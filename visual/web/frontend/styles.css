@@ -570,6 +570,7 @@ tr.draft td {
 }
 
 select.broker-select {
+  width: 100%;
   max-width: 100%;
   padding: 0.25rem 0.2rem;
   border: 1px solid var(--line);
@@ -582,6 +583,10 @@ select.broker-select {
 
 input.cell-box.editable:disabled {
   opacity: 0.45;
+}
+
+input.cell-box.draft-isin {
+  width: 8.5rem;
 }
 
 .grip {
@@ -663,6 +668,12 @@ td {
 .cell-box.text {
   text-align: left;
   width: 8rem;
+}
+
+.cell-box.name {
+  text-align: right;
+  width: 100%;
+  max-width: 100%;
 }
 
 input.cell-box.editable {

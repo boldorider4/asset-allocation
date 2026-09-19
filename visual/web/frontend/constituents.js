@@ -240,6 +240,13 @@
     return dash;
   }
 
+  function unitSpan() {
+    const unit = document.createElement("span");
+    unit.className = "unit";
+    unit.textContent = "Euro";
+    return unit;
+  }
+
   function draftCell(child) {
     const cell = document.createElement("td");
     if (child) {
@@ -313,15 +320,19 @@
     ok.setAttribute("aria-label", "Add this row");
     row.appendChild(draftCell(ok));
 
-    row.appendChild(draftCell(draftInput("draft-name", 64)));
-    row.appendChild(draftCell(draftInput("draft-group", 32)));
+    row.appendChild(draftCell(draftInput("draft-name name", 64)));
+    row.appendChild(draftCell(draftInput("draft-group text", 32)));
     row.appendChild(draftCell(draftInput("draft-isin", 12)));
-    row.appendChild(draftCell(draftInput("draft-value", 16)));
+    const valueCell = draftCell(draftInput("draft-value", 16));
+    valueCell.appendChild(unitSpan());
+    row.appendChild(valueCell);
 
     const sharesCell = draftCell(draftDash());
     sharesCell.className = "draft-shares-cell";
     row.appendChild(sharesCell);
-    row.appendChild(draftCell(draftDash()));
+    const priceCell = draftCell(draftDash());
+    priceCell.appendChild(unitSpan());
+    row.appendChild(priceCell);
 
     const select = document.createElement("select");
     select.className = "broker-select";
@@ -364,11 +375,7 @@
     if (!entry || !entry.mark) {
       return;
     }
-    const cell = select.closest("td");
-    const icon = document.createElement("span");
-    icon.innerHTML = entry.mark;
-    cell.innerHTML = "";
-    cell.appendChild(icon);
+    // Don't swap to icon yet - keep dropdown until OK is clicked
     row.dataset.broker = select.value;
     refreshOkState(row);
     focusDraft(row);
