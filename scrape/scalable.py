@@ -19,7 +19,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
 from logger import attach_color_stderr_handler_for_module
-from utils import bucket_for_isin, cache_broker_quotes
+from utils import bucket_for_isin, cache_broker_quotes, _CACHE_SECTORS, _CACHE_COUNTRIES
 
 if TYPE_CHECKING:
     from context import RuntimeContext
@@ -848,6 +848,23 @@ def fetch_scalable_etfs(
     return rows
 
 
+def _clear_sector_cache_for_isins(ctx: RuntimeContext, isins: set[str] | str) -> None:
+    """Clear stale sector/country cache for the given ISINs so they get
+    refetched from JustETF on next access."""
+    if isinstance(isins, str):
+        isins = {isins}
+    cache = ctx.ensure_cache_loaded()
+    for isin in isins:
+        if not isin:
+            continue
+        row = cache.get(isin)
+        if isinstance(row, dict):
+            row.pop(_CACHE_SECTORS, None)
+            row.pop(_CACHE_COUNTRIES, None)
+            cache[isin] = row
+    ctx.mark_cache_dirty()
+
+
 def _is_portfolio_position_scalable_tagesgeld(position: dict[str, Any]) -> bool:
     pos_name = position.get("name") or position.get("Name") or ""
     pos_broker = position.get("broker") or position.get("Broker")
@@ -952,6 +969,11 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
         ctx,
         {holding.isin: holding.price for holding in fetched_by_isin.values()}
     )
+    # Clear stale sector/country cache for updated ISINs so they get
+    # refetched from JustETF on next access.
+    _clear_sector_cache_for_isins(ctx, matched_isins)
+    if fetched_tagesgeld is not None:
+        _clear_sector_cache_for_isins(ctx, {_TAGESGELD_FETCH_KEY})
 
     for bucket, position in to_remove:
         ctx.portfolio[bucket].remove(position)

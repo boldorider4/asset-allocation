@@ -230,8 +230,12 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         }
         self.ctx.config.fetch_prices = False
         update_scalable_etfs_in_portfolio(self.ctx)
-        self.assertEqual(self.ctx.cache, {})
-        self.assertFalse(self.ctx.cache_dirty)
+        # Cache should be marked dirty because sector cache is cleared
+        # even when fetch_prices is False, to force sector refetch on next access.
+        self.assertTrue(self.ctx.cache_dirty)
+        # But price cache should not be populated
+        for entry in self.ctx.cache.values():
+            self.assertNotIn("price", entry)
 
 
 if __name__ == "__main__":
