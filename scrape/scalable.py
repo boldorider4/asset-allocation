@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
-from common import CASH_PORTFOLIO
+from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
 from logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes
 
@@ -909,14 +909,14 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
     if fetched_tagesgeld is not None and not tagesgeld_matched:
         ctx.portfolio.setdefault(CASH_PORTFOLIO, []).append(
             {
-                "name": _TAGESGELD_NAME,
-                "ISIN": None,
-                "shares": None,
-                "value": fetched_tagesgeld.value,
-                "broker": _SCALABLE,
-                "dmem": None,
-                "dmem_other": None,
-                "usavn": None,
+                NAME: _TAGESGELD_NAME,
+                ISIN: None,
+                SHARES: None,
+                VALUE: fetched_tagesgeld.value,
+                BROKER: _SCALABLE,
+                DMEM: None,
+                DMEM_OTHER: None,
+                USAVN: None,
             }
         )
         logger.info(
@@ -931,14 +931,14 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> None:
         bucket = bucket_for_isin(holding.isin)
         ctx.portfolio.setdefault(bucket, []).append(
             {
-                "name": holding.name,
-                "ISIN": holding.isin,
-                "shares": holding.shares,
-                "value": holding.value,
-                "broker": _SCALABLE,
-                "dmem": 1,
-                "dmem_other": 1,
-                "usavn": 0,
+                NAME: holding.name,
+                ISIN: holding.isin,
+                SHARES: holding.shares,
+                VALUE: holding.value,
+                BROKER: _SCALABLE,
+                DMEM: 1,
+                DMEM_OTHER: 1,
+                USAVN: 0,
             }
         )
         logger.info(

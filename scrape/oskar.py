@@ -25,9 +25,17 @@ if TYPE_CHECKING:
 from logger import attach_color_stderr_handler_for_module
 from common import (
     BOND_PORTFOLIO,
+    BROKER,
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
+    DMEM,
+    DMEM_OTHER,
     EQUITY_PORTFOLIO,
+    ISIN,
+    NAME,
+    SHARES,
+    USAVN,
+    VALUE,
 )
 
 logger = logging.getLogger(__name__)
@@ -1121,14 +1129,14 @@ def update_oskar_etfs_in_portfolio(ctx: RuntimeContext):
         bucket = _OSKAR_CATEGORY_TO_PORTFOLIO.get(oskar_etf.category, _DEFAULT_OSKAR_PORTFOLIO_BUCKET)
         ctx.portfolio.setdefault(bucket, []).append(
             {
-                "name": oskar_etf.name,
-                "ISIN": None if _is_oskar_position_tagesgeld(oskar_etf) else oskar_etf.isin,
-                "shares": None,
-                "value": oskar_etf.value_eur,
-                "broker": _OSKAR,
-                "dmem": 1,
-                "dmem_other": 1,
-                "usavn": 0,
+                NAME: oskar_etf.name,
+                ISIN: None if _is_oskar_position_tagesgeld(oskar_etf) else oskar_etf.isin,
+                SHARES: None,
+                VALUE: oskar_etf.value_eur,
+                BROKER: _OSKAR,
+                DMEM: 1,
+                DMEM_OTHER: 1,
+                USAVN: 0,
             }
         )
         # this oskar position has been added to the portfolio, so it doesn't need to be addressed anymore

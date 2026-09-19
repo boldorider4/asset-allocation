@@ -7,6 +7,17 @@ from utils import (
     parse_cache_entry,
     save_position_in_cache,
 )
+from common import (
+    BROKER,
+    DMEM,
+    DMEM_OTHER,
+    NAME,
+    PRICE,
+    SHARES,
+    SHORT_NAME,
+    USAVN,
+    VALUE,
+)
 from position.amundi_position import AmundiPosition, amundi_product_url_exists
 from position.blackrock_position import (
     BlackRockPosition,
@@ -149,17 +160,17 @@ def factory(
         sectors_arg = cached_sectors if cached_sectors is not None else {}
 
     ctor_kwargs = {
-        "name": name,
-        "short_name": short_name,
-        "shares": shares,
-        "value": value,
-        "broker": broker,
-        "dmem": dmem,
-        "usavn": usavn,
-        "dmem_other": dmem_other,
+        NAME: name,
+        SHORT_NAME: short_name,
+        SHARES: shares,
+        VALUE: value,
+        BROKER: broker,
+        DMEM: dmem,
+        USAVN: usavn,
+        DMEM_OTHER: dmem_other,
         "cached_countries": countries_arg,
         "cached_sectors": sectors_arg,
-        "price": ctor_price,
+        PRICE: ctor_price,
         "prefer_scrape_value": prefer_scrape_value,
         "ctx": ctx,
     }

@@ -18,7 +18,7 @@ from typing import Any
 
 from typing import TYPE_CHECKING
 
-from common import CASH_PORTFOLIO
+from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
 from logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes
 
@@ -354,14 +354,14 @@ def update_traderepublic_etfs_in_portfolio(ctx: RuntimeContext) -> None:
     if fetched_cash is not None and not cash_matched:
         ctx.portfolio.setdefault(CASH_PORTFOLIO, []).append(
             {
-                "name": _CASH_NAME,
-                "ISIN": None,
-                "shares": None,
-                "value": fetched_cash.value,
-                "broker": _TRADEREPUBLIC,
-                "dmem": None,
-                "dmem_other": None,
-                "usavn": None,
+                NAME: _CASH_NAME,
+                ISIN: None,
+                SHARES: None,
+                VALUE: fetched_cash.value,
+                BROKER: _TRADEREPUBLIC,
+                DMEM: None,
+                DMEM_OTHER: None,
+                USAVN: None,
             }
         )
         logger.info(
@@ -376,14 +376,14 @@ def update_traderepublic_etfs_in_portfolio(ctx: RuntimeContext) -> None:
         bucket = bucket_for_isin(holding.isin)
         ctx.portfolio.setdefault(bucket, []).append(
             {
-                "name": holding.name,
-                "ISIN": holding.isin,
-                "shares": holding.shares,
-                "value": holding.value,
-                "broker": _TRADEREPUBLIC,
-                "dmem": 1,
-                "dmem_other": 1,
-                "usavn": 0,
+                NAME: holding.name,
+                ISIN: holding.isin,
+                SHARES: holding.shares,
+                VALUE: holding.value,
+                BROKER: _TRADEREPUBLIC,
+                DMEM: 1,
+                DMEM_OTHER: 1,
+                USAVN: 0,
             }
         )
         logger.info(

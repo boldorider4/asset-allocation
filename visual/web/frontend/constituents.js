@@ -14,6 +14,11 @@
  * order to /api/constituents/order and rewrites every data-index in the
  * section; dropping back home sends nothing, and a failed POST restores
  * the original DOM order.
+ *
+ * New rows start as a draft behind each section's + button: broker first
+ * (dropdown, then its icon), then name/group/ISIN/value, a JustETF ISIN
+ * check unlocking shares, and OK to persist (server-rendered row swaps
+ * in). Discard via the draft trash button or Escape.
  */
 (function () {
   "use strict";
@@ -106,9 +111,18 @@
 
   document.addEventListener("change", function (event) {
     const target = event.target;
-    if (target instanceof HTMLInputElement && target.matches("input.cell-box.editable")) {
-      save(target);
+    if (target instanceof HTMLSelectElement && target.matches("select.broker-select")) {
+      onDraftBroker(target);
+      return;
     }
+    if (!(target instanceof HTMLInputElement) || !target.matches("input.cell-box.editable")) {
+      return;
+    }
+    if (target.closest("tr.draft")) {
+      onDraftFieldChange(target);
+      return;
+    }
+    save(target);
   });
 
   /* Row deletion via the trash button. Removes the row on success and
@@ -163,9 +177,339 @@
   document.addEventListener("click", function (event) {
     const target = event.target;
     if (target instanceof Element) {
+      const add = target.closest("button.add");
+      if (add) {
+        openDraft(add);
+        return;
+      }
+      const discard = target.closest("button.draft-discard");
+      if (discard) {
+        const draft = discard.closest("tr.draft");
+        if (draft) {
+          draft.remove();
+        }
+        return;
+      }
+      const ok = target.closest("button.ok");
+      if (ok) {
+        confirmDraft(ok);
+        return;
+      }
       const button = target.closest("button.trash");
       if (button) {
         deleteRow(button);
+      }
+    }
+  });
+
+  /* Row creation via the + button. One draft per section: a draft <tr>
+   * with OK (far left), text/figure inputs, locked shares/price dashes,
+   * a broker <select>, and a discard button. Choosing a broker swaps the
+   * select for its icon and unlocks the text/figure inputs; a successful
+   * JustETF check on the ISIN unlocks shares. OK validates and POSTs the
+   * row, swapping in the server-rendered <tr>; failures and discards
+   * keep or drop the draft locally.
+   */
+  var brokerCatalog = null;
+
+  async function loadBrokers() {
+    if (brokerCatalog) {
+      return brokerCatalog;
+    }
+    const response = await fetch("/api/constituents/brokers", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    brokerCatalog = await response.json();
+    return brokerCatalog;
+  }
+
+  function draftInput(cls, maxlength) {
+    const input = document.createElement("input");
+    input.className = "cell-box editable " + cls;
+    input.setAttribute("maxlength", String(maxlength));
+    input.disabled = true;
+    return input;
+  }
+
+  function draftDash() {
+    const dash = document.createElement("span");
+    dash.className = "cell-box locked";
+    dash.textContent = "-";
+    return dash;
+  }
+
+  function draftCell(child) {
+    const cell = document.createElement("td");
+    if (child) {
+      cell.appendChild(child);
+    }
+    return cell;
+  }
+
+  function focusDraft(row) {
+    const first = row.querySelector("input:not([disabled]), select");
+    if (first) {
+      first.focus();
+    }
+  }
+
+  async function openDraft(addButton) {
+    const section = addButton.closest("section");
+    const tbody = section && section.querySelector("tbody");
+    const bucket = addButton.dataset.bucket;
+    if (!tbody || !bucket) {
+      return;
+    }
+    const existing = tbody.querySelector("tr.draft");
+    if (existing) {
+      focusDraft(existing);
+      return;
+    }
+    let catalog;
+    try {
+      catalog = await loadBrokers();
+    } catch (err) {
+      setStatus("Brokers unavailable: " + (err && err.message ? err.message : err));
+      return;
+    }
+    const entries = catalog && catalog.brokers;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      setStatus("Brokers unavailable: empty broker list");
+      return;
+    }
+    const row = document.createElement("tr");
+    row.className = "draft";
+    row.dataset.bucket = bucket;
+
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "ok";
+    ok.textContent = "OK";
+    ok.title = "Add this row";
+    ok.setAttribute("aria-label", "Add this row");
+    row.appendChild(draftCell(ok));
+
+    row.appendChild(draftCell(draftInput("draft-name", 64)));
+    row.appendChild(draftCell(draftInput("draft-group", 32)));
+    row.appendChild(draftCell(draftInput("draft-isin", 12)));
+    row.appendChild(draftCell(draftInput("draft-value", 16)));
+
+    const sharesCell = draftCell(draftDash());
+    sharesCell.className = "draft-shares-cell";
+    row.appendChild(sharesCell);
+    row.appendChild(draftCell(draftDash()));
+
+    const select = document.createElement("select");
+    select.className = "broker-select";
+    select.setAttribute("aria-label", "Broker");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Broker…";
+    select.appendChild(placeholder);
+    for (const entry of entries) {
+      const option = document.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.label || entry.id;
+      select.appendChild(option);
+    }
+    row.appendChild(draftCell(select));
+
+    const discard = document.createElement("button");
+    discard.type = "button";
+    discard.className = "draft-discard";
+    discard.textContent = "✕";
+    discard.title = "Discard this row";
+    discard.setAttribute("aria-label", "Discard this row");
+    const trashCell = draftCell(discard);
+    trashCell.className = "trash-cell";
+    row.appendChild(trashCell);
+
+    tbody.appendChild(row);
+    focusDraft(row);
+  }
+
+  function onDraftBroker(select) {
+    const row = select.closest("tr");
+    if (!row || !select.value || !brokerCatalog) {
+      return;
+    }
+    const entry = (brokerCatalog.brokers || []).find(function (item) {
+      return item.id === select.value;
+    });
+    if (!entry || !entry.mark) {
+      return;
+    }
+    const cell = select.closest("td");
+    const icon = document.createElement("span");
+    icon.innerHTML = entry.mark;
+    cell.innerHTML = "";
+    cell.appendChild(icon);
+    row.dataset.broker = select.value;
+    row.querySelectorAll("input.cell-box.editable:not(.draft-shares)").forEach(function (input) {
+      input.disabled = false;
+    });
+    focusDraft(row);
+  }
+
+  function lockDraftShares(row) {
+    const cell = row.querySelector(".draft-shares-cell");
+    if (cell) {
+      cell.innerHTML = "";
+      cell.appendChild(draftDash());
+    }
+    row.dataset.isinOk = "";
+  }
+
+  function onDraftFieldChange(input) {
+    const row = input.closest("tr");
+    if (!row || !input.matches(".draft-isin")) {
+      return;
+    }
+    checkDraftIsin(row);
+  }
+
+  async function checkDraftIsin(row) {
+    const isinInput = row.querySelector(".draft-isin");
+    if (!isinInput || isinInput.dataset.busy === "1") {
+      return;
+    }
+    const isin = isinInput.value.trim();
+    lockDraftShares(row);
+    if (!isin) {
+      return;
+    }
+    isinInput.dataset.busy = "1";
+    let exists = false;
+    try {
+      const response = await fetch("/api/constituents/check-isin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isin: isin }),
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      exists = !!(await response.json()).exists;
+    } catch (err) {
+      setStatus("ISIN check failed: " + (err && err.message ? err.message : err));
+      isinInput.dataset.busy = "";
+      flash(isinInput, "stale-flash");
+      return;
+    }
+    isinInput.dataset.busy = "";
+    if (!exists) {
+      flash(isinInput, "stale-flash");
+      return;
+    }
+    row.dataset.isinOk = "1";
+    const cell = row.querySelector(".draft-shares-cell");
+    if (cell && !cell.querySelector("input")) {
+      cell.innerHTML = "";
+      const shares = draftInput("draft-shares", 16);
+      shares.disabled = false;
+      cell.appendChild(shares);
+    }
+    flash(isinInput, "saved-flash");
+  }
+
+  function draftText(row, cls) {
+    const input = row.querySelector("." + cls);
+    return input ? input.value : "";
+  }
+
+  function parseDraftFigure(raw) {
+    const text = (raw || "").trim();
+    if (!text) {
+      return { ok: true, value: null };
+    }
+    const number = Number(text);
+    if (!Number.isFinite(number)) {
+      return { ok: false, value: null };
+    }
+    return { ok: true, value: text };
+  }
+
+  async function confirmDraft(okButton) {
+    const row = okButton.closest("tr");
+    const tbody = row && row.parentElement;
+    if (!row || !tbody || okButton.dataset.busy === "1") {
+      return;
+    }
+    const bucket = row.dataset.bucket || "";
+    const broker = row.dataset.broker || "";
+    if (!broker) {
+      setStatus("Choose a broker first");
+      const select = row.querySelector("select.broker-select");
+      if (select) {
+        select.focus();
+      }
+      return;
+    }
+    const name = draftText(row, "draft-name");
+    if (!name.trim()) {
+      setStatus("Name must not be empty");
+      const input = row.querySelector(".draft-name");
+      if (input) {
+        input.focus();
+      }
+      return;
+    }
+    const value = parseDraftFigure(draftText(row, "draft-value"));
+    if (!value.ok) {
+      setStatus("Value must be a number");
+      return;
+    }
+    const shares = parseDraftFigure(draftText(row, "draft-shares"));
+    if (!shares.ok) {
+      setStatus("Shares must be a number");
+      return;
+    }
+    okButton.dataset.busy = "1";
+    let data = null;
+    try {
+      const response = await fetch("/api/constituents/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucket: bucket,
+          name: name,
+          short_name: draftText(row, "draft-group"),
+          isin: draftText(row, "draft-isin") || null,
+          value: value.value,
+          shares: shares.value,
+          broker: broker,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      data = await response.json();
+    } catch (err) {
+      setStatus("Add failed: " + (err && err.message ? err.message : err));
+      okButton.dataset.busy = "";
+      return;
+    }
+    const wrapper = document.createElement("tbody");
+    wrapper.innerHTML = data && data.row ? String(data.row) : "";
+    const real = wrapper.firstElementChild;
+    if (!real || real.tagName !== "TR") {
+      setStatus("Add failed: server returned no row");
+      okButton.dataset.busy = "";
+      return;
+    }
+    row.replaceWith(real);
+    dirty = true;
+  }
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !drag) {
+      const active = document.activeElement;
+      if (active instanceof Element) {
+        const draft = active.closest("tr.draft");
+        if (draft) {
+          draft.remove();
+        }
       }
     }
   });

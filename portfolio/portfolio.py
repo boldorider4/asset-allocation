@@ -7,6 +7,18 @@ import numpy as np
 
 from position.factory import factory as _factory
 from position.position import Position
+from common import (
+    BROKER,
+    DMEM,
+    DMEM_OTHER,
+    ISIN,
+    NAME,
+    PRICE,
+    SHARES,
+    SHORT_NAME,
+    USAVN,
+    VALUE,
+)
 from logger import attach_color_stderr_handler_for_module
 from visual import SECTOR_PALETTE, Visual
 
@@ -15,28 +27,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
-
-# globals
-NAME = "name"
-SHORT_NAME = "short_name"
-SHARES = "shares"
-VALUE = "value"
-BROKER = "broker"
-ISIN = "ISIN"
-PRICE = "price"
-
-# developed markets vs. emerging markets breakdown
-# 1 => 100% developed markets
-# 0 => 100% emerging markets
-DMEM = "dmem"
-# developed markets vs. other markets breakdown when coutry listed is "other"
-# 1 => 100% of "other" is considered developed markets
-# 0.5 => 50% of "other" is considered developed markets
-DMEM_OTHER = "dmem_other"
-# us vs. non-us breakdown
-# .7 => 70% us
-# 0 => 100% non-us
-USAVN = "usavn"
 
 
 # Breakdown wedge for constituents named Gold (e.g. physical gold ETCs),

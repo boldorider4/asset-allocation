@@ -479,10 +479,26 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def _serve_brokers(self) -> bool:
+        """Serve ``GET /api/constituents/brokers`` with dropdown data."""
+        from .constituents import known_brokers
+
+        if urlsplit(self.path).path != "/api/constituents/brokers":
+            return False
+        body = json.dumps({"brokers": known_brokers()}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+        return True
+
     def do_GET(self) -> None:
         if not (
             self._redirect_root()
             or self._serve_update_status()
+            or self._serve_brokers()
             or self._serve_constituents()
         ):
             super().do_GET()
@@ -491,6 +507,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not (
             self._redirect_root()
             or self._serve_update_status()
+            or self._serve_brokers()
             or self._serve_constituents()
         ):
             super().do_HEAD()
@@ -656,11 +673,108 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._json_status(200, {"cancelled": proc is not None})
         return True
 
+    def _read_json_body(self) -> dict | None:
+        """Read a JSON object body; 4xx already sent on failure (None)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return None
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return None
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return None
+        return payload
+
+    def _check_isin(self) -> bool:
+        """Handle ``POST /api/constituents/check-isin`` via JustETF."""
+        from position.justetf_position import just_etf_product_url_exists
+
+        if urlsplit(self.path).path != "/api/constituents/check-isin":
+            return False
+        payload = self._read_json_body()
+        if payload is None:
+            return True
+        raw = payload.get("isin")
+        if not isinstance(raw, str) or not raw.strip():
+            self._plain_status(400, "isin must be a non-blank string")
+            return True
+        try:
+            exists = just_etf_product_url_exists(raw.strip())
+        except Exception as exc:
+            logger.warning("constituents isin check failed: %s", exc)
+            self._plain_status(502, f"ISIN check unavailable: {exc}")
+            return True
+        body = json.dumps({"exists": bool(exists)}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _add_constituent(self) -> bool:
+        """Handle ``POST /api/constituents/add``; plain-text statuses on failure."""
+        from .constituents import _render_row, add_constituent
+
+        if urlsplit(self.path).path != "/api/constituents/add":
+            return False
+        payload = self._read_json_body()
+        if payload is None:
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            cache: dict[str, Any] = {}
+            if self._cache_file:
+                try:
+                    with open(self._cache_file, encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        cache = loaded
+                except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+                    logger.warning("constituents cache unreadable: %s", exc)
+            display = add_constituent(
+                self._assets_file,
+                payload.get("bucket"),
+                name=payload.get("name"),
+                short_name=payload.get("short_name"),
+                isin=payload.get("isin"),
+                value=payload.get("value"),
+                shares=payload.get("shares"),
+                broker=payload.get("broker"),
+                cache=cache,
+            )
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("constituents add failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps(
+            {"index": display["index"], "row": _render_row(display)}
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def do_POST(self) -> None:
         if not (
             self._store_constituent()
             or self._reorder_constituents()
             or self._delete_constituent()
+            or self._check_isin()
+            or self._add_constituent()
             or self._run_update()
             or self._cancel_update()
         ):

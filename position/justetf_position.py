@@ -20,6 +20,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
+#: Timeout for the lightweight product-existence probe (UI-gated: fast fail).
+_EXISTS_TIMEOUT_S = 10
+
+
+def _chart_request(isin: str, currency: str) -> urllib.request.Request:
+    """Build the performance-chart GET shared by price fetches and probes."""
+    params = urllib.parse.urlencode(
+        dict(JustETFPosition._CHART_PARAMS, currency=currency)
+    )
+    url = f"{JustETFPosition._CHART_URL.format(isin=isin)}?{params}"
+    return urllib.request.Request(url, headers=JustETFPosition._HEADERS, method="GET")
+
+
+def just_etf_product_url_exists(isin: str) -> bool:
+    """True when JustETF serves performance data for ``isin``.
+
+    Single EUR→USD attempt each, no retries and deliberately no memo:
+    the check is cheap and usually succeeds on correct input. Fail-closed
+    (False) on 404s and network errors alike.
+    """
+    cleaned = (isin or "").strip().upper()
+    if not cleaned:
+        return False
+    for currency in ("EUR", "USD"):
+        try:
+            with urllib.request.urlopen(
+                _chart_request(cleaned, currency), timeout=_EXISTS_TIMEOUT_S
+            ) as resp:
+                payload = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            logger.info("JustETF product check for %s: HTTP %s", cleaned, e.code)
+            continue
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            logger.warning("JustETF product check failed for %s (%s)", cleaned, e)
+            return False
+        if isinstance(payload, dict):
+            return True
+        logger.info("JustETF product check for %s: unexpected payload", cleaned)
+    return False
+
+
 class JustETFPosition(Position):
     """
     JustETF performance chart API (same endpoint as the site charts).
@@ -133,10 +174,7 @@ class JustETFPosition(Position):
         )
 
     def _http_chart_json(self, *, currency: str) -> dict:
-        params = dict(self._CHART_PARAMS, currency=currency)
-        query = urllib.parse.urlencode(params)
-        url = f"{self._CHART_URL.format(isin=self._isin)}?{query}"
-        req = urllib.request.Request(url, headers=self._HEADERS, method="GET")
+        req = _chart_request(self._isin, currency)
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
 

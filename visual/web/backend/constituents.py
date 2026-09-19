@@ -11,8 +11,22 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+from common import (
+    BROKER,
+    DMEM,
+    DMEM_OTHER,
+    ISIN,
+    NAME,
+    PRICE,
+    SHARES,
+    SHORT_NAME,
+    USAVN,
+    VALUE,
+)
 
 # Canonical section order with display labels; unknown bucket keys are
 # appended after these, prettified.
@@ -168,30 +182,31 @@ def load_constituents(
         for position, row in enumerate(rows):
             if not isinstance(row, dict):
                 continue
-            isin = row.get("ISIN")
+            isin = row.get(ISIN)
             price = None
             if isinstance(isin, str) and isin:
                 entry = cache.get(isin)
                 if isinstance(entry, dict):
                     price = entry.get("price")
-            broker = row.get("broker") or ""
+            broker = row.get(BROKER) or ""
             # Without an ISIN there is no quote: shares and price render as
             # locked "-" boxes and only the value stays editable.
             no_quote = not _has_isin(isin)
             fields = updatable_fields(key, row)
             display.append(
                 {
-                    "name": row.get("name"),
-                    "short_name": row.get("short_name"),
-                    "isin": row.get("ISIN"),
-                    "value": row.get("value"),
-                    "shares": row.get("shares"),
-                    "price": price,
-                    "broker": broker,
+                    NAME: row.get(NAME),
+                    SHORT_NAME: row.get(SHORT_NAME),
+                    # Lowercase "isin" is display-only; the asset key is ISIN.
+                    "isin": row.get(ISIN),
+                    VALUE: row.get(VALUE),
+                    SHARES: row.get(SHARES),
+                    PRICE: price,
+                    BROKER: broker,
                     "bucket": key,
                     "index": position,
-                    "editable_shares": "shares" in fields,
-                    "editable_value": "value" in fields,
+                    "editable_shares": SHARES in fields,
+                    "editable_value": VALUE in fields,
                     "no_quote": no_quote,
                 }
             )
@@ -206,9 +221,9 @@ def updatable_fields(bucket_key: str, row: dict[str, Any]) -> set[str]:
     the row has an ISIN. ``ISIN`` and ``Price`` are never editable. The
     broker plays no role.
     """
-    fields: set[str] = {"short_name", "value"}
-    if _has_isin(row.get("ISIN")):
-        fields.add("shares")
+    fields: set[str] = {SHORT_NAME, VALUE}
+    if _has_isin(row.get(ISIN)):
+        fields.add(SHARES)
     return fields
 
 
@@ -397,6 +412,156 @@ def delete_constituent(
     return {"deleted": True, "rows": len(rows)}
 
 
+def known_brokers() -> list[dict[str, str]]:
+    """Brokers offered by the add-row dropdown, with ready-made icon marks."""
+    return [
+        {"id": key, "label": key, "mark": _broker_mark(key)}
+        for key in _BROKER_ICONS
+    ]
+
+
+_ISIN_SHAPE_RE = re.compile(r"^[A-Za-z0-9]{12}$")
+
+
+def add_constituent(
+    assets_path: str | Path,
+    bucket: str,
+    *,
+    name: Any = None,
+    short_name: Any = None,
+    isin: Any = None,
+    value: Any = None,
+    shares: Any = None,
+    broker: Any = None,
+    cache: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append a new row to a bucket (atomic write).
+
+    Blank ISIN becomes null (displayed as "—", no quote); otherwise it
+    must be a 12-character alphanumeric ISIN. ``broker`` must be a known
+    broker id. Numbers accept the same shapes as cell edits.
+
+    Returns the display row (same shape as :func:`load_constituents`
+    rows) for rendering.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must be a non-blank string")
+    if broker not in _BROKER_ICONS:
+        raise ValueError(f"unknown broker: {broker!r}")
+    if isin is None or (isinstance(isin, str) and not isin.strip()):
+        clean_isin = None
+    elif isinstance(isin, str) and _ISIN_SHAPE_RE.fullmatch(isin.strip()):
+        clean_isin = isin.strip().upper()
+    else:
+        raise ValueError(f"ISIN must be 12 alphanumeric characters, got {isin!r}")
+    parsed_value = None if value is None else _parse_stored_value(value)
+    parsed_shares = None if shares is None else _parse_stored_value(shares)
+    clean_short = _parse_stored_text("" if short_name is None else short_name)
+    with open(assets_path, encoding="utf-8") as f:
+        assets = json.load(f)
+    if not isinstance(assets, dict):
+        raise ValueError("assets root must be a JSON object")
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    stored = {
+        NAME: name.strip(),
+        SHORT_NAME: clean_short,
+        ISIN: clean_isin,
+        SHARES: parsed_shares,
+        VALUE: parsed_value,
+        BROKER: broker,
+        DMEM: None,
+        DMEM_OTHER: 0.5,
+        USAVN: None,
+    }
+    rows.append(stored)
+    index = len(rows) - 1
+    path = Path(assets_path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(assets, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp_path, path)
+    price = _cached_price_for(cache, clean_isin)
+    fields = updatable_fields(bucket, stored)
+    return {
+        NAME: stored[NAME],
+        SHORT_NAME: stored[SHORT_NAME],
+        # Lowercase "isin" is display-only; the asset key is ISIN.
+        "isin": stored[ISIN],
+        VALUE: stored[VALUE],
+        SHARES: stored[SHARES],
+        PRICE: price,
+        BROKER: stored[BROKER],
+        "bucket": bucket,
+        "index": index,
+        "editable_shares": SHARES in fields,
+        "editable_value": VALUE in fields,
+        "no_quote": not _has_isin(clean_isin),
+    }
+
+
+def _render_row(row: dict[str, Any]) -> str:
+    """Render one display row (shared by the page and the add endpoint)."""
+    if row["no_quote"]:
+        shares_cell = _locked_box(_NO_QUOTE, name="shares")
+        price_cell = _locked_box(_NO_QUOTE, name="price")
+    else:
+        shares_cell = (
+            _editable_box(
+                row["shares"],
+                name="shares",
+                bucket=row["bucket"],
+                index=row["index"],
+            )
+            if row["editable_shares"]
+            else _locked_box(row["shares"], name="shares")
+        )
+        price_cell = _locked_box(row["price"], name="price")
+    name_text = _text(row["name"])
+    trash_cell = _trash_button(
+        name=name_text,
+        bucket=row["bucket"],
+        index=row["index"],
+    )
+    label_cell = _editable_text_box(
+        row["short_name"],
+        name="short_name",
+        bucket=row["bucket"],
+        index=row["index"],
+    )
+    isin_text = _text(row["isin"])
+    if row["editable_value"]:
+        value_cell = _editable_box(
+            row["value"],
+            name="value",
+            bucket=row["bucket"],
+            index=row["index"],
+        )
+    else:
+        value_cell = _locked_box(row["value"], name="value")
+    return (
+        f'<tr data-bucket="{html.escape(row["bucket"], quote=True)}" '
+        f'data-index="{row["index"]}">'
+        '<td class="grip-cell">'
+        '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>'
+        "</td>"
+        f'<td class="name" title="{html.escape(name_text, quote=True)}">'
+        f"{html.escape(name_text, quote=False)}</td>"
+        f"<td>{label_cell}</td>"
+        f"<td>{html.escape(isin_text, quote=False)}</td>"
+        f"<td>{value_cell} "
+        '<span class="unit">Euro</span></td>'
+        f"<td>{shares_cell}</td>"
+        f"<td>{price_cell} "
+        '<span class="unit">Euro</span></td>'
+        f"<td>{_broker_mark(row['broker'])}</td>"
+        f'<td class="trash-cell">{trash_cell}</td>'
+        "</tr>"
+    )
+
+
 def render_constituents_page(
     sections: list[tuple[str, list[dict[str, Any]]]],
     incognito: bool = False,
@@ -418,63 +583,17 @@ def render_constituents_page(
             "</tr></thead><tbody>"
         )
         for row in rows:
-            if row["no_quote"]:
-                shares_cell = _locked_box(_NO_QUOTE, name="shares")
-                price_cell = _locked_box(_NO_QUOTE, name="price")
-            else:
-                shares_cell = (
-                    _editable_box(
-                        row["shares"],
-                        name="shares",
-                        bucket=row["bucket"],
-                        index=row["index"],
-                    )
-                    if row["editable_shares"]
-                    else _locked_box(row["shares"], name="shares")
-                )
-                price_cell = _locked_box(row["price"], name="price")
-            name_text = _text(row["name"])
-            trash_cell = _trash_button(
-                name=name_text,
-                bucket=row["bucket"],
-                index=row["index"],
-            )
-            label_cell = _editable_text_box(
-                row["short_name"],
-                name="short_name",
-                bucket=row["bucket"],
-                index=row["index"],
-            )
-            isin_text = _text(row["isin"])
-            if row["editable_value"]:
-                value_cell = _editable_box(
-                    row["value"],
-                    name="value",
-                    bucket=row["bucket"],
-                    index=row["index"],
-                )
-            else:
-                value_cell = _locked_box(row["value"], name="value")
+            parts.append(_render_row(row))
+        parts.append("</tbody></table></div>")
+        if rows:
             parts.append(
-                f'<tr data-bucket="{html.escape(row["bucket"], quote=True)}" '
-                f'data-index="{row["index"]}">'
-                '<td class="grip-cell">'
-                '<span class="grip" title="Drag to reorder" aria-hidden="true">≡</span>'
-                "</td>"
-                f'<td class="name" title="{html.escape(name_text, quote=True)}">'
-                f"{html.escape(name_text, quote=False)}</td>"
-                f"<td>{label_cell}</td>"
-                f"<td>{html.escape(isin_text, quote=False)}</td>"
-                f"<td>{value_cell} "
-                '<span class="unit">Euro</span></td>'
-                f"<td>{shares_cell}</td>"
-                f"<td>{price_cell} "
-                '<span class="unit">Euro</span></td>'
-                f"<td>{_broker_mark(row['broker'])}</td>"
-                f'<td class="trash-cell">{trash_cell}</td>'
-                "</tr>"
+                f'<div class="add-row">'
+                f'<button type="button" class="add" '
+                f'data-bucket="{html.escape(rows[0]["bucket"], quote=True)}" '
+                f'title="Add row" aria-label="Add row">+</button>'
+                f"</div>"
             )
-        parts.append("</tbody></table></div></section>")
+        parts.append("</section>")
     return f"""<!DOCTYPE html>
 <html lang="en">
   <head>

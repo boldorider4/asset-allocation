@@ -515,6 +515,65 @@ td:nth-child(9) {
   pointer-events: none;
 }
 
+.add-row {
+  max-width: 100rem;
+  margin: 0.5rem auto 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.add,
+.ok,
+.draft-discard {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ok {
+  width: auto;
+  min-width: 2rem;
+  padding: 0 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.add:hover,
+.ok:hover,
+.draft-discard:hover {
+  background: #2a2521;
+  color: var(--gold);
+}
+
+tr.draft td {
+  border-bottom: 1px dashed var(--gold);
+}
+
+select.broker-select {
+  max-width: 100%;
+  padding: 0.25rem 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--paper);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+input.cell-box.editable:disabled {
+  opacity: 0.45;
+}
+
 .grip {
   display: inline-block;
   padding: 0.3rem 0.55rem;

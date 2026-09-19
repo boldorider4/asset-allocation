@@ -13,7 +13,9 @@ import urllib.request
 from pathlib import Path
 
 from visual.web.backend.constituents import (
+    add_constituent,
     delete_constituent,
+    known_brokers,
     load_constituents,
     render_constituents_page,
     reorder_constituents,
@@ -313,6 +315,33 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(".grip {", css)
         self.assertIn("touch-action: none", css)
 
+    def test_sections_offer_add_row_button(self) -> None:
+        page = self._page()
+        # One + button per section (3 fixture sections), addressed by bucket.
+        self.assertEqual(page.count('class="add-row"'), 3)
+        self.assertIn(
+            '<button type="button" class="add" data-bucket="equity_portfolio"',
+            page,
+        )
+        self.assertIn(
+            '<button type="button" class="add" data-bucket="cash_portfolio"',
+            page,
+        )
+        # No draft rows in server-rendered HTML; JS builds them on demand.
+        self.assertNotIn("tr.draft", page)
+        self.assertNotIn("broker-select", page)
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".add-row", css)
+        self.assertIn("tr.draft td", css)
+        self.assertIn("select.broker-select", css)
+        self.assertIn("input.cell-box.editable:disabled", css)
+
     def test_shares_locked_only_without_isin(self) -> None:
         page = self._page()
         self.assertNotIn('data-field="shares" readonly', page)
@@ -577,10 +606,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
         self.assertIn("window.location.href = target", js)
-        # Only shares/value edits and row deletes stage an update: one
-        # dirty flag in the pair-refresh path, one in the delete flow.
-        # Label edits and reorders persist silently.
-        self.assertEqual(js.count("dirty = true"), 2)
+        # Only shares/value edits, deletes, and adds stage an update: one
+        # dirty flag in the pair-refresh path, one in the delete flow, one
+        # in the add flow. Label edits and reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 3)
         self.assertLess(
             js.index("const updated = refreshPair(input, data);"),
             js.index("dirty = true"),
@@ -589,6 +618,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
             "document.addEventListener("
         )[0]
         self.assertIn("dirty = true", delete_flow)
+        add_flow = js.split("async function confirmDraft")[1].split(
+            "document.addEventListener("
+        )[0]
+        self.assertIn("dirty = true", add_flow)
         persist = js.split("async function persistOrder")[1].split(
             "document.addEventListener("
         )[0]
@@ -619,6 +652,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("async function deleteRow", js)
         self.assertIn("/api/constituents/delete", js)
         self.assertIn("Delete failed: ", js)
+        # Draft rows: broker catalog, ISIN check unlocking shares, OK persist.
+        self.assertIn("button.add", js)
+        self.assertIn("button.ok", js)
+        self.assertIn("select.broker-select", js)
+        self.assertIn("tr.draft", js)
+        self.assertIn("/api/constituents/brokers", js)
+        self.assertIn("/api/constituents/check-isin", js)
+        self.assertIn("/api/constituents/add", js)
+        self.assertIn("Add failed: ", js)
 
     def test_save_refreshes_pair_with_red_flare_fallback(self) -> None:
         js = (
@@ -897,6 +939,91 @@ class TestReorderConstituents(unittest.TestCase):
             assets.write_text(json.dumps({"equity_portfolio": {"a": 1}}))
             with self.assertRaises(ValueError):
                 reorder_constituents(assets, "equity_portfolio", [0])
+
+
+class TestKnownBrokers(unittest.TestCase):
+    def test_five_icon_brokers_with_marks(self) -> None:
+        brokers = known_brokers()
+        self.assertEqual(
+            [b["id"] for b in brokers],
+            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+        )
+        for entry in brokers:
+            self.assertIn(entry["id"], entry["mark"])
+            self.assertTrue(
+                "icons/" in entry["mark"] or "<svg" in entry["mark"]
+            )
+
+
+class TestAddConstituent(unittest.TestCase):
+    def _assets(self, tmp: Path) -> Path:
+        assets = tmp / "assets.json"
+        assets.write_text(json.dumps(_ASSETS), encoding="utf-8")
+        return assets
+
+    def test_full_row_appends_and_reports_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            display = add_constituent(
+                assets,
+                "equity_portfolio",
+                name="  New Fund  ",
+                short_name="NF",
+                isin="ie000bi8ot95",
+                value="100.5",
+                shares=7,
+                broker="scalable",
+                cache={"IE000BI8OT95": {"price": 81.25}},
+            )
+            self.assertEqual(display["index"], 2)
+            self.assertEqual(display["name"], "New Fund")
+            self.assertEqual(display["isin"], "IE000BI8OT95")
+            self.assertEqual(display["price"], 81.25)
+            self.assertTrue(display["editable_shares"])
+            self.assertTrue(display["editable_value"])
+            self.assertFalse(display["no_quote"])
+            data = json.loads(assets.read_text(encoding="utf-8"))
+            stored = data["equity_portfolio"][2]
+            self.assertEqual(stored["name"], "New Fund")
+            self.assertEqual(stored["ISIN"], "IE000BI8OT95")
+            self.assertEqual(stored["shares"], 7.0)
+            # Other buckets are untouched.
+            self.assertEqual(len(data["cash_portfolio"]), 2)
+
+    def test_minimal_row_defaults_to_nulls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            display = add_constituent(
+                assets, "cash_portfolio", name="Spare", broker="scalable",
+            )
+            self.assertEqual(display["index"], 2)
+            self.assertIsNone(display["isin"])
+            self.assertIsNone(display["value"])
+            self.assertIsNone(display["shares"])
+            self.assertTrue(display["no_quote"])
+            self.assertFalse(display["editable_shares"])
+            self.assertTrue(display["editable_value"])
+
+    def test_rejects_junk_and_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            for kwargs in [
+                {"name": "X", "broker": "nope"},
+                {"name": "   ", "broker": "scalable"},
+                {"name": "X", "broker": "scalable", "isin": "TOOSHORT"},
+                {"name": "X", "broker": "scalable", "isin": "not an isin!!"},
+                {"name": "X", "broker": "scalable", "value": "abc"},
+                {"name": "X", "broker": "scalable", "shares": float("nan")},
+                {"name": "X", "broker": "scalable", "short_name": True},
+                {"broker": "scalable"},
+            ]:
+                with self.subTest(kwargs=kwargs):
+                    with self.assertRaises(ValueError):
+                        add_constituent(assets, "equity_portfolio", **kwargs)
+            with self.assertRaises(ValueError):
+                add_constituent(assets, "nope", name="X", broker="scalable")
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
 
 
 class TestDeleteConstituent(unittest.TestCase):
@@ -1347,6 +1474,107 @@ class TestConstituentsRoute(unittest.TestCase):
                 status, _ = self._post_delete(payload)
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def _post_add(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/add",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_add_persists_and_returns_row(self) -> None:
+        status, body = self._post_add(
+            {
+                "bucket": "equity_portfolio",
+                "name": "New Fund",
+                "short_name": "NF",
+                "isin": "IE000BI8OT95",
+                "value": 100.5,
+                "shares": 7,
+                "broker": "scalable",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["index"], 2)
+        self.assertIn("<tr ", payload["row"])
+        self.assertIn("New Fund", payload["row"])
+        self.assertIn('data-index="2"', payload["row"])
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertEqual(data["equity_portfolio"][2]["name"], "New Fund")
+        self.assertEqual(data["equity_portfolio"][2]["ISIN"], "IE000BI8OT95")
+
+    def test_post_add_rejects_junk_and_leaves_file_untouched(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        for payload in [
+            {"bucket": "nope", "name": "X", "broker": "scalable"},
+            {"bucket": "equity_portfolio", "name": "   ", "broker": "scalable"},
+            {"bucket": "equity_portfolio", "name": "X", "broker": "nope"},
+            {"bucket": "equity_portfolio", "name": "X", "broker": "scalable",
+             "isin": "SHORT"},
+            {"bucket": "equity_portfolio", "name": "X", "broker": "scalable",
+             "value": "abc"},
+            {"bucket": "equity_portfolio", "broker": "scalable"},
+        ]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_add(payload)
+                self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def test_get_brokers_lists_marks(self) -> None:
+        status, body = self._get("/api/constituents/brokers")
+        self.assertEqual(status, 200)
+        brokers = json.loads(body)["brokers"]
+        self.assertEqual(len(brokers), 5)
+        self.assertEqual(
+            [b["id"] for b in brokers],
+            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+        )
+        for entry in brokers:
+            self.assertTrue("icons/" in entry["mark"] or "<svg" in entry["mark"])
+
+    def _post_check_isin(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents/check-isin",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_post_check_isin_reports_probe(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "position.justetf_position.just_etf_product_url_exists",
+            return_value=True,
+        ):
+            status, body = self._post_check_isin({"isin": "IE000BI8OT95"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"exists": True})
+        with patch(
+            "position.justetf_position.just_etf_product_url_exists",
+            return_value=False,
+        ):
+            status, body = self._post_check_isin({"isin": "XX0000000000"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"exists": False})
+
+    def test_post_check_isin_rejects_blank(self) -> None:
+        for payload in [{"isin": "   "}, {"isin": 123}, {}]:
+            with self.subTest(payload=payload):
+                status, _ = self._post_check_isin(payload)
+                self.assertEqual(status, 400)
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")
