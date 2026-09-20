@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
+
 class NonRegionalPortfolio(Portfolio):
-    def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None, consolidate: bool = False):
+    def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None):
         super().__init__(name, positions, ctx=ctx)
         plotter = self._ctx.plotter_class()
 
@@ -24,27 +25,21 @@ class NonRegionalPortfolio(Portfolio):
                 len(self._positions),
             )
 
-        if consolidate:
+        self._visualizer_data = dict()
+        for position in self._positions:
+            prev_val = 0
+            label = position._short_name or position._name
+            if label in self._visualizer_data:
+                prev_val = float(self._visualizer_data[label])
+            self._visualizer_data[label] = prev_val + float(position.value)
+
+        if self._value > 0:
+            inv_total = 1.0 / self._value
             self._visualizer_data = {
-                name: (1.0 if self._value > 0 else 0.0),
+                k: float(v) * inv_total for k, v in self._visualizer_data.items()
             }
         else:
-            self._visualizer_data = dict()
-            for position in self._positions:
-                prev_val = 0
-                label = position._short_name or position._name
-                if label in self._visualizer_data:
-                    prev_val = float(self._visualizer_data[label])
-                self._visualizer_data[label] = prev_val + float(position.value)
-
-            if self._value > 0:
-                inv_total = 1.0 / self._value
-                self._visualizer_data = {
-                    k: float(v) * inv_total for k, v in self._visualizer_data.items()
-                }
-            else:
-                self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
-
+            self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
 
         self._geosplit_visualizer = plotter(
             data=self._visualizer_data,
