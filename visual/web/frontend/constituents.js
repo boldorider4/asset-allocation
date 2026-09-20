@@ -97,6 +97,7 @@
       input.value = data && data.short_name !== undefined ? String(data.short_name) : input.value;
       input.dataset.original = input.value;
       flash(input, "saved-flash");
+      dirty = true;
       return;
     }
     const updated = refreshPair(input, data);
