@@ -70,15 +70,16 @@ class RegionalPortfolio(Portfolio):
             self._dmem_visualizer = None
             self._usavn_visualizer = None
 
-        # Geosplit: regional wedges (scaled) + labeled position groups
-        self._geosplit_data = {
+        # Geosplit: labeled position groups first, then regional wedges (scaled)
+        self._geosplit_data = {}
+        for group in self._labeled_groups:
+            if group.total_value > 0:
+                self._geosplit_data[group.short_name] = group.total_value / self._value
+        self._geosplit_data.update({
             "Equity US": us_within_developed * developed_share * scale_regional,
             "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
             "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
-        }
-        for group in self._labeled_groups:
-            if group.total_value > 0:
-                self._geosplit_data[group.short_name] = self._geosplit_data.get(group.short_name, 0.0) + group.total_value / self._value
+        })
 
         self._geosplit_visualizer = plotter(
             data=self._geosplit_data,
@@ -144,14 +145,15 @@ class RegionalPortfolio(Portfolio):
 
         # Recompute geosplit_data from scratch
         scale_regional = regional_value / merged._value if merged._value > 0 else 0.0
-        merged._geosplit_data = {
+        merged._geosplit_data = {}
+        for group in merged._labeled_groups:
+            if group.total_value > 0:
+                merged._geosplit_data[group.short_name] = group.total_value / merged._value
+        merged._geosplit_data.update({
             "Equity US": us_within_developed * developed_share * scale_regional,
             "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
             "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
-        }
-        for group in merged._labeled_groups:
-            if group.total_value > 0:
-                merged._geosplit_data[group.short_name] = merged._geosplit_data.get(group.short_name, 0.0) + group.total_value / merged._value
+        })
 
         # Merge visualizers via PieChart.__add__
         for attr in ("_dmem_visualizer", "_usavn_visualizer", "_geosplit_visualizer"):
