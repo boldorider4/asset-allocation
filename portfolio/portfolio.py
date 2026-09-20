@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,6 +39,13 @@ _SECTOR_MIN_WEIGHT = 0.02
 _SECTOR_MAX_WEDGES = 25
 # Wedge label collecting filtered-out sector mass.
 _SECTOR_OTHER_LABEL = "Other"
+
+
+@dataclass
+class LabeledPositionGroup:
+    short_name: str
+    total_value: float
+    positions: list[Position]
 
 
 class Portfolio:
@@ -103,6 +111,23 @@ class Portfolio:
         self._sector_visualizer = self._make_sector_visualizer(
             name, self._value, self._sector_chart_data()
         )
+
+    def _partition_and_group_labeled(self) -> tuple[list[LabeledPositionGroup], list[Position]]:
+        """Split positions into labeled groups (by short_name) and regional positions."""
+        labeled_raw = [p for p in self._positions if p._short_name]
+        regional = [p for p in self._positions if not p._short_name]
+
+        groups: dict[str, LabeledPositionGroup] = {}
+        for pos in labeled_raw:
+            key = pos._short_name
+            val = pos.value or 0.0
+            if key not in groups:
+                groups[key] = LabeledPositionGroup(short_name=key, total_value=val, positions=[pos])
+            else:
+                groups[key].total_value += val
+                groups[key].positions.append(pos)
+
+        return list(groups.values()), regional
 
     def _calculate_value(self) -> float:
         return sum(position.value for position in self._positions)

@@ -607,14 +607,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
         self.assertIn("window.location.href = target", js)
-        # Only shares/value edits, deletes, and adds stage an update: one
-        # dirty flag in the pair-refresh path, one in the delete flow, one
-        # in the add flow. Label edits and reorders persist silently.
-        self.assertEqual(js.count("dirty = true"), 3)
-        self.assertLess(
-            js.index("const updated = refreshPair(input, data);"),
-            js.index("dirty = true"),
-        )
+        # Shares/value edits, short_name edits, deletes, and adds stage an update:
+        # one dirty flag in the pair-refresh path, one in the short_name path,
+        # one in the delete flow, one in the add flow. Reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 4)
+        # In the pair-refresh path (shares/value), dirty is set after refreshPair.
+        pair_refresh = js.split("const updated = refreshPair(input, data);")[1].split(
+            "if (data && data.recomputed === false)"
+        )[0]
+        self.assertIn("dirty = true", pair_refresh)
         delete_flow = js.split("async function deleteRow")[1].split(
             "document.addEventListener("
         )[0]
@@ -630,7 +631,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         label_flow = js.split('field === "short_name"')[1].split(
             "const updated = refreshPair"
         )[0]
-        self.assertNotIn("dirty", label_flow)
+        self.assertIn("dirty = true", label_flow)
 
     def test_rows_drag_to_reorder_and_persist(self) -> None:
         js = (

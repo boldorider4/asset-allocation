@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from portfolio.portfolio import Portfolio
+from portfolio.portfolio import Portfolio, LabeledPositionGroup
 from logger import attach_color_stderr_handler_for_module
 
 if TYPE_CHECKING:
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
+
 
 class RegionalPortfolio(Portfolio):
     def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None):
@@ -26,42 +27,59 @@ class RegionalPortfolio(Portfolio):
                 len(self._positions),
             )
 
-        values = np.asarray([position.value for position in self._positions], dtype=float)
-        dmem_arr = np.asarray(self._dmem, dtype=float)
-        usavn_arr = np.asarray(self._usavn, dtype=float)
-        developed_share = (
-            float(np.dot(values, dmem_arr)) / self._value if self._value > 0 else 0.0
-        )
-        dmem_weighted = float(np.dot(values, dmem_arr))
-        us_within_developed = (
-            float(np.dot(values, usavn_arr)) / dmem_weighted if dmem_weighted > 0 else 0.0
-        )
+        # Partition positions into labeled groups and regional positions
+        self._labeled_groups, self._regional_positions = self._partition_and_group_labeled()
 
-        self._dmem_visualizer = plotter(
-            data={
-                "Developed Markets": developed_share,
-                "Emerging Markets": 1.0 - developed_share,
-            },
-            title="{}: Developed Markets vs. Emerging Markets".format(self._name),
-            closing_title="Value: {:.2f}".format(self._value),
-        )
+        labeled_value = sum(g.total_value for g in self._labeled_groups)
+        regional_value = self._value - labeled_value
+        scale_regional = regional_value / self._value if self._value > 0 else 0.0
 
-        self._usavn_visualizer = plotter(
-            data={
-                "US": us_within_developed,
-                "Ex-US": 1.0 - us_within_developed,
-            },
-            title="{}: US vs. Ex-US (within developed markets)".format(self._name),
-            closing_title="Value: {:.2f}".format(self._value),
-        )
+        # DMEM/USAVN from REGIONAL positions only
+        if regional_value > 0:
+            regional_values = np.asarray([p.value for p in self._regional_positions], dtype=float)
+            regional_dmem = np.asarray([p.dmem for p in self._regional_positions], dtype=float)
+            regional_usavn = np.asarray([p.usavn for p in self._regional_positions], dtype=float)
+            developed_share = float(np.dot(regional_values, regional_dmem)) / regional_value
+            dmem_weighted = float(np.dot(regional_values, regional_dmem))
+            us_within_developed = (
+                float(np.dot(regional_values, regional_usavn)) / dmem_weighted if dmem_weighted > 0 else 0.0
+            )
+        else:
+            developed_share = 0.0
+            us_within_developed = 0.0
 
-        # now let's look at regional split: us vs. ex-us vs. emerging markets
-        # Scale us_within_developed by the developed_share so that US is proportional to the total_value
+        if regional_value > 0:
+            self._dmem_visualizer = plotter(
+                data={
+                    "Developed Markets": developed_share,
+                    "Emerging Markets": 1.0 - developed_share,
+                },
+                title="{}: Developed Markets vs. Emerging Markets".format(self._name),
+                closing_title="Value: {:.2f}".format(self._value),
+            )
+
+            self._usavn_visualizer = plotter(
+                data={
+                    "US": us_within_developed,
+                    "Ex-US": 1.0 - us_within_developed,
+                },
+                title="{}: US vs. Ex-US (within developed markets)".format(self._name),
+                closing_title="Value: {:.2f}".format(self._value),
+            )
+        else:
+            self._dmem_visualizer = None
+            self._usavn_visualizer = None
+
+        # Geosplit: regional wedges (scaled) + labeled position groups
         self._geosplit_data = {
-            "Equity US": us_within_developed * developed_share,
-            "Equity Ex-US": (1.0 - us_within_developed) * developed_share,
-            "Equity Emrg. Markets": 1.0 - developed_share,
+            "Equity US": us_within_developed * developed_share * scale_regional,
+            "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
+            "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
         }
+        for group in self._labeled_groups:
+            if group.total_value > 0:
+                self._geosplit_data[group.short_name] = self._geosplit_data.get(group.short_name, 0.0) + group.total_value / self._value
+
         self._geosplit_visualizer = plotter(
             data=self._geosplit_data,
             title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
@@ -70,10 +88,16 @@ class RegionalPortfolio(Portfolio):
         )
 
     def plot_dmem(self) -> None:
-        self._dmem_visualizer.plot()
+        if self._dmem_visualizer is not None:
+            self._dmem_visualizer.plot()
+        else:
+            logger.warning("No dmem visualizer set for portfolio %r; skipping plot", self._name)
 
     def plot_usavn(self) -> None:
-        self._usavn_visualizer.plot()
+        if self._usavn_visualizer is not None:
+            self._usavn_visualizer.plot()
+        else:
+            logger.warning("No usavn visualizer set for portfolio %r; skipping plot", self._name)
 
     def __add__(self, other: 'Portfolio') -> 'Portfolio':
         if not isinstance(other, RegionalPortfolio):
@@ -83,10 +107,30 @@ class RegionalPortfolio(Portfolio):
         merged._name = f"{self._name} + {other._name}"
         merged._positions = self._positions + other._positions
         merged._value = self._value + other._value
-        merged._dmem = list(self._dmem or []) + list(other._dmem or [])
-        merged._usavn = list(self._usavn or []) + list(other._usavn or [])
-        # Plain associative union: every position's mass enters exactly once,
-        # at its home portfolio via rows or constituent wedges.
+
+        # Partition merged positions
+        merged._labeled_groups, merged._regional_positions = merged._partition_and_group_labeled()
+
+        # DMEM/USAVN from regional positions only
+        labeled_value = sum(g.total_value for g in merged._labeled_groups)
+        regional_value = merged._value - labeled_value
+        if regional_value > 0:
+            regional_values = np.asarray([p.value for p in merged._regional_positions], dtype=float)
+            regional_dmem = np.asarray([p.dmem for p in merged._regional_positions], dtype=float)
+            regional_usavn = np.asarray([p.usavn for p in merged._regional_positions], dtype=float)
+            developed_share = float(np.dot(regional_values, regional_dmem)) / regional_value
+            dmem_weighted = float(np.dot(regional_values, regional_dmem))
+            us_within_developed = (
+                float(np.dot(regional_values, regional_usavn)) / dmem_weighted if dmem_weighted > 0 else 0.0
+            )
+        else:
+            developed_share = 0.0
+            us_within_developed = 0.0
+
+        merged._dmem = [p.dmem for p in merged._regional_positions]
+        merged._usavn = [p.usavn for p in merged._regional_positions]
+
+        # Sectors unchanged (uses all positions)
         merged._sectors = self._merged_sector_union(other, merged._value)
         merged._sector_visualizer = merged._make_sector_visualizer(
             merged._name, merged._value, merged._sector_chart_data()
@@ -97,16 +141,19 @@ class RegionalPortfolio(Portfolio):
             other._name,
             merged._sectors,
         )
-        total = merged._value
-        keys = self._geosplit_data.keys() | other._geosplit_data.keys()
+
+        # Recompute geosplit_data from scratch
+        scale_regional = regional_value / merged._value if merged._value > 0 else 0.0
         merged._geosplit_data = {
-            k: (
-                self._value * self._geosplit_data.get(k, 0.0)
-                + other._value * other._geosplit_data.get(k, 0.0)
-            ) / total
-            if total > 0 else 0.0
-            for k in keys
+            "Equity US": us_within_developed * developed_share * scale_regional,
+            "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
+            "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
         }
+        for group in merged._labeled_groups:
+            if group.total_value > 0:
+                merged._geosplit_data[group.short_name] = merged._geosplit_data.get(group.short_name, 0.0) + group.total_value / merged._value
+
+        # Merge visualizers via PieChart.__add__
         for attr in ("_dmem_visualizer", "_usavn_visualizer", "_geosplit_visualizer"):
             sv, ov = getattr(self, attr, None), getattr(other, attr, None)
             if sv is not None and ov is not None:
