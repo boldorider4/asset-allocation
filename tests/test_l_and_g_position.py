@@ -18,6 +18,7 @@ from position.l_and_g_position import (
     _LANDG_PRODUCT_EXISTS,
     _LANDG_SHARECLASS,
     _LANDG_SECTOR_PART_ID,
+    _LANDG_PORTFOLIO_PART_ID,
     landg_product_url_exists,
 )
 from context import AppConfig, RuntimeContext
@@ -166,22 +167,15 @@ class TestLandGCountryHtml(unittest.TestCase):
                 {"name": "Bermuda", "weight_pct": 0.6},
                 {"name": "Other", "weight_pct": 0.01},
             ],
-        )
-
+)
+    
     def test_skips_empty_country_tables(self) -> None:
         self.assertEqual(
             LAndGPosition._countries_from_portfolio_html("<html></html>"),
             [],
         )
-
-
-def test_skips_empty_country_tables(self) -> None:
-        self.assertEqual(
-            LAndGPosition._countries_from_portfolio_html("<html></html>"),
-            [],
-        )
-
-
+    
+    
 class TestLandGSectorHtml(unittest.TestCase):
     def test_sums_by_sector_and_maps_canonical(self) -> None:
         rows = LAndGPosition._sectors_from_portfolio_html(
@@ -193,8 +187,8 @@ class TestLandGSectorHtml(unittest.TestCase):
                 {"name": "Finance", "weight_pct": 44.9},
                 {"name": "Real Estate", "weight_pct": 17.9},
                 {"name": "Industrials", "weight_pct": 11.7},
-                {"name": "Healthcare", "weight_pct": 8.5},
                 {"name": "Consumer", "weight_pct": 10.6},  # Consumer Discretionary + Consumer Staples
+                {"name": "Healthcare", "weight_pct": 8.5},
                 {"name": "Telecommunication", "weight_pct": 2.8},
                 {"name": "Materials", "weight_pct": 1.6},
                 {"name": "Utilities", "weight_pct": 1.6},
@@ -358,6 +352,7 @@ class TestLandGFactoryRouting(unittest.TestCase):
 
 class TestLandGSectorFetch(unittest.TestCase):
     def setUp(self) -> None:
+        _LANDG_SHARECLASS.clear()
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
         tmp = Path(self._tmpdir.name)
@@ -389,23 +384,53 @@ class TestLandGSectorFetch(unittest.TestCase):
             JustETFPosition, "_fetch_countries_with_retries", return_value=[]
         )
 
-    def _mock_sector_html(self, listing: dict, part_html: bytes):
+    def _mock_sector_http_get(self, listing: dict, part_html: bytes):
+        """Return a mock for urllib.request.urlopen that handles listing, country, and sector requests."""
         listing_body = json.dumps(listing).encode()
+        country_html = _portfolio_html()
+        sector_html = part_html
 
-        def opener(req, timeout=None):
+        def mock_urlopen(req, timeout=None):
             url = req.full_url if hasattr(req, "full_url") else str(req)
             if "fund-centre/" in url and "part?" not in url:
-                return _response(json.dumps(listing).encode())
-            if f"part_id={_LANDG_SECTOR_PART_ID}" in url:
-                return _response(part_html, content_type="text/html")
-            return _response(b"<html></html>", content_type="text/html")
+                resp = MagicMock()
+                resp.status = 200
+                resp.headers = {"Content-Type": "application/json"}
+                resp.read.return_value = listing_body
+                resp.__enter__.return_value = resp
+                resp.__exit__.return_value = False
+                return resp
+            # The L&G part URLs use `id=` parameter, not `part_id=`
+            if f"id={_LANDG_PORTFOLIO_PART_ID}" in url:
+                resp = MagicMock()
+                resp.status = 200
+                resp.headers = {"Content-Type": "text/html"}
+                resp.read.return_value = country_html
+                resp.__enter__.return_value = resp
+                resp.__exit__.return_value = False
+                return resp
+            if f"id={_LANDG_SECTOR_PART_ID}" in url:
+                resp = MagicMock()
+                resp.status = 200
+                resp.headers = {"Content-Type": "text/html"}
+                resp.read.return_value = sector_html
+                resp.__enter__.return_value = resp
+                resp.__exit__.return_value = False
+                return resp
+            resp = MagicMock()
+            resp.status = 200
+            resp.headers = {"Content-Type": "text/html"}
+            resp.read.return_value = b"<html></html>"
+            resp.__enter__.return_value = resp
+            resp.__exit__.return_value = False
+            return resp
 
-        return opener
+        return mock_urlopen
 
     def test_parses_sector_html(self) -> None:
         with patch(
-            "urllib.request.urlopen",
-            side_effect=self._mock_sector_html(_LISTING, _sector_html()),
+            "position.l_and_g_position.urllib.request.urlopen",
+            side_effect=self._mock_sector_http_get(_LISTING, _sector_html()),
         ):
             with patch.object(LAndGPosition, "_fast_info_price", return_value=12.0):
                 pos = LAndGPosition(
@@ -417,24 +442,25 @@ class TestLandGSectorFetch(unittest.TestCase):
                 {"name": "Finance", "weight_pct": 44.9},
                 {"name": "Real Estate", "weight_pct": 17.9},
                 {"name": "Industrials", "weight_pct": 11.7},
-                {"name": "Healthcare", "weight_pct": 8.5},
                 {"name": "Consumer", "weight_pct": 10.6},
+                {"name": "Healthcare", "weight_pct": 8.5},
                 {"name": "Telecommunication", "weight_pct": 2.8},
                 {"name": "Materials", "weight_pct": 1.6},
                 {"name": "Utilities", "weight_pct": 1.6},
                 {"name": "Technology", "weight_pct": 0.4},
             ],
-        )
-
+)
+        
     def test_sector_fallback_to_justetf(self) -> None:
         with patch(
-            "urllib.request.urlopen",
-            side_effect=self._mock_sector_html(_LISTING, b"<html></html>"),
+            "position.l_and_g_position.urllib.request.urlopen",
+            side_effect=self._mock_sector_http_get(_LISTING, b"<html></html>"),
         ):
             with patch.object(LAndGPosition, "_fast_info_price", return_value=12.0):
-                pos = LAndGPosition(
-                    _ISIN, name="L&G Asia Pacific ex Japan ESG Paris Aligned", shares=1, ctx=self.ctx
-                )
+                with patch.object(JustETFPosition, "_fetch_sectors_with_retries", return_value=[]):
+                    pos = LAndGPosition(
+                        _ISIN, name="L&G Asia Pacific ex Japan ESG Paris Aligned", shares=1, ctx=self.ctx
+                    )
         # Falls back to JustETF sector scrape (which returns empty in mock)
         self.assertEqual(pos.sectors(), [])
 
