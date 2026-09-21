@@ -5,9 +5,14 @@ import io
 import logging
 import urllib.error
 import urllib.request
+from typing import TYPE_CHECKING
 
 from logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
+from position.position import fold_unknown_sector_label
+
+if TYPE_CHECKING:
+    from context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -93,7 +98,60 @@ def ishares_product_url_exists(isin: str) -> bool:
 
 
 class BlackRockPosition(JustETFPosition):
-    """JustETF quotes with country weights from the iShares holdings CSV."""
+    """JustETF quotes with country and sector weights from the iShares holdings CSV."""
+
+    _ISHARES_SECTOR_CANONICAL: dict[str, str] = {
+        "Information Technology": "Technology",
+        "Health Care": "Healthcare",
+        "Consumer Discretionary": "Consumer",
+        "Consumer Staples": "Consumer",
+        "Financials": "Finance",
+        "Communication Services": "Telecommunication",
+        "Communication": "Telecommunication",
+        "Industrials": "Industrials",
+        "Materials": "Materials",
+        "Real Estate": "Real Estate",
+        "Energy": "Commodities",
+        "Utilities": "Utilities",
+        "Sovereign": "Government",
+        "Government Related": "Government",
+        "Cash and/or Derivatives": "Other",
+        "Cash & Derivatives": "Other",
+    }
+
+    def __init__(
+        self, isin: str,
+        name: str | None = None,
+        short_name: str | None = None,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+        dmem_other: float | None = None,
+        cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
+        price: float | None = None,
+        prefer_scrape_value: bool = False,
+        ctx: RuntimeContext | None = None,
+    ) -> None:
+        self._holdings_csv: str | None = None
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
+            price=price,
+            prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
+        )
 
     @staticmethod
     def _parse_weight_pct(raw: str) -> float | None:
@@ -170,6 +228,44 @@ class BlackRockPosition(JustETFPosition):
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])
         ]
 
+    @staticmethod
+    def _sectors_from_holdings_csv(text: str) -> list[dict[str, float | str]]:
+        """Sum iShares holdings rows by Sector into JustETF-shaped rows."""
+        reader = csv.reader(io.StringIO(text))
+        header: list[str] | None = None
+        for record in reader:
+            if "Sector" in record and any(col.startswith("Weight") for col in record):
+                header = record
+                break
+        if header is None:
+            return []
+        try:
+            sector_i = header.index("Sector")
+            weight_i = next(
+                i for i, col in enumerate(header) if col.startswith("Weight")
+            )
+        except (ValueError, StopIteration):
+            return []
+        weights: dict[str, float] = {}
+        for record in reader:
+            if BlackRockPosition._is_disclaimer_row(record):
+                break
+            if len(record) <= max(sector_i, weight_i):
+                continue
+            raw_sector = record[sector_i].strip()
+            if not raw_sector:
+                continue
+            weight = BlackRockPosition._parse_weight_pct(record[weight_i])
+            if weight is None or weight <= 0:
+                continue
+            canonical = BlackRockPosition._ISHARES_SECTOR_CANONICAL.get(raw_sector, raw_sector)
+            canonical = fold_unknown_sector_label(canonical)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
+
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
         url = _ishares_holdings_url(self._isin)
         if not url:
@@ -190,6 +286,7 @@ class BlackRockPosition(JustETFPosition):
                         f"iShares holdings for {self._isin} is not CSV ({content_type})"
                     )
                 body = resp.read().decode("utf-8-sig", errors="replace")
+            self._holdings_csv = body
             rows = self._countries_from_holdings_csv(body)
         except urllib.error.HTTPError as e:
             raise RuntimeError(
@@ -206,3 +303,10 @@ class BlackRockPosition(JustETFPosition):
         if not rows:
             logger.warning("iShares: no country weights in holdings for %s", self._isin)
         return rows
+
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        if self._holdings_csv is not None:
+            logger.info("BlackRock: using cached holdings CSV for sectors (saved a fucking network call)")
+            return self._sectors_from_holdings_csv(self._holdings_csv)
+        logger.warning("BlackRock: no cached CSV, falling back to JustETF sector scrape")
+        return super()._http_sector_dist_json()

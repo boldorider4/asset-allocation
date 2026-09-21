@@ -92,6 +92,49 @@ class TestHoldingsCsvAggregation(unittest.TestCase):
             ],
         )
 
+    def test_sectors_from_holdings_csv(self) -> None:
+        payload = """Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Location
+AAPL,Apple,Information Technology,Equity,1,15.00,United States
+MSFT,Microsoft,Information Technology,Equity,1,10.00,United States
+JNJ,Johnson & Johnson,Health Care,Equity,1,8.00,United States
+JPM,JPMorgan,Financials,Equity,1,5.00,United States
+BRK.B,Berkshire,Financials,Equity,1,3.00,United States
+"""
+        rows = BlackRockPosition._sectors_from_holdings_csv(payload)
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 25.0},
+                {"name": "Healthcare", "weight_pct": 8.0},
+                {"name": "Finance", "weight_pct": 8.0},
+            ],
+        )
+
+    def test_sectors_cash_and_derivatives_maps_to_other(self) -> None:
+        payload = """Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Location
+AAPL,Apple,Information Technology,Equity,1,10.00,United States
+USD,USD CASH,Cash and/or Derivatives,Cash,1,2.00,United States
+"""
+        rows = BlackRockPosition._sectors_from_holdings_csv(payload)
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 10.0},
+                {"name": "Other", "weight_pct": 2.0},
+            ],
+        )
+
+    def test_sectors_discards_zero_weight(self) -> None:
+        payload = """Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Location
+AAPL,Apple,Information Technology,Equity,1,10.00,United States
+ZERO,Zero Corp,Health Care,Equity,1,0.00,United States
+"""
+        rows = BlackRockPosition._sectors_from_holdings_csv(payload)
+        self.assertEqual(
+            rows,
+            [{"name": "Technology", "weight_pct": 10.0}],
+        )
+
 
 class TestIsharesProductUrl(unittest.TestCase):
     def setUp(self) -> None:
