@@ -17,6 +17,7 @@ from position.l_and_g_position import (
     LAndGPosition,
     _LANDG_PRODUCT_EXISTS,
     _LANDG_SHARECLASS,
+    _LANDG_SECTOR_PART_ID,
     landg_product_url_exists,
 )
 from context import AppConfig, RuntimeContext
@@ -56,6 +57,35 @@ _COUNTRY_ROWS = [
     ["Bermuda", "0.6"],
     ["Cash", "0.01"],
 ]
+
+_SECTOR_ROWS = [
+    ["Financials", "44.9"],
+    ["Real Estate", "17.9"],
+    ["Industrials", "11.7"],
+    ["Health Care", "8.5"],
+    ["Consumer Discretionary", "6.1"],
+    ["Consumer Staples", "4.5"],
+    ["Communication Services", "2.8"],
+    ["Materials", "1.6"],
+    ["Utilities", "1.6"],
+    ["Information Technology", "0.4"],
+]
+
+
+def _sector_html(rows: list[list[str]] | None = None) -> bytes:
+    payload = json.dumps(rows if rows is not None else _SECTOR_ROWS)
+    return (
+        "<div>"
+        '<data data-key="sector" data-title="Sector (%)" data-component="sector">'
+        '<div data-part_id="12761">'
+        f'<script type="application/json" class="data">{payload}</script>'
+        "</div>"
+        '<div data-part_id="12602">'
+        '<script type="application/json" class="data">[]</script>'
+        "</div>"
+        "</data>"
+        "</div>"
+    ).encode()
 
 
 def _portfolio_html(rows: list[list[str]] | None = None) -> bytes:
@@ -141,6 +171,52 @@ class TestLandGCountryHtml(unittest.TestCase):
     def test_skips_empty_country_tables(self) -> None:
         self.assertEqual(
             LAndGPosition._countries_from_portfolio_html("<html></html>"),
+            [],
+        )
+
+
+def test_skips_empty_country_tables(self) -> None:
+        self.assertEqual(
+            LAndGPosition._countries_from_portfolio_html("<html></html>"),
+            [],
+        )
+
+
+class TestLandGSectorHtml(unittest.TestCase):
+    def test_sums_by_sector_and_maps_canonical(self) -> None:
+        rows = LAndGPosition._sectors_from_portfolio_html(
+            _sector_html().decode()
+        )
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Finance", "weight_pct": 44.9},
+                {"name": "Real Estate", "weight_pct": 17.9},
+                {"name": "Industrials", "weight_pct": 11.7},
+                {"name": "Healthcare", "weight_pct": 8.5},
+                {"name": "Consumer", "weight_pct": 10.6},  # Consumer Discretionary + Consumer Staples
+                {"name": "Telecommunication", "weight_pct": 2.8},
+                {"name": "Materials", "weight_pct": 1.6},
+                {"name": "Utilities", "weight_pct": 1.6},
+                {"name": "Technology", "weight_pct": 0.4},
+            ],
+        )
+
+    def test_maps_cash_to_other(self) -> None:
+        rows = LAndGPosition._sectors_from_portfolio_html(
+            _sector_html([["Cash", "0.5"], ["Information Technology", "99.5"]]).decode()
+        )
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 99.5},
+                {"name": "Other", "weight_pct": 0.5},
+            ],
+        )
+
+    def test_skips_empty_sector_tables(self) -> None:
+        self.assertEqual(
+            LAndGPosition._sectors_from_portfolio_html("<html></html>"),
             [],
         )
 
@@ -278,6 +354,97 @@ class TestLandGFactoryRouting(unittest.TestCase):
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, LAndGPosition)
+
+
+class TestLandGSectorFetch(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        tmp = Path(self._tmpdir.name)
+        self.ctx = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_sectorsplit=True,
+                fetch_prices=False,
+                cache_file=tmp / "cache.json",
+                assets_file=tmp / "assets.json",
+            )
+        )
+        self.ctx.cache = {}
+        self.ctx.cache_loaded = True
+
+    def _factory(self, **kwargs):
+        defaults = {
+            "isin": _ISIN,
+            "name": "L&G Asia Pacific ex Japan ESG Paris Aligned UCITS ETF",
+            "shares": 1,
+            "price": 10.0,
+        }
+        defaults.update(kwargs)
+        defaults["ctx"] = self.ctx
+        return factory(**defaults)
+
+    def _no_country_scrape(self):
+        return patch.object(
+            JustETFPosition, "_fetch_countries_with_retries", return_value=[]
+        )
+
+    def _mock_sector_html(self, listing: dict, part_html: bytes):
+        listing_body = json.dumps(listing).encode()
+
+        def opener(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "fund-centre/" in url and "part?" not in url:
+                return _response(json.dumps(listing).encode())
+            if f"part_id={_LANDG_SECTOR_PART_ID}" in url:
+                return _response(part_html, content_type="text/html")
+            return _response(b"<html></html>", content_type="text/html")
+
+        return opener
+
+    def test_parses_sector_html(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=self._mock_sector_html(_LISTING, _sector_html()),
+        ):
+            with patch.object(LAndGPosition, "_fast_info_price", return_value=12.0):
+                pos = LAndGPosition(
+                    _ISIN, name="L&G Asia Pacific ex Japan ESG Paris Aligned", shares=1, ctx=self.ctx
+                )
+        self.assertEqual(
+            pos.sectors(),
+            [
+                {"name": "Finance", "weight_pct": 44.9},
+                {"name": "Real Estate", "weight_pct": 17.9},
+                {"name": "Industrials", "weight_pct": 11.7},
+                {"name": "Healthcare", "weight_pct": 8.5},
+                {"name": "Consumer", "weight_pct": 10.6},
+                {"name": "Telecommunication", "weight_pct": 2.8},
+                {"name": "Materials", "weight_pct": 1.6},
+                {"name": "Utilities", "weight_pct": 1.6},
+                {"name": "Technology", "weight_pct": 0.4},
+            ],
+        )
+
+    def test_sector_fallback_to_justetf(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=self._mock_sector_html(_LISTING, b"<html></html>"),
+        ):
+            with patch.object(LAndGPosition, "_fast_info_price", return_value=12.0):
+                pos = LAndGPosition(
+                    _ISIN, name="L&G Asia Pacific ex Japan ESG Paris Aligned", shares=1, ctx=self.ctx
+                )
+        # Falls back to JustETF sector scrape (which returns empty in mock)
+        self.assertEqual(pos.sectors(), [])
+
+    def test_without_fetch_sectorsplit_skips_sector_scrape(self) -> None:
+        self.ctx.config.fetch_sectorsplit = False
+        with patch("position.factory.landg_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory()
+        # The position is created but sector scrape is skipped
+        self.assertEqual(pos.sectors(), [])
 
 
 if __name__ == "__main__":
