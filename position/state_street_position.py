@@ -189,18 +189,22 @@ class StateStreetPosition(JustETFPosition):
         rows = payload.get("attrArray")
         if not isinstance(rows, list):
             return []
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             raw_name = StateStreetPosition._row_name(row)
             if not isinstance(raw_name, str) or not raw_name.strip():
                 continue
-            # Map to canonical sector names (Cash -> Other)
-            canonical = JustETFPosition._canonical_sector_name(raw_name.strip())
             weight = StateStreetPosition._row_weight(row)
             if weight is None or weight <= 0:
                 continue
+            raw_weights[raw_name.strip()] = raw_weights.get(raw_name.strip(), 0.0) + weight
+        logger.info("StateStreet: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            # Map to canonical sector names (Cash -> Other)
+            canonical = JustETFPosition._canonical_sector_name(name)
             weights[canonical] = weights.get(canonical, 0.0) + weight
         return [
             {"name": name, "weight_pct": weight}

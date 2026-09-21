@@ -246,7 +246,7 @@ class BlackRockPosition(JustETFPosition):
             )
         except (ValueError, StopIteration):
             return []
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for record in reader:
             if BlackRockPosition._is_disclaimer_row(record):
                 break
@@ -258,6 +258,10 @@ class BlackRockPosition(JustETFPosition):
             weight = BlackRockPosition._parse_weight_pct(record[weight_i])
             if weight is None or weight <= 0:
                 continue
+            raw_weights[raw_sector] = raw_weights.get(raw_sector, 0.0) + weight
+        logger.info("BlackRock: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for raw_sector, weight in raw_weights.items():
             canonical = BlackRockPosition._ISHARES_SECTOR_CANONICAL.get(raw_sector, raw_sector)
             canonical = fold_unknown_sector_label(canonical)
             weights[canonical] = weights.get(canonical, 0.0) + weight

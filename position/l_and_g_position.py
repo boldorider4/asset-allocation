@@ -358,7 +358,7 @@ class LAndGPosition(JustETFPosition):
         payload = json.loads(raw)
         if not isinstance(payload, list):
             return []
-        pairs: list[tuple[str, float]] = []
+        raw_pairs: list[tuple[str, float]] = []
         for row in payload:
             if not isinstance(row, list) or len(row) < 2:
                 continue
@@ -368,6 +368,10 @@ class LAndGPosition(JustETFPosition):
             weight = LAndGPosition._weight_pct(weight_raw)
             if weight is None or weight <= 0:
                 continue
+            raw_pairs.append((name.strip(), weight))
+        logger.info("L&G: detected raw sectors: %r", raw_pairs)
+        pairs: list[tuple[str, float]] = []
+        for name, weight in raw_pairs:
             pairs.append((LAndGPosition._display_sector(name), weight))
         return pairs
 

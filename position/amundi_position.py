@@ -261,7 +261,7 @@ class AmundiPosition(JustETFPosition):
             data = breakdown.get("breakDownData") or []
             if not data:
                 continue
-            weights: dict[str, float] = {}
+            raw_weights: dict[str, float] = {}
             for row in data:
                 if not isinstance(row, dict):
                     continue
@@ -276,6 +276,10 @@ class AmundiPosition(JustETFPosition):
                     weight = AmundiPosition._weight_to_pct(row.get("adjustedWeight"))
                 if weight is None:
                     continue
+                raw_weights[name] = raw_weights.get(name, 0.0) + weight
+            logger.info("Amundi: detected raw sectors: %r", raw_weights)
+            weights: dict[str, float] = {}
+            for name, weight in raw_weights.items():
                 canonical = JustETFPosition._canonical_sector_name(name)
                 weights[canonical] = weights.get(canonical, 0.0) + weight
             if weights:

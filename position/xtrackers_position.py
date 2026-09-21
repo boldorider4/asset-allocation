@@ -197,7 +197,7 @@ class XtrackersPosition(JustETFPosition):
         if not tables:
             return []
         values = tables[0].get("values") or []
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for row in values:
             if not isinstance(row, dict):
                 continue
@@ -207,12 +207,16 @@ class XtrackersPosition(JustETFPosition):
             name = raw_name.strip()
             if not name:
                 continue
-            # Map DWS "Unknown" to canonical "Other"
-            if name == "Unknown":
-                name = "Other"
             weight = XtrackersPosition._field_sort_value(row, "column_1")
             if weight is None:
                 continue
+            raw_weights[name] = raw_weights.get(name, 0.0) + weight
+        logger.info("Xtrackers: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            # Map DWS "Unknown" to canonical "Other"
+            if name == "Unknown":
+                name = "Other"
             # Map to canonical sector names via JustETF logic
             canonical = JustETFPosition._canonical_sector_name(name)
             weights[canonical] = weights.get(canonical, 0.0) + weight

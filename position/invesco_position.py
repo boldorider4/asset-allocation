@@ -336,18 +336,22 @@ class InvescoPosition(JustETFPosition):
         rows = payload.get("holdingWeights")
         if not isinstance(rows, list):
             return []
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             raw_name = row.get("name")
             if not isinstance(raw_name, str) or not raw_name.strip():
                 continue
-            # Map camelCase sector labels to canonical names via JustETF logic
-            canonical = JustETFPosition._canonical_sector_name(raw_name.strip())
             weight = InvescoPosition._weight_pct(row.get("value"))
             if weight is None or weight <= 0:
                 continue
+            raw_weights[raw_name.strip()] = raw_weights.get(raw_name.strip(), 0.0) + weight
+        logger.info("Invesco: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            # Map camelCase sector labels to canonical names via JustETF logic
+            canonical = JustETFPosition._canonical_sector_name(name)
             weights[canonical] = weights.get(canonical, 0.0) + weight
         return [
             {"name": name, "weight_pct": weight}

@@ -439,12 +439,16 @@ class JustETFPosition(Position):
         )
 
     def _sectors_from_html_table(self, html: str) -> list[dict[str, float | str]]:
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for name, pct_s in self._SECTOR_ROW_RE.findall(html):
-            canonical = self._canonical_sector_name(name)
-            weights[canonical] = weights.get(canonical, 0.0) + float(
+            raw_weights[name.strip()] = raw_weights.get(name.strip(), 0.0) + float(
                 pct_s.replace(",", "")
             )
+        logger.info("JustETF: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            canonical = self._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
         return [
             {"name": name, "weight_pct": weight}
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])
