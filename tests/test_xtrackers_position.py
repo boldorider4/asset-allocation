@@ -31,26 +31,32 @@ _HOLDINGS = {
                 {
                     "column_1": {"value": "15.00%", "sortValue": 15.0},
                     "column_3": {"value": "Taiwan"},
+                    "column_4": {"value": "Information Technology"},
                 },
                 {
                     "column_1": {"value": "13.04%", "sortValue": 13.04},
                     "column_3": {"value": "Taiwan"},
+                    "column_4": {"value": "Information Technology"},
                 },
                 {
                     "column_1": {"value": "21.77%", "sortValue": 21.77},
                     "column_3": {"value": "Korea, Republic of"},
+                    "column_4": {"value": "Financials"},
                 },
                 {
                     "column_1": {"value": "2.00%", "sortValue": 2.0},
                     "column_3": {"value": "--"},
+                    "column_4": {"value": "Unknown"},
                 },
                 {
                     "column_1": {"value": "1.00%", "sortValue": 1.0},
                     "column_3": {"value": "--"},
+                    "column_4": {"value": "Consumer Discretionary"},
                 },
                 {
                     "column_1": {"value": "0.01%", "sortValue": 0.01},
                     "column_3": {"value": ""},
+                    "column_4": {"value": "Energy"},
                 },
             ]
         }
@@ -95,6 +101,46 @@ class TestHoldingsJsonAggregation(unittest.TestCase):
             XtrackersPosition._countries_from_holdings_json(payload),
             [{"name": "India", "weight_pct": 10.5}],
         )
+
+
+class TestHoldingsJsonSectorAggregation(unittest.TestCase):
+    def test_sectors_from_holdings_json(self) -> None:
+        rows = XtrackersPosition._sectors_from_holdings_json(_HOLDINGS)
+        # Mapped to canonical: Information Technology->Technology, Financials->Finance,
+        # Unknown->Other, Consumer Discretionary->Consumer, Energy->Commodities
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 28.04},
+                {"name": "Finance", "weight_pct": 21.77},
+                {"name": "Other", "weight_pct": 2.0},
+                {"name": "Consumer", "weight_pct": 1.0},
+                {"name": "Commodities", "weight_pct": 0.01},
+            ],
+        )
+
+    def test_sectors_maps_unknown_to_other(self) -> None:
+        payload = {
+            "tables": [
+                {
+                    "values": [
+                        {
+                            "column_1": {"value": "10.0%", "sortValue": 10.0},
+                            "column_4": {"value": "Unknown"},
+                        }
+                    ]
+                }
+            ]
+        }
+        rows = XtrackersPosition._sectors_from_holdings_json(payload)
+        self.assertEqual(
+            rows,
+            [{"name": "Other", "weight_pct": 10.0}],
+        )
+
+    def test_sectors_empty_tables(self) -> None:
+        self.assertEqual(XtrackersPosition._sectors_from_holdings_json({"tables": []}), [])
+        self.assertEqual(XtrackersPosition._sectors_from_holdings_json({}), [])
 
 
 class TestDwsProductUrl(unittest.TestCase):

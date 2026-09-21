@@ -62,7 +62,6 @@ def dws_product_url_exists(isin: str) -> bool:
         exists = False
         logger.warning("DWS product URL check failed for %s (%s)", isin, e)
     except OSError as e:
-        # Read timeouts, resets, DNS/SSL failures: bail to cached data.
         exists = False
         logger.warning("DWS product URL check connection failed for %s (%s)", isin, e)
     _DWS_PRODUCT_EXISTS[isin] = exists
@@ -70,7 +69,7 @@ def dws_product_url_exists(isin: str) -> bool:
 
 
 class XtrackersPosition(JustETFPosition):
-    """JustETF quotes with country weights from the DWS Xtrackers holdings API."""
+    """JustETF quotes with country and sector weights from the DWS Xtrackers holdings API."""
 
     ISINS: frozenset[str] = frozenset(
         {
@@ -86,6 +85,41 @@ class XtrackersPosition(JustETFPosition):
         "client-id": "passive-frontend",
         "Origin": "https://etf.dws.com",
     }
+
+    def __init__(
+        self,
+        isin: str,
+        name: str | None = None,
+        short_name: str | None = None,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+        dmem_other: float | None = None,
+        cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
+        price: float | None = None,
+        prefer_scrape_value: bool = False,
+        ctx: Any = None,
+    ) -> None:
+        self._holdings_payload: dict[str, Any] | None = None
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
+            price=price,
+            prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
+        )
 
     @staticmethod
     def _slug_from_dws_product_url(final_url: str) -> str | None:
@@ -154,6 +188,39 @@ class XtrackersPosition(JustETFPosition):
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])
         ]
 
+    @staticmethod
+    def _sectors_from_holdings_json(
+        payload: dict[str, Any],
+    ) -> list[dict[str, float | str]]:
+        """Sum DWS holdings rows by ``column_4`` sector into JustETF-shaped rows."""
+        tables = payload.get("tables") or []
+        if not tables:
+            return []
+        values = tables[0].get("values") or []
+        weights: dict[str, float] = {}
+        for row in values:
+            if not isinstance(row, dict):
+                continue
+            raw_name = XtrackersPosition._field_value(row, "column_4")
+            if not isinstance(raw_name, str):
+                continue
+            name = raw_name.strip()
+            if not name:
+                continue
+            # Map DWS "Unknown" to canonical "Other"
+            if name == "Unknown":
+                name = "Other"
+            weight = XtrackersPosition._field_sort_value(row, "column_1")
+            if weight is None:
+                continue
+            # Map to canonical sector names via JustETF logic
+            canonical = JustETFPosition._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
+
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
         try:
             slug, product_url = self._fetch_dws_slug()
@@ -175,6 +242,29 @@ class XtrackersPosition(JustETFPosition):
             logger.warning("DWS: no country weights in holdings for %s", self._isin)
         return rows
 
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        logger.info("DWS: fetching sectors from holdings for %s", self._isin)
+        try:
+            slug, product_url = self._fetch_dws_slug()
+            payload = self._http_holdings_json(slug, product_url)
+            rows = self._sectors_from_holdings_json(payload)
+            if rows:
+                return rows
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"DWS HTTP {e.code} while fetching sectors for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"DWS connection failed while fetching sectors for {self._isin}: {e}"
+            ) from e
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError) as e:
+            raise RuntimeError(
+                f"DWS holdings parse failed for {self._isin}: {e}"
+            ) from e
+        logger.warning("DWS: no sector weights in holdings for %s, falling back to JustETF", self._isin)
+        return super()._http_sector_dist_json()
+
     def _fetch_dws_slug(self) -> tuple[str, str]:
         url = _dws_product_url(self._isin)
         req = urllib.request.Request(
@@ -193,6 +283,8 @@ class XtrackersPosition(JustETFPosition):
         return slug, final_url
 
     def _http_holdings_json(self, slug: str, product_url: str) -> dict[str, Any]:
+        if self._holdings_payload is not None:
+            return self._holdings_payload
         url = _DWS_HOLDINGS_URL.format(slug=slug)
         headers = {
             **self._DWS_API_HEADERS,
@@ -207,4 +299,5 @@ class XtrackersPosition(JustETFPosition):
             raise RuntimeError(
                 f"DWS holdings JSON for {self._isin} is not an object"
             )
+        self._holdings_payload = payload
         return payload
