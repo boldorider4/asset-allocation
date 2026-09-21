@@ -5,6 +5,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
+from typing import Any
 
 from logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
@@ -30,6 +31,8 @@ _LANDG_PART_URL = (
 )
 # Shared ETF fund-page canvas: Portfolio → Currency/Country → Country (%).
 _LANDG_PORTFOLIO_PART_ID = 12618
+# Sector breakdown canvas on the same fund page.
+_LANDG_SECTOR_PART_ID = 12035
 _LANDG_EXISTS_TIMEOUT_S = 10
 _LANDG_FETCH_TIMEOUT_S = 30
 
@@ -42,6 +45,11 @@ _LANDG_CENTRES: tuple[dict[str, int], ...] = (
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _COUNTRY_DATA_RE = re.compile(
     r'data-key="country"[^>]*>[\s\S]*?'
+    r'<script type="application/json" class="data">\s*(\[[\s\S]*?\])\s*</script>',
+    re.IGNORECASE,
+)
+_SECTOR_DATA_RE = re.compile(
+    r'data-key="sector"[^>]*>[\s\S]*?'
     r'<script type="application/json" class="data">\s*(\[[\s\S]*?\])\s*</script>',
     re.IGNORECASE,
 )
@@ -200,9 +208,43 @@ def landg_product_url_exists(isin: str) -> bool:
 
 
 class LAndGPosition(JustETFPosition):
-    """JustETF quotes with country weights from the L&G fund-centre Country (%) table."""
+    """JustETF quotes with country and sector weights from the L&G fund-centre."""
 
     ISINS: frozenset[str] = frozenset({"IE000Z9UVQ99"})
+
+    def __init__(
+        self,
+        isin: str,
+        name: str | None = None,
+        short_name: str | None = None,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+        dmem_other: float | None = None,
+        cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
+        price: float | None = None,
+        prefer_scrape_value: bool = False,
+        ctx: Any = None,
+    ) -> None:
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
+            price=price,
+            prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
+        )
 
     @staticmethod
     def _display_country(raw_name: str) -> str:
@@ -304,3 +346,81 @@ class LAndGPosition(JustETFPosition):
         if not rows:
             logger.warning("L&G: no Country (%%) weights for %s", self._isin)
         return rows
+
+    @staticmethod
+    def _display_sector(raw_name: str) -> str:
+        """Map raw sector name to canonical staple sector name."""
+        return JustETFPosition._canonical_sector_name(raw_name.strip())
+
+    @staticmethod
+    def _pairs_from_sector_json(raw: str) -> list[tuple[str, float]]:
+        """Parse sector JSON rows (same structure as country JSON)."""
+        payload = json.loads(raw)
+        if not isinstance(payload, list):
+            return []
+        pairs: list[tuple[str, float]] = []
+        for row in payload:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            name, weight_raw = row[0], row[1]
+            if not isinstance(name, str) or not name.strip():
+                continue
+            weight = LAndGPosition._weight_pct(weight_raw)
+            if weight is None or weight <= 0:
+                continue
+            pairs.append((LAndGPosition._display_sector(name), weight))
+        return pairs
+
+    @staticmethod
+    def _sectors_from_portfolio_html(
+        html_text: str,
+    ) -> list[dict[str, float | str]]:
+        weights: dict[str, float] = {}
+        for match in _SECTOR_DATA_RE.finditer(html_text):
+            pairs = LAndGPosition._pairs_from_sector_json(match.group(1))
+            if pairs:
+                for name, weight in pairs:
+                    weights[name] = weights.get(name, 0.0) + weight
+                break
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
+
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        logger.info("L&G: fetching Sector canvas for %s", self._isin)
+        try:
+            ids = _resolve_shareclass(self._isin, _LANDG_FETCH_TIMEOUT_S)
+            if ids is None:
+                raise RuntimeError(f"L&G listing has no share class for {self._isin}")
+            # Override part_id for sector canvas
+            ids["part_id"] = _LANDG_SECTOR_PART_ID
+            url = _part_url(ids)
+            logger.info("L&G: fetching Sector canvas from %s", url)
+            status, _content_type, raw = _http_get(
+                url,
+                _LANDG_FETCH_TIMEOUT_S,
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            if not (200 <= status < 400):
+                raise RuntimeError(
+                    f"L&G HTTP {status} while fetching sectors for {self._isin}"
+                )
+            html_text = raw.decode("utf-8", errors="replace")
+            rows = LAndGPosition._sectors_from_portfolio_html(html_text)
+            if rows:
+                return rows
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"L&G HTTP {e.code} while fetching sectors for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"L&G connection failed while fetching sectors for {self._isin}: {e}"
+            ) from e
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
+            raise RuntimeError(
+                f"L&G sector parse failed for {self._isin}: {e}"
+            ) from e
+        logger.warning("L&G: no Sector weights for %s, falling back to JustETF", self._isin)
+        return super()._http_sector_dist_json()
