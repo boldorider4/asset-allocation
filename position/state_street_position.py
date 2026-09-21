@@ -6,6 +6,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
+from typing import Any
 
 from logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
@@ -26,6 +27,10 @@ _SSGA_FETCH_TIMEOUT_S = 30
 
 _GEO_INPUT_RE = re.compile(
     r'id="fund-geographical-breakdown"\s+value="([^"]*)"',
+    re.IGNORECASE,
+)
+_SECTOR_INPUT_RE = re.compile(
+    r'id="fund-sector-breakdown"\s+value="([^"]*)"',
     re.IGNORECASE,
 )
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -119,9 +124,44 @@ def ssga_product_url_exists(isin: str) -> bool:
 
 
 class StateStreetPosition(JustETFPosition):
-    """JustETF quotes with country weights from the SSGA geographical JSON."""
+    """JustETF quotes with country and sector weights from the SSGA page."""
 
     ISINS: frozenset[str] = frozenset(_SSGA_PRODUCT_SLUGS)
+
+    def __init__(
+        self,
+        isin: str,
+        name: str | None = None,
+        short_name: str | None = None,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+        dmem_other: float | None = None,
+        cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
+        price: float | None = None,
+        prefer_scrape_value: bool = False,
+        ctx: Any = None,
+    ) -> None:
+        self._html_payload: str | None = None
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
+            price=price,
+            prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
+        )
 
     @staticmethod
     def _geo_payload_from_html(html_text: str) -> dict[str, object] | None:
@@ -131,6 +171,45 @@ class StateStreetPosition(JustETFPosition):
         raw = html.unescape(match.group(1))
         payload = json.loads(raw)
         return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _sector_payload_from_html(html_text: str) -> dict[str, object] | None:
+        match = _SECTOR_INPUT_RE.search(html_text)
+        if not match:
+            return None
+        raw = html.unescape(match.group(1))
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _sectors_from_geo_json(
+        payload: dict[str, object],
+    ) -> list[dict[str, float | str]]:
+        """Read sector attrArray into JustETF-shaped rows."""
+        rows = payload.get("attrArray")
+        if not isinstance(rows, list):
+            return []
+        raw_weights: dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_name = StateStreetPosition._row_name(row)
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                continue
+            weight = StateStreetPosition._row_weight(row)
+            if weight is None or weight <= 0:
+                continue
+            raw_weights[raw_name.strip()] = raw_weights.get(raw_name.strip(), 0.0) + weight
+        logger.info("StateStreet: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            # Map to canonical sector names (Cash -> Other)
+            canonical = JustETFPosition._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
 
     @staticmethod
     def _display_country(raw_name: str) -> str:
@@ -212,19 +291,24 @@ class StateStreetPosition(JustETFPosition):
             raise RuntimeError(f"SSGA product URL is unknown for {self._isin}")
         logger.info("SSGA: fetching geographical weights from %s", url)
         try:
-            status, _content_type, raw = _http_product_html(
-                url, _SSGA_FETCH_TIMEOUT_S
-            )
-            if not (200 <= status < 400):
-                raise RuntimeError(
-                    f"SSGA HTTP {status} while fetching countries for {self._isin}"
+            if self._html_payload is not None:
+                html_text = self._html_payload
+                payload = StateStreetPosition._geo_payload_from_html(html_text)
+            else:
+                status, _content_type, raw = _http_product_html(
+                    url, _SSGA_FETCH_TIMEOUT_S
                 )
-            html_text = raw.decode("utf-8", errors="replace")
-            payload = StateStreetPosition._geo_payload_from_html(html_text)
-            if payload is None:
-                raise RuntimeError(
-                    f"SSGA geographical JSON missing for {self._isin}"
-                )
+                if not (200 <= status < 400):
+                    raise RuntimeError(
+                        f"SSGA HTTP {status} while fetching countries for {self._isin}"
+                    )
+                html_text = raw.decode("utf-8", errors="replace")
+                payload = StateStreetPosition._geo_payload_from_html(html_text)
+                if payload is None:
+                    raise RuntimeError(
+                        f"SSGA geographical JSON missing for {self._isin}"
+                    )
+                self._html_payload = html_text
             rows = StateStreetPosition._countries_from_geo_json(payload)
         except urllib.error.HTTPError as e:
             raise RuntimeError(
@@ -243,3 +327,42 @@ class StateStreetPosition(JustETFPosition):
                 "SSGA: no country weights in geographical JSON for %s", self._isin
             )
         return rows
+
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        logger.info("SSGA: fetching sector breakdown for %s", self._isin)
+        try:
+            if self._html_payload is not None:
+                payload = StateStreetPosition._sector_payload_from_html(self._html_payload)
+            else:
+                url = _ssga_product_url(self._isin)
+                if not url:
+                    raise RuntimeError(f"SSGA product URL is unknown for {self._isin}")
+                status, _content_type, raw = _http_product_html(
+                    url, _SSGA_FETCH_TIMEOUT_S
+                )
+                if not (200 <= status < 400):
+                    raise RuntimeError(
+                        f"SSGA HTTP {status} while fetching sectors for {self._isin}"
+                    )
+                html_text = raw.decode("utf-8", errors="replace")
+                payload = StateStreetPosition._sector_payload_from_html(html_text)
+                self._html_payload = html_text
+
+            if payload is not None:
+                rows = StateStreetPosition._sectors_from_geo_json(payload)
+                if rows:
+                    return rows
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"SSGA HTTP {e.code} while fetching sectors for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"SSGA connection failed while fetching sectors for {self._isin}: {e}"
+            ) from e
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
+            raise RuntimeError(
+                f"SSGA sector parse failed for {self._isin}: {e}"
+            ) from e
+        logger.warning("SSGA: no sector weights for %s, falling back to JustETF", self._isin)
+        return super()._http_sector_dist_json()

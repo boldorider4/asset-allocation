@@ -23,6 +23,10 @@ _INVESCO_COUNTRY_URL = (
     "https://dng-api.invesco.com/cache/v1/accounts/{locale}/shareclasses/{isin}"
     "/weightedHoldings/index?idType=isin&breakdown=country"
 )
+_INVESCO_SECTOR_URL = (
+    "https://dng-api.invesco.com/cache/v1/accounts/{locale}/shareclasses/{isin}"
+    "/weightedHoldings/index?idType=isin&breakdown=sector"
+)
 _INVESCO_HOLDINGS_URL = (
     "https://dng-api.invesco.com/cache/v1/accounts/{locale}/shareclasses/{isin}"
     "/holdings/index?idType=isin"
@@ -80,6 +84,10 @@ def _invesco_country_url(isin: str) -> str:
     return _INVESCO_COUNTRY_URL.format(locale=_INVESCO_LOCALE, isin=isin)
 
 
+def _invesco_sector_url(isin: str) -> str:
+    return _INVESCO_SECTOR_URL.format(locale=_INVESCO_LOCALE, isin=isin)
+
+
 def _invesco_holdings_url(isin: str) -> str:
     return _INVESCO_HOLDINGS_URL.format(locale=_INVESCO_LOCALE, isin=isin)
 
@@ -105,6 +113,10 @@ def _http_json(url: str, timeout_s: float) -> tuple[int, str | None, bytes]:
 
 def _http_country_json(isin: str, timeout_s: float) -> tuple[int, str | None, bytes]:
     return _http_json(_invesco_country_url(isin), timeout_s)
+
+
+def _http_sector_json(isin: str, timeout_s: float) -> tuple[int, str | None, bytes]:
+    return _http_json(_invesco_sector_url(isin), timeout_s)
 
 
 def _http_holdings_json(isin: str, timeout_s: float) -> tuple[int, str | None, bytes]:
@@ -163,7 +175,7 @@ def invesco_product_url_exists(isin: str) -> bool:
 
 
 class InvescoPosition(JustETFPosition):
-    """JustETF quotes with country weights from Invesco index or holdings JSON."""
+    """JustETF quotes with country and sector weights from Invesco index or holdings JSON."""
 
     ISINS: frozenset[str] = frozenset(
         {
@@ -171,6 +183,42 @@ class InvescoPosition(JustETFPosition):
             "IE000PJL7R74",
         }
     )
+
+    def __init__(
+        self,
+        isin: str,
+        name: str | None = None,
+        short_name: str | None = None,
+        shares: float | None = None,
+        value: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        usavn: float | None = None,
+        dmem_other: float | None = None,
+        cached_countries: dict[str, float] | None = None,
+        cached_sectors: dict[str, float] | None = None,
+        price: float | None = None,
+        prefer_scrape_value: bool = False,
+        ctx: Any = None,
+    ) -> None:
+        self._country_payload: dict[str, object] | None = None
+        self._sector_payload: dict[str, object] | None = None
+        super().__init__(
+            isin,
+            name=name,
+            short_name=short_name,
+            shares=shares,
+            value=value,
+            broker=broker,
+            dmem=dmem,
+            usavn=usavn,
+            dmem_other=dmem_other,
+            cached_countries=cached_countries,
+            cached_sectors=cached_sectors,
+            price=price,
+            prefer_scrape_value=prefer_scrape_value,
+            ctx=ctx,
+        )
 
     @staticmethod
     def _payload_matches_isin(payload: object, isin: str) -> bool:
@@ -278,6 +326,39 @@ class InvescoPosition(JustETFPosition):
         ]
 
     @staticmethod
+    def _sectors_from_weighted_json(
+        payload: dict[str, object],
+        isin: str,
+    ) -> list[dict[str, float | str]]:
+        """Read sector holdingWeights into JustETF-shaped rows."""
+        if not InvescoPosition._payload_matches_isin(payload, isin):
+            return []
+        rows = payload.get("holdingWeights")
+        if not isinstance(rows, list):
+            return []
+        raw_weights: dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_name = row.get("name")
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                continue
+            weight = InvescoPosition._weight_pct(row.get("value"))
+            if weight is None or weight <= 0:
+                continue
+            raw_weights[raw_name.strip()] = raw_weights.get(raw_name.strip(), 0.0) + weight
+        logger.info("Invesco: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            # Map camelCase sector labels to canonical names via JustETF logic
+            canonical = JustETFPosition._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
+        return [
+            {"name": name, "weight_pct": weight}
+            for name, weight in sorted(weights.items(), key=lambda item: -item[1])
+        ]
+
+    @staticmethod
     def _countries_from_constituents_json(
         payload: dict[str, object],
     ) -> list[dict[str, float | str]]:
@@ -324,7 +405,14 @@ class InvescoPosition(JustETFPosition):
 
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
         try:
+            if self._country_payload is not None:
+                rows = InvescoPosition._countries_from_holdings_json(
+                    self._country_payload, self._isin
+                )
+                if rows:
+                    return rows
             country_payload = self._load_json_object(_invesco_country_url(self._isin))
+            self._country_payload = country_payload
             rows = InvescoPosition._countries_from_holdings_json(
                 country_payload, self._isin
             )
@@ -357,3 +445,34 @@ class InvescoPosition(JustETFPosition):
                 self._isin,
             )
         return rows
+
+    def _http_sector_dist_json(self) -> list[dict[str, float | str]]:
+        logger.info("Invesco: fetching sector breakdown for %s", self._isin)
+        try:
+            if self._sector_payload is not None:
+                rows = InvescoPosition._sectors_from_weighted_json(
+                    self._sector_payload, self._isin
+                )
+                if rows:
+                    return rows
+            sector_payload = self._load_json_object(_invesco_sector_url(self._isin))
+            self._sector_payload = sector_payload
+            rows = InvescoPosition._sectors_from_weighted_json(
+                sector_payload, self._isin
+            )
+            if rows:
+                return rows
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(
+                f"Invesco HTTP {e.code} while fetching sectors for {self._isin}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"Invesco connection failed while fetching sectors for {self._isin}: {e}"
+            ) from e
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, KeyError) as e:
+            raise RuntimeError(
+                f"Invesco sector parse failed for {self._isin}: {e}"
+            ) from e
+        logger.warning("Invesco: no sector weights for %s, falling back to JustETF", self._isin)
+        return super()._http_sector_dist_json()

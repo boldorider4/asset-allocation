@@ -123,18 +123,38 @@ class JustETFPosition(Position):
     # taxonomy fold into "Other" via _fold_unknown_sector_label.
     _SECTOR_CANONICAL_NAMES = {
         "Financials": "Finance",
+        "financials": "Finance",
         "Communication Services": "Telecommunication",
+        "Communication": "Telecommunication",
+        "communicationServices": "Telecommunication",
         "Consumer Non-Cyclicals": "Consumer",
         "Consumer Staples": "Consumer",
+        "consumerStaples": "Consumer",
         "Consumer Cyclicals": "Consumer",
         "Consumer Discretionary": "Consumer",
+        "consumerDiscretionary": "Consumer",
         "Consumer Services": "Consumer",
         "Sovereign": "Government",
         "Non-Corporate": "Government",
         "Government Agencies": "Government",
         "Municipal": "Government",
+        "Government": "Government",
         "Energy": "Commodities",
+        "energy": "Commodities",
         "Non-Energy Materials": "Materials",
+        "Information Technology": "Technology",
+        "informationTechnology": "Technology",
+        "Health Care": "Healthcare",
+        "healthCare": "Healthcare",
+        "Industrials": "Industrials",
+        "industrials": "Industrials",
+        "Materials": "Materials",
+        "Real Estate": "Real Estate",
+        "realEstate": "Real Estate",
+        "Utilities": "Utilities",
+        "Others": "Other",
+        "other": "Other",
+        "Other": "Other",
     }
     _RETRIES = 10
     _DELAY_S = 0.1
@@ -419,12 +439,16 @@ class JustETFPosition(Position):
         )
 
     def _sectors_from_html_table(self, html: str) -> list[dict[str, float | str]]:
-        weights: dict[str, float] = {}
+        raw_weights: dict[str, float] = {}
         for name, pct_s in self._SECTOR_ROW_RE.findall(html):
-            canonical = self._canonical_sector_name(name)
-            weights[canonical] = weights.get(canonical, 0.0) + float(
+            raw_weights[name.strip()] = raw_weights.get(name.strip(), 0.0) + float(
                 pct_s.replace(",", "")
             )
+        logger.info("JustETF: detected raw sectors: %r", raw_weights)
+        weights: dict[str, float] = {}
+        for name, weight in raw_weights.items():
+            canonical = self._canonical_sector_name(name)
+            weights[canonical] = weights.get(canonical, 0.0) + weight
         return [
             {"name": name, "weight_pct": weight}
             for name, weight in sorted(weights.items(), key=lambda item: -item[1])

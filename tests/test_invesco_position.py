@@ -34,6 +34,23 @@ _HOLDINGS = {
         {"name": "UnitedKingdom", "value": 0.0},
     ],
 }
+
+_SECTORS = {
+    "isin": _ISIN,
+    "effectiveDate": "2026-07-31",
+    "holdingWeights": [
+        {"name": "informationTechnology", "value": 37.1},
+        {"name": "financials", "value": 13.2},
+        {"name": "healthCare", "value": 11.3},
+        {"name": "communicationServices", "value": 11.3},
+        {"name": "industrials", "value": 8.9},
+        {"name": "consumerStaples", "value": 4.9},
+        {"name": "consumerDiscretionary", "value": 4.9},
+        {"name": "energy", "value": 2.6},
+        {"name": "realEstate", "value": 2.2},
+        {"name": "other", "value": 3.4},
+    ],
+}
 _CONSTITUENTS = {
     "effectiveDate": "2026-09-11",
     "holdings": [
@@ -80,6 +97,37 @@ class TestHoldingsJsonAggregation(unittest.TestCase):
             [],
         )
         self.assertEqual(InvescoPosition._countries_from_holdings_json({}, _ISIN), [])
+
+
+class TestSectorsJsonAggregation(unittest.TestCase):
+    def test_sectors_from_weighted_json(self) -> None:
+        rows = InvescoPosition._sectors_from_weighted_json(_SECTORS, _ISIN)
+        # Mapped to canonical: informationTechnology->Technology, financials->Finance,
+        # healthCare->Healthcare, communicationServices->Telecommunication,
+        # industrials->Industrials, consumerStaples->Consumer, consumerDiscretionary->Consumer,
+        # energy->Commodities, realEstate->RealEstate, other->Other
+        # Sorted by weight descending
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 37.1},
+                {"name": "Finance", "weight_pct": 13.2},
+                {"name": "Healthcare", "weight_pct": 11.3},
+                {"name": "Telecommunication", "weight_pct": 11.3},
+                {"name": "Consumer", "weight_pct": 9.8},  # consumerStaples + consumerDiscretionary
+                {"name": "Industrials", "weight_pct": 8.9},
+                {"name": "Other", "weight_pct": 3.4},
+                {"name": "Commodities", "weight_pct": 2.6},
+                {"name": "Real Estate", "weight_pct": 2.2},
+            ],
+        )
+
+    def test_wrong_isin_or_empty_payload(self) -> None:
+        self.assertEqual(
+            InvescoPosition._sectors_from_weighted_json(_SECTORS, "IE00XXXXXXX1"),
+            [],
+        )
+        self.assertEqual(InvescoPosition._sectors_from_weighted_json({}, _ISIN), [])
 
     def test_sums_constituents_by_isin_prefix(self) -> None:
         rows = InvescoPosition._countries_from_constituents_json(_CONSTITUENTS)
@@ -170,6 +218,7 @@ class TestInvescoCountryFetch(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 fetch_geosplit=True,
+                fetch_sectorsplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
                 assets_file=tmp / "assets.json",
@@ -195,12 +244,37 @@ class TestInvescoCountryFetch(unittest.TestCase):
             ],
         )
 
+    def test_parses_sector_json(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[_json_response(_HOLDINGS), _json_response(_SECTORS)],
+        ):
+            with patch.object(InvescoPosition, "_fast_info_price", return_value=12.0):
+                pos = InvescoPosition(
+                    _ISIN, name="Invesco S&P 500 Scored & Screened", shares=1, ctx=self.ctx
+                )
+        self.assertEqual(
+            pos.sectors(),
+            [
+                {"name": "Technology", "weight_pct": 37.1},
+                {"name": "Finance", "weight_pct": 13.2},
+                {"name": "Healthcare", "weight_pct": 11.3},
+                {"name": "Telecommunication", "weight_pct": 11.3},
+                {"name": "Consumer", "weight_pct": 9.8},
+                {"name": "Industrials", "weight_pct": 8.9},
+                {"name": "Other", "weight_pct": 3.4},
+                {"name": "Commodities", "weight_pct": 2.6},
+                {"name": "Real Estate", "weight_pct": 2.2},
+            ],
+        )
+
     def test_falls_back_to_holdings_isins_when_country_empty(self) -> None:
         with patch(
             "urllib.request.urlopen",
             side_effect=[
                 _json_response({}),
                 _json_response(_CONSTITUENTS),
+                _json_response({}),  # sector fallback returns empty
             ],
         ):
             with patch.object(InvescoPosition, "_fast_info_price", return_value=12.0):
