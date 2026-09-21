@@ -210,7 +210,7 @@ def landg_product_url_exists(isin: str) -> bool:
 class LAndGPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from the L&G fund-centre."""
 
-    ISINS: frozenset[str] = frozenset({"IE000Z9UVQ99"})
+    ISINS: frozenset[str] = frozenset({"IE000Z9UVQ99", "IE00BFXR5W90"})
 
     def __init__(
         self,
