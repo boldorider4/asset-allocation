@@ -57,12 +57,32 @@ _GEO = {
     ],
 }
 
+_SECTOR = {
+    "label": "Fund Sector Allocation",
+    "asOfDate": "as of 18 Sep 2026",
+    "attrArray": [
+        {"name": {"label": "Sector", "value": "Industrials"}, "weight": {"label": "Weight", "value": "23,86%", "originalValue": "23.858768"}},
+        {"name": {"label": "Sector", "value": "Financials"}, "weight": {"label": "Weight", "value": "15,37%", "originalValue": "15.368496"}},
+        {"name": {"label": "Sector", "value": "Information Technology"}, "weight": {"label": "Weight", "value": "14,87%", "originalValue": "14.873416"}},
+        {"name": {"label": "Sector", "value": "Health Care"}, "weight": {"label": "Weight", "value": "10,14%", "originalValue": "10.138749"}},
+        {"name": {"label": "Sector", "value": "Consumer Discretionary"}, "weight": {"label": "Weight", "value": "9,82%", "originalValue": "9.815022"}},
+        {"name": {"label": "Sector", "value": "Real Estate"}, "weight": {"label": "Weight", "value": "7,09%", "originalValue": "7.087757"}},
+        {"name": {"label": "Sector", "value": "Materials"}, "weight": {"label": "Weight", "value": "5,84%", "originalValue": "5.844839"}},
+        {"name": {"label": "Sector", "value": "Energy"}, "weight": {"label": "Weight", "value": "5,26%", "originalValue": "5.259488"}},
+        {"name": {"label": "Sector", "value": "Consumer Staples"}, "weight": {"label": "Weight", "value": "3,16%", "originalValue": "3.155771"}},
+        {"name": {"label": "Sector", "value": "Utilities"}, "weight": {"label": "Weight", "value": "3,07%", "originalValue": "3.066129"}},
+        {"name": {"label": "Sector", "value": "Communication Services"}, "weight": {"label": "Weight", "value": "1,53%", "originalValue": "1.531566"}},
+        {"name": {"label": "Sector", "value": "Cash"}, "weight": {"label": "Weight", "value": "0,01%", "originalValue": "0.01"}},
+    ],
+}
+
 
 def _html_page(payload: dict) -> bytes:
     encoded = html.escape(json.dumps(payload), quote=True)
     return (
         "<html><body>"
         f'<input type="hidden" id="fund-geographical-breakdown" value="{encoded}"/>'
+        f'<input type="hidden" id="fund-sector-breakdown" value="{encoded}"/>'
         "</body></html>"
     ).encode()
 
@@ -106,6 +126,45 @@ class TestGeoJsonAggregation(unittest.TestCase):
         self.assertEqual(
             StateStreetPosition._countries_from_geo_json(payload)[0]["name"],
             "United States",
+        )
+
+
+class TestSectorJsonAggregation(unittest.TestCase):
+    def test_sectors_from_geo_json(self) -> None:
+        rows = StateStreetPosition._sectors_from_geo_json(_SECTOR)
+        # Mapped to canonical: Information Technology->Technology, Financials->Finance,
+        # Health Care->Healthcare, Consumer Discretionary->Consumer, Consumer Staples->Consumer,
+        # Real Estate->Real Estate, Materials->Materials, Energy->Commodities, Consumer Staples->Consumer,
+        # Utilities->Utilities, Communication Services->Telecommunication, Cash->Other
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Industrials", "weight_pct": 23.858768},
+                {"name": "Finance", "weight_pct": 15.368496},
+                {"name": "Technology", "weight_pct": 14.873416},
+                {"name": "Consumer", "weight_pct": 12.970793},  # Consumer Discretionary + Consumer Staples
+                {"name": "Healthcare", "weight_pct": 10.138749},
+                {"name": "Real Estate", "weight_pct": 7.087757},
+                {"name": "Materials", "weight_pct": 5.844839},
+                {"name": "Commodities", "weight_pct": 5.259488},
+                {"name": "Utilities", "weight_pct": 3.066129},
+                {"name": "Telecommunication", "weight_pct": 1.531566},
+                {"name": "Other", "weight_pct": 0.01},
+            ],
+        )
+
+    def test_empty_or_invalid_payload(self) -> None:
+        self.assertEqual(StateStreetPosition._sectors_from_geo_json({}), [])
+        self.assertIsNone(StateStreetPosition._sector_payload_from_html("<html></html>"))
+
+    def test_parses_sector_hidden_input_from_html(self) -> None:
+        payload = StateStreetPosition._sector_payload_from_html(
+            _html_page(_SECTOR).decode()
+        )
+        self.assertEqual(payload["label"], "Fund Sector Allocation")
+        self.assertEqual(
+            StateStreetPosition._sectors_from_geo_json(payload)[0]["name"],
+            "Industrials",
         )
 
 
@@ -173,6 +232,7 @@ class TestSsgaCountryFetch(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 fetch_geosplit=True,
+                fetch_sectorsplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
                 assets_file=tmp / "assets.json",
@@ -200,6 +260,34 @@ class TestSsgaCountryFetch(unittest.TestCase):
                 {"name": "United States", "weight_pct": 99.558113},
                 {"name": "Canada", "weight_pct": 0.441887},
                 {"name": "South Korea", "weight_pct": 0.1},
+                {"name": "Other", "weight_pct": 0.01},
+            ],
+        )
+
+    def test_parses_sector_html(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_html_response(_html_page(_SECTOR)),
+        ):
+            with patch.object(
+                StateStreetPosition, "_fast_info_price", return_value=12.0
+            ):
+                pos = StateStreetPosition(
+                    _ISIN, name="State Street SPDR S&P 400 U.S. Mid Cap", shares=1, ctx=self.ctx
+                )
+        self.assertEqual(
+            pos.sectors(),
+            [
+                {"name": "Industrials", "weight_pct": 23.858768},
+                {"name": "Finance", "weight_pct": 15.368496},
+                {"name": "Technology", "weight_pct": 14.873416},
+                {"name": "Consumer", "weight_pct": 12.970793},
+                {"name": "Healthcare", "weight_pct": 10.138749},
+                {"name": "Real Estate", "weight_pct": 7.087757},
+                {"name": "Materials", "weight_pct": 5.844839},
+                {"name": "Commodities", "weight_pct": 5.259488},
+                {"name": "Utilities", "weight_pct": 3.066129},
+                {"name": "Telecommunication", "weight_pct": 1.531566},
                 {"name": "Other", "weight_pct": 0.01},
             ],
         )
