@@ -49,6 +49,39 @@ _PRODUCTS = {
     ]
 }
 
+_PRODUCTS_WITH_SECTORS = {
+    "products": [
+        {
+            "productId": _ISIN,
+            "characteristics": {"ISIN": _ISIN},
+            "breakDowns": [
+                {
+                    "aggregationField": "FUND_COUNTRIES",
+                    "breakDownData": [
+                        {"aggregationName": "United States", "weight": 0.72},
+                        {"aggregationName": "Taiwan", "weight": 0.15},
+                    ],
+                },
+                {
+                    "aggregationField": "FUND_SECTORS",
+                    "breakDownData": [
+                        {"aggregationName": "Information Technology", "weight": 0.25},
+                        {"aggregationName": "Financials", "weight": 0.20},
+                        {"aggregationName": "Health Care", "weight": 0.15},
+                        {"aggregationName": "Consumer Discretionary", "weight": 0.10},
+                        {"aggregationName": "Communication Services", "weight": 0.08},
+                        {"aggregationName": "Consumer Staples", "weight": 0.07},
+                        {"aggregationName": "Energy", "weight": 0.05},
+                        {"aggregationName": "Others", "weight": 0.04},
+                        {"aggregationName": "Industrials", "weight": 0.03},
+                        {"aggregationName": "Materials", "weight": 0.02},
+                    ],
+                },
+            ],
+        }
+    ]
+}
+
 
 def _http_error(url: str, code: int) -> urllib.error.HTTPError:
     return urllib.error.HTTPError(url, code, "error", {}, BytesIO(b""))
@@ -107,6 +140,78 @@ class TestFundCountriesAggregation(unittest.TestCase):
             AmundiPosition._countries_from_products_json(payload, _ISIN),
             [{"name": "France", "weight_pct": 10.5}],
         )
+
+
+class TestFundSectorsAggregation(unittest.TestCase):
+    def test_sectors_from_products_json(self) -> None:
+        rows = AmundiPosition._sectors_from_products_json(_PRODUCTS_WITH_SECTORS, _ISIN)
+        # Mapped to canonical names: Information Technology->Technology, Financials->Finance,
+        # Health Care->Healthcare, Consumer Discretionary->Consumer, Communication Services->Telecommunication,
+        # Consumer Staples->Consumer, Energy->Commodities, Others->Other
+        # Sorted by weight descending: Technology(25), Finance(20), Consumer(17), Healthcare(15), ...
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 25.0},
+                {"name": "Finance", "weight_pct": 20.0},
+                {"name": "Consumer", "weight_pct": 17.0},  # Consumer Discretionary + Consumer Staples
+                {"name": "Healthcare", "weight_pct": 15.0},
+                {"name": "Telecommunication", "weight_pct": 8.0},
+                {"name": "Commodities", "weight_pct": 5.0},
+                {"name": "Other", "weight_pct": 4.0},
+                {"name": "Industrials", "weight_pct": 3.0},
+                {"name": "Materials", "weight_pct": 2.0},
+            ],
+        )
+
+    def test_sectors_maps_others_to_other(self) -> None:
+        payload = {
+            "products": [
+                {
+                    "productId": _ISIN,
+                    "breakDowns": [
+                        {
+                            "aggregationField": "FUND_SECTORS",
+                            "breakDownData": [
+                                {"aggregationName": "Others", "weight": 0.10},
+                                {"aggregationName": "Information Technology", "weight": 0.90},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        rows = AmundiPosition._sectors_from_products_json(payload, _ISIN)
+        self.assertEqual(
+            rows,
+            [
+                {"name": "Technology", "weight_pct": 90.0},
+                {"name": "Other", "weight_pct": 10.0},
+            ],
+        )
+
+    def test_sectors_empty_products(self) -> None:
+        self.assertEqual(
+            AmundiPosition._sectors_from_products_json({"products": []}, _ISIN),
+            [],
+        )
+        self.assertEqual(AmundiPosition._sectors_from_products_json({}, _ISIN), [])
+
+    def test_sectors_missing_field_returns_empty(self) -> None:
+        payload = {
+            "products": [
+                {
+                    "productId": _ISIN,
+                    "breakDowns": [
+                        {
+                            "aggregationField": "FUND_COUNTRIES",
+                            "breakDownData": [{"aggregationName": "US", "weight": 1.0}],
+                        }
+                    ],
+                }
+            ]
+        }
+        self.assertEqual(AmundiPosition._sectors_from_products_json(payload, _ISIN), [])
 
 
 class TestAmundiProductExists(unittest.TestCase):

@@ -124,6 +124,7 @@ class JustETFPosition(Position):
     _SECTOR_CANONICAL_NAMES = {
         "Financials": "Finance",
         "Communication Services": "Telecommunication",
+        "Communication": "Telecommunication",
         "Consumer Non-Cyclicals": "Consumer",
         "Consumer Staples": "Consumer",
         "Consumer Cyclicals": "Consumer",
@@ -133,8 +134,17 @@ class JustETFPosition(Position):
         "Non-Corporate": "Government",
         "Government Agencies": "Government",
         "Municipal": "Government",
+        "Government": "Government",
         "Energy": "Commodities",
         "Non-Energy Materials": "Materials",
+        "Information Technology": "Technology",
+        "Health Care": "Healthcare",
+        "Industrials": "Industrials",
+        "Materials": "Materials",
+        "Real Estate": "Real Estate",
+        "Utilities": "Utilities",
+        "Others": "Other",
+        "Other": "Other",
     }
     _RETRIES = 10
     _DELAY_S = 0.1
