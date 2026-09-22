@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Dashboard endpoint for the web visualizer.
 
 Serves the visualizer directory like ``python -m http.server``, plus a

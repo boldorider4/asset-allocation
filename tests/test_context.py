@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """AppConfig / RuntimeContext: unified config + isolated per-run state."""
 
 from __future__ import annotations

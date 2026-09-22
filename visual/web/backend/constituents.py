@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Constituents view: read-only rendering of the assets file.
 
 Separated from the ``asalloc update`` execution path by design: this module

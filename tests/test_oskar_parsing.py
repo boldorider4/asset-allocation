@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for OSKAR DOM row merge and category resolution (no Playwright)."""
 
 from __future__ import annotations

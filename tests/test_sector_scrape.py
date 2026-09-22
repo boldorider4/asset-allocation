@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """JustETF sector scrape: parsing, failure fallback, and cache behavior."""
 
 from __future__ import annotations

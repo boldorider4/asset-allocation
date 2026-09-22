@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """WebChart raw payloads, merge parity with PieChart, and example files."""
 
 from __future__ import annotations

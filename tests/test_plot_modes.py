@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Clear/incognito plot passes: template titles, per-pass factors and dirs."""
 
 from __future__ import annotations

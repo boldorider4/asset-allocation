@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 OSKAR portfolio positions (JustETF pricing) plus a Playwright-based client for the
 logged-in cockpit «Aktuelle Gewichtung» ETF list.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """iShares holdings CSV country aggregation and BlackRock factory routing."""
 
 from __future__ import annotations

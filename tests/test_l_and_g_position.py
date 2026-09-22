@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """L&G fund-centre Country (%) aggregation and factory routing."""
 
 from __future__ import annotations
