@@ -135,6 +135,9 @@ class CacheEntry(DictRow):
 
     @staticmethod
     def _coerce_split(value: Any, *, field: str, key: str) -> dict[str, float]:
+        # Strict: split rows are normalized at assembly (see
+        # ``position.normalize_split_rows``), so anything outside [0, 1]
+        # here is a genuine error, not source rounding.
         if not isinstance(value, dict):
             raise TypeError(f"row {key!r} field {field!r} must be an object")
         out: dict[str, float] = {}

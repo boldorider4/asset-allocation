@@ -234,14 +234,15 @@ class TestInvescoCountryFetch(unittest.TestCase):
                 pos = InvescoPosition(
                     _ISIN, name="Invesco S&P 500 Scored & Screened", shares=1, ctx=self.ctx
                 )
+        # Fixture rows sum to 100.06: normalized to 100 at assembly.
         self.assertEqual(
             pos.countries(),
             [
-                {"name": "United States", "weight_pct": 99.7},
-                {"name": "Switzerland", "weight_pct": 0.2},
-                {"name": "Netherlands", "weight_pct": 0.1},
-                {"name": "South Korea", "weight_pct": 0.05},
-                {"name": "Other", "weight_pct": 0.01},
+                {"name": "United States", "weight_pct": 99.64021587047772},
+                {"name": "Switzerland", "weight_pct": 0.19988007195682592},
+                {"name": "Netherlands", "weight_pct": 0.09994003597841296},
+                {"name": "South Korea", "weight_pct": 0.04997001798920648},
+                {"name": "Other", "weight_pct": 0.009994003597841295},
             ],
         )
 
@@ -254,18 +255,19 @@ class TestInvescoCountryFetch(unittest.TestCase):
                 pos = InvescoPosition(
                     _ISIN, name="Invesco S&P 500 Scored & Screened", shares=1, ctx=self.ctx
                 )
+        # Fixture rows sum past 100: normalized to 100 at assembly.
         self.assertEqual(
             pos.sectors(),
             [
-                {"name": "Technology", "weight_pct": 37.1},
-                {"name": "Finance", "weight_pct": 13.2},
-                {"name": "Healthcare", "weight_pct": 11.3},
-                {"name": "Telecommunication", "weight_pct": 11.3},
-                {"name": "Consumer", "weight_pct": 9.8},
-                {"name": "Industrials", "weight_pct": 8.9},
-                {"name": "Other", "weight_pct": 3.4},
-                {"name": "Commodities", "weight_pct": 2.6},
-                {"name": "Real Estate", "weight_pct": 2.2},
+                {"name": "Technology", "weight_pct": 37.1743486973948},
+                {"name": "Finance", "weight_pct": 13.226452905811623},
+                {"name": "Healthcare", "weight_pct": 11.322645290581164},
+                {"name": "Telecommunication", "weight_pct": 11.322645290581164},
+                {"name": "Consumer", "weight_pct": 9.819639278557116},
+                {"name": "Industrials", "weight_pct": 8.917835671342687},
+                {"name": "Other", "weight_pct": 3.4068136272545093},
+                {"name": "Commodities", "weight_pct": 2.6052104208416837},
+                {"name": "Real Estate", "weight_pct": 2.204408817635271},
             ],
         )
 

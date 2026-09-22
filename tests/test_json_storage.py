@@ -82,6 +82,22 @@ class TestDictRow(unittest.TestCase):
         with self.assertRaises(TypeError):
             CacheEntry.from_dict("IE00X", ["not", "a", "dict"])
 
+    def test_out_of_range_weights_rejected(self) -> None:
+        # Strict: split rows are normalized at Position assembly (see
+        # ``position.normalize_split_rows``), so anything outside [0, 1]
+        # here is a genuine error — including near misses from source
+        # rounding, which must never reach the store unnormalized.
+        with self.assertRaises(ValueError):
+            CacheEntry(
+                "IE00BFNM3L97", {"countries": {"Japan": 1.0003000000000006}}
+            )
+        with self.assertRaises(ValueError):
+            CacheEntry("IE00X", {"sectors": {"Tech": -0.0002}})
+        with self.assertRaises(ValueError):
+            CacheEntry("IE00X", {"countries": {"France": 1.5}})
+        with self.assertRaises(ValueError):
+            CacheEntry("IE00X", {"countries": {"France": -0.5}})
+
     def test_row_converters_and_parsed(self) -> None:
         self.assertEqual(
             CacheEntry.rows_to_fractions([{"name": "France", "weight_pct": 50.0}]),

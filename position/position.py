@@ -94,6 +94,39 @@ def fold_unknown_sector_label(name: str) -> str:
     logger.warning("Position: unknown sector label %r; folding into Other", name)
     return "Other"
 
+
+# Tolerance band (percentage points) for split-row normalization: sources
+# report rounded percentages whose parts can sum to e.g. 100.03, so totals
+# within this band are rescaled to exactly 100. Genuine partial tables and
+# empty lists are left untouched.
+_SPLIT_TOTAL_TOLERANCE = 1.0
+
+
+def normalize_split_rows(
+    rows: list[dict[str, float | str]] | None,
+) -> list[dict[str, float | str]] | None:
+    """Rescale split rows (``weight_pct``) to sum exactly 100 when plausible.
+
+    Returns ``None``/empty input unchanged, as well as totals that are
+    zero or further than ``_SPLIT_TOTAL_TOLERANCE`` from 100 (genuine
+    partial data must not be inflated).
+    """
+    if not rows:
+        return rows
+    total = sum(float(r["weight_pct"]) for r in rows)  # type: ignore[arg-type]
+    if total <= 0 or abs(total - 100.0) > _SPLIT_TOTAL_TOLERANCE:
+        return rows
+    if total == 100.0:
+        return rows
+    factor = 100.0 / total
+    logger.info(
+        "Position: normalizing split rows summing to %.4f to 100", total
+    )
+    return [
+        {"name": r["name"], "weight_pct": float(r["weight_pct"]) * factor}  # type: ignore[arg-type]
+        for r in rows
+    ]
+
 # MSCI EM core + common broad-EM / frontier names; English labels as on JustETF / feeds.
 # Aliases (e.g. UAE, Czechia) are separate strings because matching is exact.
 _LIST_OF_EMERGING_MARKETS = [
@@ -216,6 +249,9 @@ class Position(ABC):
                 "Position: fetch-geosplit disabled and no cached countries for %s",
                 self._isin or self._name,
             )
+        # Canonicalize rounding drift at assembly so staged cache fractions
+        # stay within [0, 1]; partial/empty splits pass through untouched.
+        self._countries = normalize_split_rows(self._countries)
         logger.info("Position: countries: %s", self._countries)
 
         # countries are set either from cache.json or from ISIN
@@ -245,6 +281,7 @@ class Position(ABC):
                 "Position: fetch-sectorsplit disabled and no cached sectors for %s",
                 self._isin or self._name,
             )
+        self._sectors = normalize_split_rows(self._sectors)
         logger.info("Position: sectors: %s", self._sectors)
         for _row in self._sectors or []:
             if _row["name"] not in _LIST_OF_STAPLE_SECTORS:
