@@ -1,6 +1,15 @@
 # asset-allocation
 
-Personal portfolio reporter: load holdings from JSON, optionally fetch prices and broker positions, then chart allocation (regional split, growth sleeve, total net worth).
+> **Disclaimer — Not Financial Advice.**
+> This tool is provided `AS-IS`, without warranty of any kind, for informational
+> purposes only. Prices, splits, and scraped data may be wrong, delayed, or
+> unavailable. Do not make financial decisions solely on its output — verify
+> independently and consult a licensed advisor. The authors accept no liability
+> for financial loss or damages from its use. See `LICENSE`.
+
+## Description
+
+Self-hosted portfolio dashboard: load holdings from JSON, sync live prices, geosplits, sectors and broker balances, then explore allocation in the web UI.
 
 ![Asset Allocation web visualizer](visual/media/web_view.png)
 
@@ -113,6 +122,12 @@ sudo loginctl enable-linger "$USER"
 Units live in `systemd/` (`*.service` / `*.timer` for systemd) and are copied to `~/.config/systemd/user/`.
 
 To use matplotlib windows instead, pass `--plot pie-chart` (or set `DEFAULT_VISUALIZER` in `visual/__init__.py`).
+
+## License
+
+Licensed under `AGPL-3.0-or-later` — see `LICENSE`. If you run a modified
+version as a backend/network service, you must offer the modified source
+to its users.
 
 ## Disclaimer
 
