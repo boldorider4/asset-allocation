@@ -1,0 +1,188 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Domain repositories over any :mod:`storage.storage` backend.
+
+Composition, not inheritance: each repository wraps a ``Storage[T]``
+and adds domain logic. Swapping backends (JSON file ↔ Postgres ↔
+in-memory) never touches this code — only the backend instance passed
+to the constructor changes.
+
+Repositories use *only* point-access ABC methods
+(``get``/``put``/``upsert``/``remove``/``__contains__``), so every
+method here works on every backend. Lifecycle (file ``load``/``save``,
+DB ``connect``/``commit``) stays the caller's job.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from storage.memory_storage import MemoryStorage
+from storage.records import DEFAULT_ISIN_RECORDS, AssetBucket, CacheEntry, IsinRecord
+from storage.storage import Storage
+
+__all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
+
+
+class CacheRepository:
+    """Per-ISIN price / country / sector cache over any backend."""
+
+    def __init__(self, backend: Storage[CacheEntry]) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Storage[CacheEntry]:
+        return self._backend
+
+    def get(self, isin: str) -> CacheEntry | None:
+        return self._backend.get(isin)
+
+    def __contains__(self, isin: object) -> bool:
+        return isin in self._backend
+
+    def parsed(
+        self, isin: str
+    ) -> tuple[float | None, dict[str, float] | None, dict[str, float] | None]:
+        """``(price, countries, sectors)``; ``(None, None, None)`` when missing."""
+        entry = self._backend.get(isin)
+        if entry is None:
+            return None, None, None
+        return entry.parsed()
+
+    def stage(
+        self,
+        isin: str,
+        *,
+        price: float | None = None,
+        countries: dict[str, float] | list[dict[str, Any]] | None = None,
+        sectors: dict[str, float] | list[dict[str, Any]] | None = None,
+        update_price: bool = False,
+        update_countries: bool = False,
+        update_sectors: bool = False,
+    ) -> CacheEntry | None:
+        """Stage a partial cache update (mirrors ``utils.save_position_in_cache``).
+
+        ``countries``/``sectors`` accept either fraction dicts or
+        ``[{"name", "weight_pct"}]`` position rows (converted via
+        :meth:`CacheEntry.rows_to_fractions`). No-op returning ``None``
+        when no update flag is set.
+        """
+        if not update_price and not update_countries and not update_sectors:
+            return None
+        partial: dict[str, Any] = {}
+        if update_price and price is not None:
+            partial[CacheEntry.PRICE] = price
+        if update_countries and countries is not None:
+            partial[CacheEntry.COUNTRIES] = (
+                CacheEntry.rows_to_fractions(countries)
+                if isinstance(countries, list)
+                else countries
+            )
+        if update_sectors and sectors is not None:
+            partial[CacheEntry.SECTORS] = (
+                CacheEntry.rows_to_fractions(sectors)
+                if isinstance(sectors, list)
+                else sectors
+            )
+        return self._backend.upsert(str(isin), partial)
+
+    def stage_quotes(self, quotes: dict[str, float | None]) -> int:
+        """Stage broker unit prices; skips ``None`` quotes. Returns count.
+
+        No fetch-gating here (the caller owns config); mirrors the
+        write half of ``utils.cache_broker_quotes``.
+        """
+        count = 0
+        for isin, quote in quotes.items():
+            if not isin or quote is None:
+                continue
+            self._backend.upsert(str(isin), {CacheEntry.PRICE: float(quote)})
+            count += 1
+        return count
+
+    def clear_fields(self, isin: str, *fields: str) -> bool:
+        """Remove ``fields`` from one row (e.g. stale splits); True if changed."""
+        entry = self._backend.get(isin)
+        if entry is None:
+            return False
+        if entry.clear_fields(*fields):
+            # Re-put so non-caching backends (Postgres) persist the change.
+            self._backend.put(entry)
+            return True
+        return False
+
+
+class AssetRepository:
+    """Portfolio buckets over any backend (separate store from the cache)."""
+
+    def __init__(self, backend: Storage[AssetBucket]) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Storage[AssetBucket]:
+        return self._backend
+
+    def get(self, bucket: str) -> AssetBucket | None:
+        return self._backend.get(bucket)
+
+    def __contains__(self, bucket: object) -> bool:
+        return bucket in self._backend
+
+    def get_positions(self, bucket: str) -> list[dict[str, Any]] | None:
+        obj = self._backend.get(bucket)
+        return None if obj is None else obj.positions
+
+    def set_positions(
+        self, bucket: str, positions: list[dict[str, Any]]
+    ) -> AssetBucket:
+        """Replace a bucket wholesale (validated list-of-dicts)."""
+        obj = AssetBucket(str(bucket), positions)
+        self._backend.put(obj)
+        return obj
+
+    def remove_bucket(self, bucket: str) -> None:
+        self._backend.remove(bucket)
+
+
+class IsinRegistry:
+    """Issuer allow-list registry over any backend (in-memory by default)."""
+
+    def __init__(self, backend: Storage[IsinRecord]) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Storage[IsinRecord]:
+        return self._backend
+
+    @classmethod
+    def seeded(cls, backend: Storage[IsinRecord] | None = None) -> IsinRegistry:
+        """Registry pre-populated from :data:`DEFAULT_ISIN_RECORDS`."""
+        store = backend if backend is not None else MemoryStorage(IsinRecord)
+        for isin, spec in DEFAULT_ISIN_RECORDS.items():
+            store.put(IsinRecord(isin, dict(spec)))
+        return cls(store)
+
+    def get(self, isin: str) -> IsinRecord | None:
+        return self._backend.get(isin)
+
+    def __contains__(self, isin: object) -> bool:
+        return isin in self._backend
+
+    def register(
+        self, isin: str, issuer: str, product_ref: str | None = None
+    ) -> IsinRecord:
+        """Add or replace one allow-list entry."""
+        record = IsinRecord(str(isin), {"issuer": issuer, "product_ref": product_ref})
+        self._backend.put(record)
+        return record
+
+    def belongs_to(self, isin: str, issuer: str) -> bool:
+        record = self._backend.get(isin)
+        return record is not None and record.issuer == issuer
+
+    def issuers_for(self, isin: str) -> frozenset[str]:
+        record = self._backend.get(isin)
+        return frozenset({record.issuer}) if record is not None else frozenset()
+
+    def product_ref_for(self, isin: str) -> str | None:
+        record = self._backend.get(isin)
+        return None if record is None else record.product_ref

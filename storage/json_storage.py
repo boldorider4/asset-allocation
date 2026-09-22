@@ -1,411 +1,42 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """JSON-file backend for the :mod:`storage.storage` abstractions.
 
-Derivations (all standalone — nothing here imports ``context``/``utils``/
-``position`` so the dependency arrow stays one-way):
-
-* :class:`JsonStorageObject` — generic dict-backed row with an explicit
-  ``ALLOWED_KEYS`` allow-list (strict-on-write: unknown keys raise).
-* :class:`CacheEntry` — one ``cache.json`` row: ``price``,
-  ``countries`` and ``sectors`` fractions of 1. Mirrors the semantics of
-  ``utils.parse_cache_entry`` / ``utils.save_position_in_cache``.
-* :class:`AssetBucket` — one ``assets.json`` bucket: a list of position
-  dicts. Lives in a *different file* than the cache (see
-  :class:`AssetStore`).
-* :class:`IsinRecord` — one issuer allow-list entry consolidating the
-  ``ISINS`` frozensets / product-id maps in ``position/*_position.py``.
-* :class:`JsonStorage` — file-backed :class:`Storage`: lazy load,
-  dirty tracking, atomic save (temp file + rename). Thin subclasses
-  :class:`CacheStore`, :class:`AssetStore`, :class:`IsinRegistryStore`
-  just bind the row factory.
+Only transport lives here: :class:`JsonStorage` persists
+``{key: row.to_dict()}`` objects with lazy load, dirty tracking and
+atomic save (temp file + rename). Row types live in
+:mod:`storage.records`; domain logic lives in
+:mod:`storage.repositories`. Nothing here imports ``context``/``utils``/
+``position`` so the dependency arrow stays one-way.
 
 Load is lenient (missing/corrupt file or bad row ⇒ skip with a
-warning); mutation is strict (bad keys/values raise).
+warning); mutation is strict (bad keys/values raise, via the rows).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 from pathlib import Path
 from typing import Any, Iterator, TypeVar
 
+from storage.records import AssetBucket, DictRow
 from storage.storage import Storage, StorageObject
 
 __all__ = [
-    "JsonStorageObject",
-    "CacheEntry",
-    "AssetBucket",
-    "IsinRecord",
     "JsonStorage",
-    "CacheStore",
-    "AssetStore",
-    "IsinRegistryStore",
-    "DEFAULT_ISIN_RECORDS",
+    # Backwards-compat alias for the pre-composition name.
+    "JsonStorageObject",
 ]
 
 logger = logging.getLogger(__name__)
 
+#: Pre-composition name of :class:`DictRow`; kept so existing imports keep working.
+JsonStorageObject = DictRow
+
 T = TypeVar("T", bound=StorageObject)
 
 
-# ---------------------------------------------------------------------------
-# Generic JSON row
-# ---------------------------------------------------------------------------
-class JsonStorageObject(StorageObject):
-    """Dict-backed row with an explicit key allow-list."""
-
-    ALLOWED_KEYS: frozenset[str] = frozenset()
-
-    def __init__(self, key: str, data: dict[str, Any] | None = None) -> None:
-        self._key = str(key)
-        self._data: dict[str, Any] = dict(data) if data else {}
-        self.validate()
-
-    @property
-    def key(self) -> str:
-        return self._key
-
-    def to_dict(self) -> dict[str, Any]:
-        return dict(self._data)
-
-    @classmethod
-    def from_dict(cls, key: str, raw: Any) -> JsonStorageObject:
-        if not isinstance(raw, dict):
-            raise TypeError(f"row {key!r} must be a JSON object, got {type(raw).__name__}")
-        unknown = set(raw) - set(cls.ALLOWED_KEYS)
-        if unknown:
-            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
-        return cls(str(key), dict(raw))
-
-    def merge(self, partial: dict[str, Any]) -> None:
-        if not isinstance(partial, dict):
-            raise TypeError(f"partial update for {self._key!r} must be a dict")
-        unknown = set(partial) - set(type(self).ALLOWED_KEYS)
-        if unknown:
-            raise KeyError(f"row {self._key!r} has unknown keys: {sorted(unknown)}")
-        merged = dict(self._data)
-        merged.update(partial)
-        old = self._data
-        self._data = merged
-        try:
-            self.validate()
-        except Exception:
-            self._data = old
-            raise
-
-    def validate(self) -> None:
-        unknown = set(self._data) - set(type(self).ALLOWED_KEYS)
-        if unknown:
-            raise KeyError(f"row {self._key!r} has unknown keys: {sorted(unknown)}")
-
-    def clear_fields(self, *names: str) -> bool:
-        """Remove ``names`` from this row; True when anything changed."""
-        changed = False
-        for name in names:
-            if name not in type(self).ALLOWED_KEYS:
-                raise KeyError(f"row {self._key!r} has unknown key: {name!r}")
-            if name in self._data:
-                del self._data[name]
-                changed = True
-        return changed
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, JsonStorageObject)
-            and type(self) is type(other)
-            and self._key == other._key
-            and self._data == other._data
-        )
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(key={self._key!r}, data={self._data!r})"
-
-
-# ---------------------------------------------------------------------------
-# Cache rows (cache.json: ISIN -> {price, countries, sectors})
-# ---------------------------------------------------------------------------
-class CacheEntry(JsonStorageObject):
-    """One per-ISIN cache row; split weights are fractions of 1."""
-
-    PRICE = "price"
-    COUNTRIES = "countries"
-    SECTORS = "sectors"
-    ALLOWED_KEYS: frozenset[str] = frozenset({PRICE, COUNTRIES, SECTORS})
-
-    def __init__(
-        self,
-        key: str,
-        data: dict[str, Any] | None = None,
-        *,
-        price: float | None = None,
-        countries: dict[str, float] | None = None,
-        sectors: dict[str, float] | None = None,
-    ) -> None:
-        payload: dict[str, Any] = dict(data) if data else {}
-        if price is not None:
-            payload[self.PRICE] = price
-        if countries is not None:
-            payload[self.COUNTRIES] = countries
-        if sectors is not None:
-            payload[self.SECTORS] = sectors
-        super().__init__(key, self._coerce(payload, key=str(key)))
-
-    @staticmethod
-    def _coerce_split(value: Any, *, field: str, key: str) -> dict[str, float]:
-        if not isinstance(value, dict):
-            raise TypeError(f"row {key!r} field {field!r} must be an object")
-        out: dict[str, float] = {}
-        for name, weight in value.items():
-            try:
-                w = float(weight)  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"row {key!r} field {field!r} weight for {name!r} is not a number"
-                ) from exc
-            if not math.isfinite(w) or not 0.0 <= w <= 1.0:
-                raise ValueError(
-                    f"row {key!r} field {field!r} weight for {name!r} "
-                    f"must be a fraction in [0, 1], got {weight!r}"
-                )
-            out[str(name)] = w
-        return out
-
-    @classmethod
-    def _coerce(cls, payload: dict[str, Any], *, key: str) -> dict[str, Any]:
-        coerced: dict[str, Any] = {}
-        if cls.PRICE in payload and payload[cls.PRICE] is not None:
-            try:
-                price = float(payload[cls.PRICE])  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"row {key!r} field 'price' is not a number") from exc
-            if not math.isfinite(price) or price < 0:
-                raise ValueError(f"row {key!r} field 'price' must be >= 0")
-            coerced[cls.PRICE] = price
-        for field in (cls.COUNTRIES, cls.SECTORS):
-            if field in payload and payload[field] is not None:
-                coerced[field] = cls._coerce_split(payload[field], field=field, key=key)
-        return coerced
-
-    @classmethod
-    def from_dict(cls, key: str, raw: Any) -> CacheEntry:
-        if not isinstance(raw, dict):
-            raise TypeError(f"row {key!r} must be a JSON object")
-        unknown = set(raw) - set(cls.ALLOWED_KEYS)
-        if unknown:
-            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
-        return cls(str(key), raw)
-
-    def validate(self) -> None:
-        super().validate()
-        # Re-coerce in place so e.g. int prices normalise to float on merge.
-        self._data = self._coerce(dict(self._data), key=self._key)
-
-    # -- typed accessors ------------------------------------------------
-    @property
-    def price(self) -> float | None:
-        value = self._data.get(self.PRICE)
-        return None if value is None else float(value)
-
-    @price.setter
-    def price(self, value: float | None) -> None:
-        if value is None:
-            self._data.pop(self.PRICE, None)
-            return
-        self.merge({self.PRICE: value})
-
-    @property
-    def countries(self) -> dict[str, float] | None:
-        value = self._data.get(self.COUNTRIES)
-        return None if value is None else dict(value)
-
-    @countries.setter
-    def countries(self, value: dict[str, float] | None) -> None:
-        if value is None:
-            self._data.pop(self.COUNTRIES, None)
-            return
-        self.merge({self.COUNTRIES: value})
-
-    @property
-    def sectors(self) -> dict[str, float] | None:
-        value = self._data.get(self.SECTORS)
-        return None if value is None else dict(value)
-
-    @sectors.setter
-    def sectors(self, value: dict[str, float] | None) -> None:
-        if value is None:
-            self._data.pop(self.SECTORS, None)
-            return
-        self.merge({self.SECTORS: value})
-
-    def parsed(self) -> tuple[float | None, dict[str, float] | None, dict[str, float] | None]:
-        """``(price, countries, sectors)``; mirrors ``utils.parse_cache_entry``."""
-        return self.price, self.countries, self.sectors
-
-    # -- Position-row converters (weight_pct <-> fraction) --------------
-    @staticmethod
-    def rows_to_fractions(rows: list[dict[str, Any]] | None) -> dict[str, float]:
-        """``[{"name", "weight_pct"}]`` (0-100) → ``{name: fraction}`` (0-1)."""
-        if not rows:
-            return {}
-        return {str(r["name"]): float(r["weight_pct"]) / 100.0 for r in rows}  # type: ignore[index]
-
-    @staticmethod
-    def fractions_to_rows(fractions: dict[str, float] | None) -> list[dict[str, Any]] | None:
-        """``{name: fraction}`` (0-1) → ``[{"name", "weight_pct"}]`` (0-100)."""
-        if fractions is None:
-            return None
-        return [{"name": name, "weight_pct": float(w) * 100.0} for name, w in fractions.items()]
-
-
-# ---------------------------------------------------------------------------
-# Asset buckets (assets.json: bucket -> [positions]); separate file from cache
-# ---------------------------------------------------------------------------
-class AssetBucket(JsonStorageObject):
-    """One portfolio bucket; serialised as a bare list of position dicts."""
-
-    # No fixed dict keys: the payload *is* the positions list.
-    ALLOWED_KEYS: frozenset[str] = frozenset()
-
-    def __init__(self, key: str, positions: list[dict[str, Any]] | None = None) -> None:
-        self._positions: list[dict[str, Any]] = []
-        super().__init__(key)
-        self.set_positions(positions if positions is not None else [])
-
-    @property
-    def positions(self) -> list[dict[str, Any]]:
-        return [dict(p) for p in self._positions]
-
-    def set_positions(self, positions: list[dict[str, Any]]) -> None:
-        if not isinstance(positions, list):
-            raise TypeError(f"bucket {self._key!r} must be a JSON array")
-        for i, pos in enumerate(positions):
-            if not isinstance(pos, dict):
-                raise TypeError(f"{self._key!r}[{i}] must be a JSON object")
-        self._positions = [dict(p) for p in positions]
-
-    def to_dict(self) -> list[dict[str, Any]]:
-        return [dict(p) for p in self._positions]
-
-    @classmethod
-    def from_dict(cls, key: str, raw: Any) -> AssetBucket:
-        return cls(str(key), raw)  # __init__ validates list-of-dicts
-
-    def merge(self, partial: dict[str, Any]) -> None:
-        # Buckets replace wholesale (a "partial position" has no meaning);
-        # accept {"positions": [...]} for interface conformance.
-        if not isinstance(partial, dict) or set(partial) != {"positions"}:
-            raise KeyError(
-                f"bucket {self._key!r} merges only {{'positions': [...]}}"
-            )
-        self.set_positions(partial["positions"])
-
-    def validate(self) -> None:
-        # _data is unused for buckets; validate the positions list instead.
-        for i, pos in enumerate(self._positions):
-            if not isinstance(pos, dict):
-                raise TypeError(f"{self._key!r}[{i}] must be a JSON object")
-
-
-# ---------------------------------------------------------------------------
-# ISIN registry (consolidates position/* ISINS frozensets + product-id maps)
-# ---------------------------------------------------------------------------
-class IsinRecord(JsonStorageObject):
-    """One allow-list entry: which issuer handler owns an ISIN (+ vendor ref)."""
-
-    ISSUER = "issuer"
-    PRODUCT_REF = "product_ref"
-    ALLOWED_KEYS: frozenset[str] = frozenset({ISSUER, PRODUCT_REF})
-
-    #: Canonical issuer slugs (module of origin in ``position/``).
-    ISSUERS: frozenset[str] = frozenset(
-        {"amundi", "ishares", "ssga", "dws", "ubs", "invesco", "landg"}
-    )
-
-    def __init__(
-        self,
-        key: str,
-        data: dict[str, Any] | None = None,
-        *,
-        issuer: str | None = None,
-        product_ref: str | None = None,
-    ) -> None:
-        payload: dict[str, Any] = dict(data) if data else {}
-        if issuer is not None:
-            payload[self.ISSUER] = issuer
-        if product_ref is not None:
-            payload[self.PRODUCT_REF] = product_ref
-        super().__init__(key, payload)
-
-    def validate(self) -> None:
-        super().validate()
-        issuer = self._data.get(self.ISSUER)
-        if not isinstance(issuer, str) or issuer not in self.ISSUERS:
-            raise ValueError(
-                f"row {self._key!r} field 'issuer' must be one of "
-                f"{sorted(self.ISSUERS)}, got {issuer!r}"
-            )
-        ref = self._data.get(self.PRODUCT_REF)
-        if ref is not None and not isinstance(ref, str):
-            raise TypeError(f"row {self._key!r} field 'product_ref' must be a string or null")
-
-    @property
-    def issuer(self) -> str:
-        return str(self._data[self.ISSUER])
-
-    @property
-    def product_ref(self) -> str | None:
-        ref = self._data.get(self.PRODUCT_REF)
-        return None if ref is None else str(ref)
-
-
-#: Snapshot of the ``position/*_position.py`` allow-lists, as
-#: ``{ISIN: {"issuer": ..., "product_ref": ...}}`` kwargs for
-#: :class:`IsinRecord`. ``product_ref`` is the iShares product id / SSGA
-#: slug where one exists, else ``None``. Kept in sync manually until the
-#: factory is wired to the registry (pinned follow-up).
-DEFAULT_ISIN_RECORDS: dict[str, dict[str, Any]] = {
-    # AmundiPosition.ISINS
-    "IE000BI8OT95": {"issuer": "amundi", "product_ref": None},
-    "LU2233156582": {"issuer": "amundi", "product_ref": None},
-    "LU2300294316": {"issuer": "amundi", "product_ref": None},
-    # _ISHARES_PRODUCT_IDS (BlackRock allow-list)
-    "IE00BKM4GZ66": {"issuer": "ishares", "product_ref": "264659"},
-    "IE00BD1F4M44": {"issuer": "ishares", "product_ref": "285207"},
-    "IE00BHZPJ239": {"issuer": "ishares", "product_ref": "307659"},
-    "IE00BF4RFH31": {"issuer": "ishares", "product_ref": "296576"},
-    "IE00BFNM3D14": {"issuer": "ishares", "product_ref": "305363"},
-    "IE00BL6K8C82": {"issuer": "ishares", "product_ref": "318925"},
-    "IE00BFNM3L97": {"issuer": "ishares", "product_ref": "305412"},
-    "IE00BFNM3P36": {"issuer": "ishares", "product_ref": "305397"},
-    "IE000APK27S2": {"issuer": "ishares", "product_ref": "320169"},
-    "IE00BKPT2S34": {"issuer": "ishares", "product_ref": "313317"},
-    # _SSGA_PRODUCT_SLUGS (StateStreet allow-list)
-    "IE00B4YBJ215": {
-        "issuer": "ssga",
-        "product_ref": "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
-    },
-    # XtrackersPosition.ISINS
-    "IE00BTJRMP35": {"issuer": "dws", "product_ref": None},
-    "IE0006WW1TQ4": {"issuer": "dws", "product_ref": None},
-    "IE00BLNMYC90": {"issuer": "dws", "product_ref": None},
-    # UBSPosition.ISINS
-    "IE00BD4TXV59": {"issuer": "ubs", "product_ref": None},
-    "IE00BKSCBX74": {"issuer": "ubs", "product_ref": None},
-    # InvescoPosition.ISINS
-    "IE00BKS7L097": {"issuer": "invesco", "product_ref": None},
-    "IE000PJL7R74": {"issuer": "invesco", "product_ref": None},
-    # LAndGPosition.ISINS
-    "IE000Z9UVQ99": {"issuer": "landg", "product_ref": None},
-    "IE00BFXR5W90": {"issuer": "landg", "product_ref": None},
-}
-
-
-# ---------------------------------------------------------------------------
-# File-backed store
-# ---------------------------------------------------------------------------
 class JsonStorage(Storage[T]):
     """Generic JSON-file store: ``{key: row.to_dict()}`` object on disk."""
 
@@ -426,6 +57,7 @@ class JsonStorage(Storage[T]):
 
     @property
     def is_dirty(self) -> bool:
+        """True when in-memory state differs from the file on disk."""
         return self._dirty
 
     # -- internals ------------------------------------------------------
@@ -433,7 +65,11 @@ class JsonStorage(Storage[T]):
         if not self._loaded:
             self.load()
 
-    # -- point access ---------------------------------------------------
+    def _empty_raw(self) -> Any:
+        # Bucket rows serialise as bare lists, everything else as objects.
+        return [] if self._factory is AssetBucket else {}
+
+    # -- point access (Storage ABC) -------------------------------------
     def get(self, key: str) -> T | None:
         self._ensure_loaded()
         return self._objects.get(str(key))
@@ -448,10 +84,6 @@ class JsonStorage(Storage[T]):
             self._objects[key] = obj
             self._dirty = True
         return obj
-
-    @staticmethod
-    def _empty_raw() -> Any:
-        return {}
 
     def put(self, obj: T) -> None:
         self._ensure_loaded()
@@ -478,34 +110,18 @@ class JsonStorage(Storage[T]):
         if self._objects.pop(str(key), None) is not None:
             self._dirty = True
 
-    # -- mapping-style introspection ------------------------------------
     def __contains__(self, key: object) -> bool:
         self._ensure_loaded()
         return str(key) in self._objects
 
-    def __len__(self) -> int:
-        self._ensure_loaded()
-        return len(self._objects)
+    def close(self) -> None:
+        # File-backend teardown: flush buffered writes.
+        if self._dirty:
+            self.save()
 
-    def keys(self) -> Iterator[str]:
-        self._ensure_loaded()
-        return iter(list(self._objects.keys()))
-
-    def items(self) -> Iterator[tuple[str, T]]:
-        self._ensure_loaded()
-        return iter(list(self._objects.items()))
-
-    def values(self) -> Iterator[T]:
-        self._ensure_loaded()
-        return iter(list(self._objects.values()))
-
-    def to_plain_dict(self) -> dict[str, Any]:
-        """Whole store as plain ``{key: row.to_dict()}`` (wire format)."""
-        self._ensure_loaded()
-        return {k: o.to_dict() for k, o in self._objects.items()}
-
-    # -- persistence ----------------------------------------------------
+    # -- file lifecycle (JSON-only, not on the Storage ABC) -------------
     def load(self) -> JsonStorage[T]:
+        """Load rows from the file (idempotent; lenient on bad input)."""
         if self._loaded:
             return self
         try:
@@ -535,6 +151,7 @@ class JsonStorage(Storage[T]):
         return self
 
     def save(self) -> None:
+        """Persist dirty rows atomically (no-op when clean)."""
         if self._loaded and not self._dirty:
             return
         self._ensure_loaded()
@@ -548,127 +165,27 @@ class JsonStorage(Storage[T]):
         logger.info("wrote storage to %s", self._path)
 
     def mark_clean(self) -> None:
+        """Clear the dirty flag without persisting (testing escape hatch)."""
         self._dirty = False
 
-    def close(self) -> None:
-        if self._dirty:
-            self.save()
-
-
-# ---------------------------------------------------------------------------
-# Thin per-domain subclasses (bind the row factory)
-# ---------------------------------------------------------------------------
-class CacheStore(JsonStorage[CacheEntry]):
-    """Per-ISIN price / country / sector cache (``cache.json``)."""
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path, CacheEntry)
-
-    @staticmethod
-    def _empty_raw() -> Any:
-        return {}
-
-    def clear_fields(self, key: str, *fields: str) -> bool:
-        """Remove ``fields`` from one row (e.g. stale splits); True if dirty."""
-        obj = self.get(key)
-        if obj is None:
-            return False
-        if obj.clear_fields(*fields):
-            self._dirty = True
-            return True
-        return False
-
-
-class AssetStore(JsonStorage[AssetBucket]):
-    """Portfolio buckets (``assets.json``) — a different file than the cache."""
-
-    def __init__(self, path: str | Path) -> None:
-        super().__init__(path, AssetBucket)
-
-    @staticmethod
-    def _empty_raw() -> Any:
-        return []
-
-    def get_positions(self, bucket: str) -> list[dict[str, Any]] | None:
-        obj = self.get(bucket)
-        return None if obj is None else obj.positions
-
-    def set_positions(self, bucket: str, positions: list[dict[str, Any]]) -> AssetBucket:
+    # -- bulk introspection (JSON-only conveniences, not for hot paths) --
+    def __len__(self) -> int:
         self._ensure_loaded()
-        obj = AssetBucket(str(bucket), positions)
-        self._objects[str(bucket)] = obj
-        self._dirty = True
-        return obj
+        return len(self._objects)
 
-
-class IsinRegistryStore(JsonStorage[IsinRecord]):
-    """Issuer allow-list registry (seeded from ``position/*`` frozensets).
-
-    The registry is primarily static: construct via :meth:`seeded` for
-    pure in-memory use, or pass ``path`` to persist overrides to a file.
-    """
-
-    def __init__(self, path: str | Path | None = None) -> None:
-        super().__init__(
-            Path(path) if path is not None else Path("__isin_registry_in_memory__"),
-            IsinRecord,
-        )
-        self._in_memory_only = path is None
-
-    def get_or_create(self, key: str) -> IsinRecord:  # type: ignore[override]
-        raise NotImplementedError("registry rows need an explicit issuer; use put()")
-
-    def upsert(self, key: str, partial: dict[str, Any]) -> IsinRecord:
+    def keys(self) -> Iterator[str]:
         self._ensure_loaded()
-        key = str(key)
-        obj = self._objects.get(key)
-        if obj is None:
-            if IsinRecord.ISSUER not in partial:
-                raise KeyError(f"new registry row {key!r} needs an 'issuer'")
-            obj = IsinRecord(key, partial)
-            self._objects[key] = obj
-            self._dirty = True
-            return obj
-        obj.merge(partial)
-        self._dirty = True
-        return obj
+        return iter(list(self._objects.keys()))
 
-    @classmethod
-    def seeded(cls, path: str | Path | None = None) -> IsinRegistryStore:
-        """Registry pre-populated from :data:`DEFAULT_ISIN_RECORDS`."""
-        store = cls(path)
-        store._objects = {
-            isin: IsinRecord(isin, dict(spec)) for isin, spec in DEFAULT_ISIN_RECORDS.items()
-        }
-        store._loaded = True
-        store._dirty = False
-        return store
+    def items(self) -> Iterator[tuple[str, T]]:
+        self._ensure_loaded()
+        return iter(list(self._objects.items()))
 
-    def load(self) -> IsinRegistryStore:
-        if self._loaded:
-            return self
-        if self._in_memory_only:
-            self._objects = {}
-            self._loaded = True
-            self._dirty = False
-            return self
-        super().load()
-        return self
+    def values(self) -> Iterator[T]:
+        self._ensure_loaded()
+        return iter(list(self._objects.values()))
 
-    def save(self) -> None:
-        if self._in_memory_only:
-            self._dirty = False
-            return
-        super().save()
-
-    def belongs_to(self, isin: str, issuer: str) -> bool:
-        obj = self.get(isin)
-        return obj is not None and obj.issuer == issuer
-
-    def issuers_for(self, isin: str) -> frozenset[str]:
-        obj = self.get(isin)
-        return frozenset({obj.issuer}) if obj is not None else frozenset()
-
-    def product_ref_for(self, isin: str) -> str | None:
-        obj = self.get(isin)
-        return None if obj is None else obj.product_ref
+    def to_plain_dict(self) -> dict[str, Any]:
+        """Whole store as plain ``{key: row.to_dict()}`` (wire format)."""
+        self._ensure_loaded()
+        return {k: o.to_dict() for k, o in self._objects.items()}
