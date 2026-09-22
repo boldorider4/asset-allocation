@@ -25,24 +25,31 @@ from storage.storage import Storage, StorageObject
 
 __all__ = [
     "JsonStorage",
-    # Backwards-compat alias for the pre-composition name.
-    "JsonStorageObject",
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Pre-composition name of :class:`DictRow`; kept so existing imports keep working.
-JsonStorageObject = DictRow
 
 T = TypeVar("T", bound=StorageObject)
 
 
 class JsonStorage(Storage[T]):
-    """Generic JSON-file store: ``{key: row.to_dict()}`` object on disk."""
+    """Generic JSON-file store: ``{key: row.to_dict()}`` object on disk.
 
-    def __init__(self, path: str | Path, object_factory: type[T]) -> None:
+    ``object_factory`` defaults to :class:`DictRow`, so ``JsonStorage(path)``
+    works bare for scratch/generic use. Note the schema-full contract: a
+    bare ``DictRow`` has an empty ``ALLOWED_KEYS`` and therefore only holds
+    empty-dict rows — every application use must go through a typed row
+    with its own ``ALLOWED_KEYS`` (e.g. ``CacheEntry``). If those key sets
+    ever change, treat it as a schema migration (including future DB DDL).
+    """
+
+    def __init__(
+        self, path: str | Path, object_factory: type[T] | None = None
+    ) -> None:
         self._path = Path(path)
-        self._factory: type[T] = object_factory
+        self._factory: type[T] = (
+            object_factory if object_factory is not None else DictRow  # type: ignore[assignment]
+        )
         self._objects: dict[str, T] = {}
         self._loaded = False
         self._dirty = False

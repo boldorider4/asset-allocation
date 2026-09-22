@@ -10,7 +10,7 @@
   (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``).
 """
 
-from storage.json_storage import JsonStorage, JsonStorageObject
+from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
 from storage.postgres_storage import PostgresStorage
 from storage.records import (
@@ -27,7 +27,6 @@ __all__ = [
     "Storage",
     "StorageObject",
     "DictRow",
-    "JsonStorageObject",
     "CacheEntry",
     "AssetBucket",
     "IsinRecord",

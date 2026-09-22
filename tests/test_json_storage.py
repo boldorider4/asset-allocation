@@ -33,7 +33,6 @@ from storage import (  # noqa: E402
     IsinRecord,
     IsinRegistry,
     JsonStorage,
-    JsonStorageObject,
     MemoryStorage,
     PostgresStorage,
 )
@@ -41,8 +40,24 @@ from storage.storage import Storage  # noqa: E402
 
 
 class TestDictRow(unittest.TestCase):
-    def test_alias_kept(self) -> None:
-        self.assertIs(JsonStorageObject, DictRow)
+    def test_bare_json_storage_defaults_to_dict_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scratch.json"
+            store = JsonStorage(path)
+            store.put(DictRow("k", {}))
+            store.save()
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved, {"k": {}})
+            reloaded = JsonStorage(path)
+            row = reloaded.get("k")
+            self.assertIsInstance(row, DictRow)
+
+    def test_explicit_memory_storage_with_dict_row(self) -> None:
+        store = MemoryStorage(DictRow)
+        store.upsert("k", {})
+        row = store.get("k")
+        self.assertIsInstance(row, DictRow)
+        self.assertEqual(row.to_dict(), {})
 
     def test_merge_validates_and_rolls_back(self) -> None:
         entry = CacheEntry("IE00X", {"price": 10.0})
