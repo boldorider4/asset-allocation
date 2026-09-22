@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asset-allocation"
-version = "2.7.5"
+version = "2.8.0b0"
 description = "Personal asset allocation and position pricing"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -36,4 +36,4 @@ log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
 py-modules = ["allocation", "cli", "common", "context", "logger", "utils"]
-packages = ["position", "visual", "visual.plot", "visual.web", "visual.web.backend", "portfolio", "scrape"]
+packages = ["position", "visual", "visual.plot", "visual.web", "visual.web.backend", "portfolio", "scrape", "storage"]

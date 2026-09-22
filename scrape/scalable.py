@@ -854,15 +854,18 @@ def _clear_sector_cache_for_isins(ctx: RuntimeContext, isins: set[str] | str) ->
     refetched from JustETF on next access."""
     if isinstance(isins, str):
         isins = {isins}
-    cache = ctx.ensure_cache_loaded()
+    ctx.ensure_cache_loaded()
     for isin in isins:
         if not isin:
             continue
-        row = cache.get(isin)
+        # Validated write path: clears the fields in the store, then
+        # mirrors the row back into the plain ``ctx.cache`` dict.
+        ctx.cache_repo.clear_fields(isin, _CACHE_SECTORS, _CACHE_COUNTRIES)
+        row = ctx.cache.get(isin)
         if isinstance(row, dict):
             row.pop(_CACHE_SECTORS, None)
             row.pop(_CACHE_COUNTRIES, None)
-            cache[isin] = row
+            ctx.cache[isin] = row
     ctx.mark_cache_dirty()
 
 

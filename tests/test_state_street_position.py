@@ -255,13 +255,14 @@ class TestSsgaCountryFetch(unittest.TestCase):
                     name="State Street SPDR S&P 400 U.S. Mid Cap",
                     shares=1, ctx=self.ctx
                 )
+        # Fixture rows sum past 100: normalized to 100 at assembly.
         self.assertEqual(
             pos.countries(),
             [
-                {"name": "United States", "weight_pct": 99.558113},
-                {"name": "Canada", "weight_pct": 0.441887},
-                {"name": "South Korea", "weight_pct": 0.1},
-                {"name": "Other", "weight_pct": 0.01},
+                {"name": "United States", "weight_pct": 99.44871940865049},
+                {"name": "Canada", "weight_pct": 0.4414014583957646},
+                {"name": "South Korea", "weight_pct": 0.09989012086704625},
+                {"name": "Other", "weight_pct": 0.009989012086704625},
             ],
         )
 
@@ -276,20 +277,21 @@ class TestSsgaCountryFetch(unittest.TestCase):
                 pos = StateStreetPosition(
                     _ISIN, name="State Street SPDR S&P 400 U.S. Mid Cap", shares=1, ctx=self.ctx
                 )
+        # Fixture rows sum past 100: normalized to 100 at assembly.
         self.assertEqual(
             pos.sectors(),
             [
-                {"name": "Industrials", "weight_pct": 23.858768},
-                {"name": "Finance", "weight_pct": 15.368496},
-                {"name": "Technology", "weight_pct": 14.873416},
-                {"name": "Consumer", "weight_pct": 12.970793},
-                {"name": "Healthcare", "weight_pct": 10.138749},
-                {"name": "Real Estate", "weight_pct": 7.087757},
-                {"name": "Materials", "weight_pct": 5.844839},
-                {"name": "Commodities", "weight_pct": 5.259488},
-                {"name": "Utilities", "weight_pct": 3.066129},
-                {"name": "Telecommunication", "weight_pct": 1.531566},
-                {"name": "Other", "weight_pct": 0.01},
+                {"name": "Industrials", "weight_pct": 23.856382123223856},
+                {"name": "Finance", "weight_pct": 15.366959150415367},
+                {"name": "Technology", "weight_pct": 14.871928658414872},
+                {"name": "Consumer", "weight_pct": 12.96949592071297},
+                {"name": "Healthcare", "weight_pct": 10.137735125110138},
+                {"name": "Real Estate", "weight_pct": 7.087048224307087},
+                {"name": "Materials", "weight_pct": 5.844254516105845},
+                {"name": "Commodities", "weight_pct": 5.258962051205259},
+                {"name": "Utilities", "weight_pct": 3.065822387103066},
+                {"name": "Telecommunication", "weight_pct": 1.5314128434015313},
+                {"name": "Other", "weight_pct": 0.009999000000009998},
             ],
         )
 

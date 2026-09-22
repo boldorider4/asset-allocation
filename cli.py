@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -58,6 +59,37 @@ def _pid_is_server(pid: int) -> bool:
     return "visual.web.backend.serve" in cmdline or "http.server" in cmdline
 
 
+def _server_argv(pid: int) -> list[str]:
+    """Argv of *pid* from /proc, or [] when unreadable."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            parts = f.read().split(b"\0")
+    except OSError:
+        return []
+    return [part.decode(errors="replace") for part in parts if part]
+
+
+def _find_server_pids(port: int) -> list[int]:
+    """Pids running our visualizer server bound to *port* (via /proc scan)."""
+    found: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        argv = _server_argv(int(entry))
+        if not argv:
+            continue
+        if not any("visual.web.backend.serve" in arg for arg in argv):
+            continue
+        if str(port) not in argv:
+            continue
+        found.append(int(entry))
+    return found
+
+
 def cmd_stop(_args: argparse.Namespace) -> None:
     # Resolves the pid file from the same config `serve` used, so custom
     # ASALLOC_CONFIG files and relative `directory` values agree on location.
@@ -84,6 +116,17 @@ def cmd_stop(_args: argparse.Namespace) -> None:
         logger.warning("No permission to stop pid %s; leaving pid file.", pid)
         return
     pid_file.unlink(missing_ok=True)
+    # The pid file may be stale (dead pid) while a server started by other
+    # means still holds the port. Sweep for leftovers so a restart really
+    # restarts instead of leaving a wedged server in place.
+    for other in _find_server_pids(cfg.port):
+        try:
+            os.kill(other, signal.SIGTERM)
+            logger.info("Stopped leftover visualizer server (pid %s).", other)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            logger.warning("No permission to stop leftover server pid %s.", other)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -95,6 +138,15 @@ def cmd_serve(args: argparse.Namespace) -> None:
     (cfg.directory / "data" / "clear").mkdir(exist_ok=True)
     (cfg.directory / "data" / "incognito").mkdir(exist_ok=True)
     pid_file = cfg.directory / ".serve.pid"
+    already = [pid for pid in _find_server_pids(cfg.port)]
+    if already:
+        logger.error(
+            "A visualizer server is already running on port %s (pid %s); "
+            "stop it first with `asalloc stop-serve`.",
+            cfg.port,
+            ", ".join(str(pid) for pid in already),
+        )
+        sys.exit(1)
     assets_file = Path(args.assets_file) if args.assets_file else DEFAULT_ASSETS_PATH
     cache_file = Path(args.cache_file) if args.cache_file else DEFAULT_CACHE_PATH
     proc = subprocess.Popen(
@@ -118,6 +170,18 @@ def cmd_serve(args: argparse.Namespace) -> None:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    # Fail fast when the server dies immediately (busy port, bad config,
+    # broken code): otherwise the pid file points at a dead process and
+    # later restarts silently do nothing.
+    grace_end = time.monotonic() + 3.0
+    while time.monotonic() < grace_end:
+        if proc.poll() is not None:
+            logger.error(
+                "Visualizer server exited immediately (exit %s); not writing pid file.",
+                proc.returncode,
+            )
+            sys.exit(1)
+        time.sleep(0.2)
     pid_file.write_text(str(proc.pid), encoding="utf-8")
     logger.info(
         "Serving %s in the background on http://%s:%s/dashboard (pid %s)",

@@ -42,6 +42,21 @@ _SECTOR_MAX_WEDGES = 25
 _SECTOR_OTHER_LABEL = "Other"
 
 
+def _normalize_sector_fractions(sectors: dict[str, float]) -> dict[str, float]:
+    """Rescale a sector fraction mapping to sum exactly 1.0.
+
+    Guard against float dust in value-weighted aggregation; empty and
+    zero-total mappings pass through untouched.
+    """
+    total = sum(sectors.values())
+    if total <= 0 or total == 1.0:
+        return sectors
+    if abs(total - 1.0) > 1e-9:
+        logger.info("Portfolio: normalizing sector fractions summing to %.6f", total)
+    factor = 1.0 / total
+    return {name: weight * factor for name, weight in sectors.items()}
+
+
 @dataclass
 class LabeledPositionGroup:
     short_name: str
@@ -173,7 +188,7 @@ class Portfolio:
                     logger.info("Portfolio %r: position %r has no sector info; aggregating into Other", self._name, position._isin)
                     label = short_name or _SECTOR_OTHER_LABEL
                 consolidated[label] = consolidated.get(label, 0.0) + share
-        return consolidated
+        return _normalize_sector_fractions(consolidated)
 
     def refresh_sectors(self) -> None:
         """Refresh the cached sector aggregation from Position objects.
@@ -284,7 +299,7 @@ class Portfolio:
             for name, weight in side._sectors.items():
                 union[name] = union.get(name, 0.0) + share * float(weight)
         logger.info("Sector union (merged-relative): %r", union)
-        return union
+        return _normalize_sector_fractions(union)
 
     @property
     def value(self) -> float:
