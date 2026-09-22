@@ -182,30 +182,199 @@ function splitLabel(label) {
   return [label.slice(0, i), label.slice(i + 1)];
 }
 
+// Single font size for every wedge label: labels are never shrunk to
+// fit. A label that fits at this size is drawn, otherwise it wraps (when
+// a neighbor forces a restriction) or is dropped.
+const WEDGE_LABEL_FONT_SIZE = 10;
+
 function fitWedgeLabel(label, span, rLabel, ringWidth) {
   const chord = 2 * rLabel * Math.sin(Math.min(span, Math.PI) / 2);
-  const maxWidth = chord * 1.35;
+  // Generous cap: labels slightly wider than their chord still get fitted —
+  // the overlap pass below confines anything that actually touches a
+  // neighbor, so this gate only rejects the hopeless cases. Both labels
+  // of a tight pair may wrap; neither is dropped for the other's sake.
+  const maxWidth = chord * 1.5;
+  const fontSize = WEDGE_LABEL_FONT_SIZE;
   if (maxWidth < 10 || ringWidth < 12) {
     return null;
   }
-  let best = null;
-  for (let fontSize = 11; fontSize >= 6; fontSize -= 0.5) {
-    if (measureLabel(label, fontSize) <= maxWidth && fontSize + 2 <= ringWidth) {
-      best = { lines: [label], fontSize };
-      break;
+  if (measureLabel(label, fontSize) <= maxWidth && fontSize + 2 <= ringWidth) {
+    return { lines: [label], fontSize };
+  }
+  const parts = splitLabel(label);
+  if (
+    parts &&
+    fontSize * 2.05 <= ringWidth &&
+    measureLabel(parts[0], fontSize) <= maxWidth &&
+    measureLabel(parts[1], fontSize) <= maxWidth
+  ) {
+    return { lines: parts, fontSize };
+  }
+  return null;
+}
+
+const WEDGE_LABEL_MAX_LINES = 4;
+const WEDGE_LABEL_LINE_HEIGHT = 1.15; // em between baselines of wrapped lines
+
+function wrapLabel(label, maxWidth, fontSize, maxLines) {
+  const words = String(label).split(/\s+/).filter(Boolean);
+  if (words.length === 0 || maxLines < 1) {
+    return null;
+  }
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const trial = current ? `${current} ${word}` : word;
+    if (measureLabel(trial, fontSize) <= maxWidth) {
+      current = trial;
+      continue;
     }
-    const parts = splitLabel(label);
-    if (
-      parts &&
-      fontSize * 2.05 <= ringWidth &&
-      measureLabel(parts[0], fontSize) <= maxWidth &&
-      measureLabel(parts[1], fontSize) <= maxWidth
-    ) {
-      best = { lines: parts, fontSize };
+    if (!current) {
+      return null; // single word wider than maxWidth
+    }
+    lines.push(current);
+    if (lines.length >= maxLines) {
+      return null; // no line left for `word`
+    }
+    current = word;
+    if (measureLabel(current, fontSize) > maxWidth) {
+      return null; // single word wider than maxWidth
+    }
+  }
+  if (current) {
+    if (lines.length >= maxLines) {
+      return null;
+    }
+    lines.push(current);
+  }
+  return lines.length > 0 ? lines : null;
+}
+
+function fitWedgeLabelRestricted(label, maxWidth, ringWidth) {
+  // Like fitWedgeLabel, but the label boundary width is capped (used when
+  // an adjacent wedge label would otherwise touch) and the text may wrap
+  // onto up to WEDGE_LABEL_MAX_LINES lines at the constant label font
+  // size. Prefers fewer lines.
+  const fontSize = WEDGE_LABEL_FONT_SIZE;
+  if (maxWidth < 10 || ringWidth < 12) {
+    return null;
+  }
+  for (let n = 1; n <= WEDGE_LABEL_MAX_LINES; n++) {
+    if (fontSize * n > ringWidth) {
+      continue;
+    }
+    const lines = wrapLabel(label, maxWidth, fontSize, n);
+    if (lines) {
+      return { lines, fontSize };
+    }
+  }
+  return null;
+}
+
+// Padding per side added to label boxes for collision detection:
+// measureText reports tight glyph advances, but the rendered label also
+// carries a 2.4px outline stroke plus glyph side bearings, so visually
+// touching boxes overlap before their measured boxes do.
+const WEDGE_LABEL_PAD_X = 4;
+const WEDGE_LABEL_PAD_Y = 1;
+
+function labelBox(item, cx, cy, rLabel) {
+  const mid = item.start + (item.end - item.start) / 2;
+  const [x, y] = polar(cx, cy, rLabel, mid);
+  const width =
+    Math.max(...item.lines.map((line) => measureLabel(line, item.fontSize))) +
+    2 * WEDGE_LABEL_PAD_X;
+  const height =
+    item.lines.length * item.fontSize * WEDGE_LABEL_LINE_HEIGHT +
+    2 * WEDGE_LABEL_PAD_Y;
+  return { x, y, width, height };
+}
+
+function boxesOverlap(a, b) {
+  // Stringent: any true clearance below the padding above counts as
+  // touching, so marginal collisions are resolved instead of missed.
+  return (
+    Math.abs(a.x - b.x) < (a.width + b.width) / 2 &&
+    Math.abs(a.y - b.y) < (a.height + b.height) / 2
+  );
+}
+
+function restrictedCandidate(item, span, rLabel, ringWidth) {
+  // Re-fit one label confined to its own wedge's arc width. Returns the
+  // re-fitted item, or null when restriction cannot improve it (unfittable
+  // or already identical) — never a deletion marker.
+  const arcWidth = rLabel * span * 0.95;
+  const refit = fitWedgeLabelRestricted(item.label, arcWidth, ringWidth);
+  if (!refit || refit.lines.join("\n") === item.lines.join("\n")) {
+    return null;
+  }
+  return { ...item, ...refit };
+}
+
+function resolveLabelOverlaps(labels, cx, cy, rLabel, ringWidth) {
+  // Labels arrive in angular (wedge) order. When two adjacent labels would
+  // touch, try restricting each side to its own arc width and apply the
+  // change that actually resolves the overlap: fewest lines wins, then
+  // biggest overflow, then narrower wedge. If neither side can resolve it
+  // (e.g. a tall wrapped label next to an already-minimal neighbor), both
+  // stay — a marginal touch beats a vanished label. Labels are only ever
+  // dropped at initial fit (wedge too small for a single word), never as
+  // a side effect of a neighbor. Wrap-only, never any font shrinking.
+  if (labels.length < 2) {
+    return labels;
+  }
+  const boxOf = (item) => labelBox(item, cx, cy, rLabel);
+  const resolved = labels.slice();
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (let i = 0; i < resolved.length; i++) {
+      const j = (i + 1) % resolved.length;
+      if (!resolved[i] || !resolved[j]) {
+        continue;
+      }
+      const boxI = boxOf(resolved[i]);
+      const boxJ = boxOf(resolved[j]);
+      if (!boxesOverlap(boxI, boxJ)) {
+        continue;
+      }
+      const spanI = resolved[i].end - resolved[i].start;
+      const spanJ = resolved[j].end - resolved[j].start;
+      const candI = restrictedCandidate(resolved[i], spanI, rLabel, ringWidth);
+      const candJ = restrictedCandidate(resolved[j], spanJ, rLabel, ringWidth);
+      const okI = candI && !boxesOverlap(boxOf(candI), boxJ);
+      const okJ = candJ && !boxesOverlap(boxI, boxOf(candJ));
+      let pick = -1;
+      if (okI && okJ) {
+        if (candI.lines.length !== candJ.lines.length) {
+          pick = candI.lines.length < candJ.lines.length ? i : j;
+        } else {
+          const overI = boxI.width - rLabel * spanI;
+          const overJ = boxJ.width - rLabel * spanJ;
+          if (overI === overJ) {
+            pick = spanI <= spanJ ? i : j;
+          } else {
+            pick = overI > overJ ? i : j;
+          }
+        }
+      } else if (okI) {
+        pick = i;
+      } else if (okJ) {
+        pick = j;
+      }
+      if (pick === i) {
+        resolved[i] = candI;
+        changed = true;
+      } else if (pick === j) {
+        resolved[j] = candJ;
+        changed = true;
+      }
+      // Else: unresolvable at constant font — keep both as they are.
+    }
+    if (!changed) {
       break;
     }
   }
-  return best;
+  return resolved;
 }
 
 function renderDonut(wedges) {
@@ -265,12 +434,16 @@ function renderDonut(wedges) {
     }
     const fitted = label && span > 1e-9 ? fitWedgeLabel(label, span, rLabel, ringWidth) : null;
     if (fitted) {
-      labels.push({ start: angle, end: next, ...fitted });
+      labels.push({ start: angle, end: next, label, ...fitted });
     }
     angle = next;
   }
+  const resolved = resolveLabelOverlaps(labels, cx, cy, rLabel, ringWidth);
 
-  for (const item of labels) {
+  for (const item of resolved) {
+    if (!item) {
+      continue;
+    }
     const mid = item.start + (item.end - item.start) / 2;
     const [x, y] = polar(cx, cy, rLabel, mid);
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -283,10 +456,13 @@ function renderDonut(wedges) {
     if (item.lines.length === 1) {
       text.textContent = item.lines[0];
     } else {
+      // Center the wrapped block on (x, y): first baseline sits half the
+      // block height above, the rest step down one line height at a time.
+      const firstDy = (-(item.lines.length - 1) * WEDGE_LABEL_LINE_HEIGHT) / 2;
       item.lines.forEach((line, i) => {
         const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
         tspan.setAttribute("x", String(x));
-        tspan.setAttribute("dy", i === 0 ? "-0.55em" : "1.15em");
+        tspan.setAttribute("dy", i === 0 ? `${firstDy}em` : `${WEDGE_LABEL_LINE_HEIGHT}em`);
         tspan.textContent = line;
         text.appendChild(tspan);
       });
