@@ -587,17 +587,26 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     spawned_into_cancel = _update_job["terminated"]
                 else:
                     spawned_into_cancel = True
-            if spawned_into_cancel:
+if spawned_into_cancel:
                 # Cancelled while spawning: kill it straight away.
                 _terminate_process(proc)
                 _finish_update_job(job_id, False, "update cancelled: cancelled by user")
                 self._json_status(409, {"error": "update cancelled: cancelled by user"})
                 return True
-            proc.join()
-            if _job_terminated(job_id):
-                _finish_update_job(job_id, False, "update cancelled: cancelled by user")
-                self._json_status(409, {"error": "update cancelled: cancelled by user"})
-                return True
+            # Wait for the process to finish. Use a generous timeout to avoid
+            # blocking forever if the child process hangs.
+            proc.join(timeout=max(1.0, overall_end - time.monotonic()))
+            if proc.is_alive():
+                if _job_terminated(job_id):
+                    _terminate_process(proc)
+                    _finish_update_job(job_id, False, "update cancelled: cancelled by user")
+                    self._json_status(409, {"error": "update cancelled: cancelled by user"})
+                    return True
+                else:
+                    _terminate_process(proc)
+                    _finish_update_job(job_id, False, "update timed out")
+                    self._plain_status(500, "update timed out")
+                    return True
             if proc.exitcode == 0:
                 try:
                     # Blocking take: the send lands in the OS pipe buffer,

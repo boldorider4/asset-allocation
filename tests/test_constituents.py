@@ -81,10 +81,21 @@ class _StubUpdateProcess:
     def __init__(self, target, args) -> None:
         self._target = target
         self._args = args
-        self._thread = threading.Thread(target=target, args=args, daemon=True)
+        self._thread = threading.Thread(target=self._run_wrapper, args=args, daemon=True)
         self.exitcode: int | None = None
         self.terminate_called = False
         self.kill_called = False
+        self._stop_event = threading.Event()
+
+    def _run_wrapper(self, *args) -> None:
+        try:
+            self._target(*args)
+        except SystemExit as e:
+            self.exitcode = e.code
+        except Exception:
+            self.exitcode = 1
+        finally:
+            self._stop_event.set()
 
     def start(self) -> None:
         self._thread.start()
@@ -96,12 +107,16 @@ class _StubUpdateProcess:
         self._thread.join(timeout)
         if not self._thread.is_alive() and self.exitcode is None:
             self.exitcode = 0
+        if (self.terminate_called or self.kill_called) and self.exitcode is None:
+            self.exitcode = 1
 
     def terminate(self) -> None:
         self.terminate_called = True
+        self._stop_event.set()
 
     def kill(self) -> None:
         self.kill_called = True
+        self._stop_event.set()
 
 
 _SPAWNED_STUBS: list[_StubUpdateProcess] = []
