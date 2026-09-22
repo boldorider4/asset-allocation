@@ -36,4 +36,4 @@ log_cli_date_format = "%H:%M:%S"
 
 [tool.setuptools]
 py-modules = ["allocation", "cli", "common", "context", "logger", "utils"]
-packages = ["position", "visual", "visual.plot", "visual.web", "visual.web.backend", "portfolio", "scrape"]
+packages = ["position", "visual", "visual.plot", "visual.web", "visual.web.backend", "portfolio", "scrape", "storage"]
