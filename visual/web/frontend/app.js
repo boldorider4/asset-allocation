@@ -185,7 +185,7 @@ function splitLabel(label) {
 // Single font size for every wedge label: labels are never shrunk to
 // fit. A label that fits at this size is drawn, otherwise it wraps (when
 // a neighbor forces a restriction) or is dropped.
-const WEDGE_LABEL_FONT_SIZE = 10;
+const WEDGE_LABEL_FONT_SIZE = 10.5;
 
 function fitWedgeLabel(label, span, rLabel, ringWidth) {
   const chord = 2 * rLabel * Math.sin(Math.min(span, Math.PI) / 2);
