@@ -101,22 +101,46 @@ def fold_unknown_sector_label(name: str) -> str:
 # empty lists are left untouched.
 _SPLIT_TOTAL_TOLERANCE = 1.0
 
+# Dust band (percentage points) for tiny negative split weights: vendors
+# (notably the DWS holdings API behind Xtrackers positions) occasionally
+# report small negative offsets (e.g. cash/accrual rows around -0.0003) from
+# float arithmetic. Weights in ``(-band, 0)`` are snapped to 0.0 with a
+# warning; genuinely negative weights pass through untouched so the strict
+# cache validator still rejects them.
+_SPLIT_DUST_TOLERANCE = 0.01
+
 
 def normalize_split_rows(
     rows: list[dict[str, float | str]] | None,
 ) -> list[dict[str, float | str]] | None:
     """Rescale split rows (``weight_pct``) to sum exactly 100 when plausible.
 
-    Returns ``None``/empty input unchanged, as well as totals that are
-    zero or further than ``_SPLIT_TOTAL_TOLERANCE`` from 100 (genuine
-    partial data must not be inflated).
+    Tiny negative weights within ``_SPLIT_DUST_TOLERANCE`` of zero are
+    snapped to 0.0 first (vendor float dust must not fail cache
+    validation). Returns ``None``/empty input unchanged, as well as totals
+    that are zero or further than ``_SPLIT_TOTAL_TOLERANCE`` from 100
+    (genuine partial data must not be inflated).
     """
     if not rows:
         return rows
-    total = sum(float(r["weight_pct"]) for r in rows)  # type: ignore[arg-type]
+    clamped: list[dict[str, float | str]] = []
+    dust_hit = False
+    for r in rows:
+        w = float(r["weight_pct"])  # type: ignore[arg-type]
+        if -_SPLIT_DUST_TOLERANCE < w < 0.0:
+            logger.warning(
+                "Position: clamping dust weight %.6f to 0 for %r",
+                w,
+                r["name"],
+            )
+            clamped.append({"name": r["name"], "weight_pct": 0.0})
+            dust_hit = True
+        else:
+            clamped.append(r)
+    total = sum(float(r["weight_pct"]) for r in clamped)  # type: ignore[arg-type]
     if total <= 0 or abs(total - 100.0) > _SPLIT_TOTAL_TOLERANCE:
-        return rows
-    if total == 100.0:
+        return clamped if dust_hit else rows
+    if total == 100.0 and not dust_hit:
         return rows
     factor = 100.0 / total
     logger.info(
@@ -124,7 +148,7 @@ def normalize_split_rows(
     )
     return [
         {"name": r["name"], "weight_pct": float(r["weight_pct"]) * factor}  # type: ignore[arg-type]
-        for r in rows
+        for r in clamped
     ]
 
 # MSCI EM core + common broad-EM / frontier names; English labels as on JustETF / feeds.

@@ -55,6 +55,60 @@ class TestNormalizeSplitRows(unittest.TestCase):
         rows = [{"name": "France", "weight_pct": 150.0}]
         self.assertEqual(normalize_split_rows(rows), rows)
 
+    def test_dust_negative_clamped_to_zero(self) -> None:
+        # DWS holdings API float dust (cf. IE00BLNMYC90 Switzerland
+        # -0.000335 weight_pct == -3.3513e-06 fraction): must not fail
+        # cache validation downstream.
+        rows = [
+            {"name": "United States", "weight_pct": 96.0},
+            {"name": "Germany", "weight_pct": 4.000335},
+            {"name": "Switzerland", "weight_pct": -0.000335},
+        ]
+        out = normalize_split_rows(rows)
+        assert out is not None
+        by_name = {r["name"]: float(r["weight_pct"]) for r in out}  # type: ignore[arg-type]
+        self.assertEqual(by_name["Switzerland"], 0.0)
+        for weight in by_name.values():
+            self.assertGreaterEqual(weight, 0.0)
+        self.assertAlmostEqual(sum(by_name.values()), 100.0)
+
+    def test_exact_100_with_dust_still_clamped(self) -> None:
+        # Total exactly 100 must not let dust slip through unclamped.
+        rows = [
+            {"name": "United States", "weight_pct": 99.999335},
+            {"name": "Germany", "weight_pct": 0.001},
+            {"name": "Switzerland", "weight_pct": -0.000335},
+        ]
+        out = normalize_split_rows(rows)
+        assert out is not None
+        by_name = {r["name"]: float(r["weight_pct"]) for r in out}  # type: ignore[arg-type]
+        self.assertEqual(by_name["Switzerland"], 0.0)
+
+    def test_genuine_negative_untouched(self) -> None:
+        # A real negative (e.g. short position) is not dust: it passes
+        # through so the strict cache validator still rejects it.
+        rows = [
+            {"name": "United States", "weight_pct": 105.0},
+            {"name": "Switzerland", "weight_pct": -5.0},
+        ]
+        self.assertEqual(normalize_split_rows(rows), rows)
+
+    def test_clamped_rows_stage_into_cache(self) -> None:
+        # End to end: scraped rows with vendor dust must survive the
+        # rows_to_fractions -> CacheEntry validation boundary.
+        from storage.records import CacheEntry
+
+        rows = [
+            {"name": "United States", "weight_pct": 96.0},
+            {"name": "Germany", "weight_pct": 4.000335},
+            {"name": "Switzerland", "weight_pct": -0.000335},
+        ]
+        staged = normalize_split_rows(rows)
+        fractions = CacheEntry.rows_to_fractions(staged)
+        entry = CacheEntry("IE00BLNMYC90", {"countries": fractions})
+        parsed = entry.to_dict()["countries"]
+        self.assertEqual(parsed["Switzerland"], 0.0)
+
 
 def _stub(*, value, sectors):
     return SimpleNamespace(
