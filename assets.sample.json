@@ -2,7 +2,7 @@
     "equity_portfolio": [
       {
         "name": "Amundi Core MSCI World UCITS ETF (Acc)",
-        "shares": 220,
+        "shares": 2200,
         "value": null,
         "broker": "scalable",
         "ISIN": "IE000BI8OT95",
@@ -12,7 +12,7 @@
       },
       {
         "name": "State Street SPDR S&P 400 U.S. Mid Cap UCITS ETF (Acc)",
-        "shares": 45,
+        "shares": 450,
         "value": 9469.5,
         "broker": "scalable",
         "ISIN": "IE00B4YBJ215",
@@ -22,7 +22,7 @@
       },
       {
         "name": "iShares Core S&P 500 UCITS ETF (Acc)",
-        "shares": 45,
+        "shares": 450,
         "value": 3400.25,
         "broker": "scalable",
         "ISIN": "IE00CXXXXXXXXX",
@@ -32,8 +32,8 @@
       },
       {
         "name": "iShares MSCI EM CTB Enhanced ESG UCITS ETF (Acc)",
-        "shares": 45,
-        "value": 400.25,
+        "shares": 900,
+        "value": 25000.25,
         "broker": "scalable",
         "ISIN": "IE00CYYYYYYYY",
         "dmem": 0,
@@ -44,7 +44,8 @@
     "bond_portfolio": [
       {
         "name": "Amundi Prime Euro Government Bond 0-1Y UCITS ETF (Acc)",
-        "shares": 100,
+        "short_name": "Bonds",
+        "shares": 9000,
         "value": null,
         "broker": "scalable",
         "ISIN": "LU2233156582",
@@ -55,19 +56,21 @@
     ],
     "fixed_maturity_bond_portfolio": [
       {
-        "name": "BNP Baripas EASY ESG Enhanced EUR Corp Bond December 2027 UCITS ETF (Acc)",
-        "shares": 1000,
+        "name": "Amundi Prime Euro Government Bond 0-1Y UCITS ETF (Acc)",
+        "short_name": "Tuition Savings",
+        "shares": 2500,
         "value": null,
         "broker": "scalable",
-        "ISIN": "LU2823898353",
+        "ISIN": "LU2233156582",
         "dmem": 1,
         "dmem_other": 1,
         "usavn": 0
       },
       {
         "name": "Festgeld",
+        "short_name": "Tuition Savings",
         "value": 1000,
-        "broker": "tf-bank",
+        "broker": "check24",
         "ISIN": null,
         "dmem": 1,
         "dmem_other": 1,
@@ -77,6 +80,7 @@
     "cash_portfolio": [
       {
         "name": "Tagesgeld",
+        "short_name": "Cash Fund",
         "value": 100,
         "broker": "scalable",
         "ISIN": null,
@@ -85,8 +89,9 @@
       },
       {
         "name": "Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc)",
+        "short_name": "Cash Fund",
         "shares": 80,
-        "value": 10100,
+        "value": 30100,
         "broker": "scalable",
         "ISIN": "LU0290358497",
         "dmem": 0.667,
@@ -98,12 +103,22 @@
       {
         "name": "EUWAX Gold II",
         "short_name": "Gold",
-        "shares": 20,
+        "shares": 200,
         "value": null,
         "broker": "scalable",
         "ISIN": "DE000EWG2LD7",
         "dmem": 0.88,
         "usavn": 0.625
+      }
+    ],
+    "pension_portfolio": [
+      {
+        "name": "Allianz Riester Rente",
+        "short_name": "Allianz",
+        "value": 34567.89,
+        "broker": "alte-leipziger",
+        "dmem": null,
+        "usavn": null
       }
     ]
 }
