@@ -121,6 +121,19 @@ class JsonStorage(Storage[T]):
         self._ensure_loaded()
         return str(key) in self._objects
 
+    # -- backend-neutral lifecycle (Storage ABC) ------------------------
+    def open(self) -> JsonStorage[T]:
+        """Load the file (idempotent; lenient on bad input)."""
+        return self.load()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{key: row.to_dict()}`` (wire format)."""
+        return self.to_plain_dict()
+
+    def persist(self) -> None:
+        """Atomically save staged writes (no-op when clean)."""
+        self.save()
+
     def close(self) -> None:
         # File-backend teardown: flush buffered writes.
         if self._dirty:

@@ -59,6 +59,22 @@ class PostgresStorage(Storage[T]):
         """Roll back the current transaction (``conn.rollback()``)."""
         raise NotImplementedError("PostgresStorage.rollback: self._conn.rollback()")
 
+    # -- backend-neutral lifecycle (Storage ABC) ------------------------
+    def open(self) -> PostgresStorage[T]:
+        """Connect + ensure table (``connect()`` + DDL)."""
+        self.connect()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Full-table scan as ``{key: payload}`` (bulk-only, not hot-path)."""
+        raise NotImplementedError(
+            "PostgresStorage.snapshot: SELECT key, payload FROM <table>"
+        )
+
+    def persist(self) -> None:
+        """Commit staged writes."""
+        self.commit()
+
     def __enter__(self) -> PostgresStorage[T]:
         self.connect()
         return self

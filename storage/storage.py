@@ -4,12 +4,21 @@
 ``StorageObject`` is a single row (a cache entry, an asset bucket, an
 ISIN registry record, ...). ``Storage`` manages rows keyed by string.
 
-The ABC is deliberately *point-access only*: ``get``/``put``/``add``/
-``upsert``/``remove``/``get_or_create``/``__contains__``/``close``.
-Lifecycle is backend-defined and lives on concrete backends, not here:
+The ABC covers point access (``get``/``put``/``add``/``upsert``/
+``remove``/``get_or_create``/``__contains__``) plus a backend-neutral
+lifecycle (``open``/``snapshot``/``persist``/``close``) whose semantics
+are backend-defined:
 
-* file backends: lazy ``load()``, dirty tracking, atomic ``save()``;
-* DB backends: ``connect()``, ``commit()``/``rollback()``, context manager.
+* file backends: ``open`` loads the file, ``persist`` atomically saves
+  staged writes, ``snapshot`` dumps the in-memory objects;
+* DB backends: ``open`` connects (+ ensures tables), ``persist``
+  commits, ``snapshot`` is a full-table scan (bulk-only);
+* memory backends: ``open``/``persist`` are no-ops, ``snapshot`` copies.
+
+Callers needing durability use ``persist()`` without caring which
+backend is wired. Backend-specific nouns (file ``load``/``save``/dirty
+flags, DB ``connect``/``commit``/``rollback``) stay on the concrete
+classes, never on this interface.
 
 Domain logic lives in repositories (see :mod:`storage.repositories`),
 which program against this interface so backends swap without touching them.
@@ -117,12 +126,40 @@ class Storage(ABC, Generic[T]):
     def __contains__(self, key: object) -> bool:
         ...
 
+    # -- backend-neutral lifecycle --------------------------------------
+    @abstractmethod
+    def open(self) -> Storage:
+        """Prepare the backend for use (idempotent).
+
+        File backends load their file; DB backends connect (+ ensure
+        tables); memory backends do nothing.
+        """
+        ...
+
+    @abstractmethod
+    def snapshot(self) -> dict[str, Any]:
+        """Whole content as plain ``{key: row.to_dict()}``.
+
+        Bulk-only: file/memory backends copy in-memory objects, DB
+        backends scan the table. Never on hot paths.
+        """
+        ...
+
+    @abstractmethod
+    def persist(self) -> None:
+        """Make staged writes durable.
+
+        File backends atomically save; DB backends commit; memory
+        backends do nothing.
+        """
+        ...
+
     @abstractmethod
     def close(self) -> None:
         """Backend-defined teardown.
 
-        File backends flush buffered writes; DB backends release the
-        connection *without* committing (use ``commit()`` or the context
-        manager for that). Must be safe to call without prior use.
+        Buffered backends persist staged writes first; transactional
+        backends release *without* committing (use ``persist()`` or the
+        context manager for that). Must be safe to call without prior use.
         """
         ...

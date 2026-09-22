@@ -69,6 +69,18 @@ class MemoryStorage(Storage[T]):
     def __len__(self) -> int:
         return len(self._objects)
 
+    # -- backend-neutral lifecycle (Storage ABC) ------------------------
+    def open(self) -> MemoryStorage[T]:
+        # Nothing to prepare.
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        return {k: o.to_dict() for k, o in self._objects.items()}
+
+    def persist(self) -> None:
+        # Nothing to persist.
+        pass
+
     def close(self) -> None:
         # Nothing to release; no buffered writes to flush.
         pass

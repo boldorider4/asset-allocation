@@ -10,14 +10,17 @@ from common import (
     ISIN_TO_PORTFOLIO,
 )
 from logger import attach_color_stderr_handler_for_module
+from storage.records import CacheEntry
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
 # Per-ISIN value in the cache (written by ``save_position_in_cache``).
-_CACHE_PRICE = "price"
-_CACHE_COUNTRIES = "countries"
-_CACHE_SECTORS = "sectors"
+# Aliases of the ``CacheEntry`` field names; kept so existing importers
+# (e.g. ``scrape.scalable``) are untouched.
+_CACHE_PRICE = CacheEntry.PRICE
+_CACHE_COUNTRIES = CacheEntry.COUNTRIES
+_CACHE_SECTORS = CacheEntry.SECTORS
 
 
 def parse_cache_entry(entry: Any) -> tuple[float | None, dict[str, float] | None, dict[str, float] | None]:
@@ -66,22 +69,31 @@ def save_position_in_cache(
     update_countries: bool = False,
     update_sectors: bool = False,
 ) -> None:
-    """Stage a cache update in ``ctx.cache`` (in-memory; flushed at end of run)."""
+    """Stage a cache update in ``ctx.cache`` (in-memory; flushed at end of run).
+
+    Validated write path: goes through ``ctx.cache_repo`` and mirrors the validated
+    row back into the plain ``ctx.cache`` dict.
+    """
     if not update_price and not update_countries and not update_sectors:
         return
-    cache = ctx.ensure_cache_loaded()
-    row = cache.get(isin)
-    if not isinstance(row, dict):
-        row = {}
-    else:
-        row = dict(row)
-    if update_price and price is not None:
-        row[_CACHE_PRICE] = price
-    if update_countries:
-        row[_CACHE_COUNTRIES] = countries_to_cache_fractions(countries)
-    if update_sectors:
-        row[_CACHE_SECTORS] = sectors_to_cache_fractions(sectors)
-    cache[isin] = row
+    ctx.ensure_cache_loaded()
+    # Exact parity with the former dict logic: a flagged-but-None split
+    # stages as ``{}`` (``rows_to_fractions([])``), not as a missing key.
+    if update_countries and countries is None:
+        countries = []
+    if update_sectors and sectors is None:
+        sectors = []
+    entry = ctx.cache_repo.stage(
+        isin,
+        price=price,
+        countries=countries,
+        sectors=sectors,
+        update_price=update_price,
+        update_countries=update_countries,
+        update_sectors=update_sectors,
+    )
+    if entry is not None:
+        ctx._mirror_cache_row(isin)
     ctx.mark_cache_dirty()
 
 
@@ -92,21 +104,15 @@ def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
     """
     if not ctx.config.fetch_prices:
         return
-    to_write = {
-        str(isin): float(price)
-        for isin, price in quotes.items()
-        if isin and price is not None
-    }
-    if not to_write:
+    ctx.ensure_cache_loaded()
+    count = ctx.cache_repo.stage_quotes(quotes)
+    if not count:
         return
-    cache = ctx.ensure_cache_loaded()
-    for isin, price in to_write.items():
-        row = cache.get(isin)
-        row = dict(row) if isinstance(row, dict) else {}
-        row[_CACHE_PRICE] = price
-        cache[isin] = row
+    for isin, price in quotes.items():
+        if isin and price is not None:
+            ctx._mirror_cache_row(str(isin))
     ctx.mark_cache_dirty()
-    logger.info("staged %d broker quote(s) in cache", len(to_write))
+    logger.info("staged %d broker quote(s) in cache", count)
 
 
 def _incognito_cached_price(ctx: Any, isin: str | None) -> float | None:
@@ -118,7 +124,8 @@ def _incognito_cached_price(ctx: Any, isin: str | None) -> float | None:
     """
     if not isin:
         return None
-    cached, _, _ = parse_cache_entry(ctx.ensure_cache_loaded().get(isin))
+    ctx.ensure_cache_loaded()
+    cached, _, _ = ctx.cache_repo.parsed(isin)
     return None if cached is None else float(cached)
 
 

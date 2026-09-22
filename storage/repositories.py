@@ -6,14 +6,16 @@ and adds domain logic. Swapping backends (JSON file ↔ Postgres ↔
 in-memory) never touches this code — only the backend instance passed
 to the constructor changes.
 
-Repositories use *only* point-access ABC methods
-(``get``/``put``/``upsert``/``remove``/``__contains__``), so every
-method here works on every backend. Lifecycle (file ``load``/``save``,
-DB ``connect``/``commit``) stays the caller's job.
+Repositories use *only* ABC methods (point access plus the
+backend-neutral lifecycle ``open``/``snapshot``/``persist``/``close``),
+so every method here works on every backend. Backend-specific nouns
+(file ``load``/``save``, DB ``connect``/``commit``) never appear here —
+or in callers, which drive durability through ``persist()`` alone.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from storage.memory_storage import MemoryStorage
@@ -21,6 +23,8 @@ from storage.records import DEFAULT_ISIN_RECORDS, AssetBucket, CacheEntry, IsinR
 from storage.storage import Storage
 
 __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
+
+logger = logging.getLogger(__name__)
 
 
 class CacheRepository:
@@ -109,6 +113,40 @@ class CacheRepository:
             self._backend.put(entry)
             return True
         return False
+
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> CacheRepository:
+        """Prepare the backend for use (idempotent)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole cache as plain ``{isin: row}`` (bulk-only, not hot-path)."""
+        return self._backend.snapshot()
+
+    def restore(self, rows: dict[str, Any]) -> int:
+        """Bulk-load plain rows with validation; skip bad rows with a warning.
+
+        Returns the number of rows restored. Used to push an externally
+        seeded plain dict (e.g. ``ctx.cache``) into the backend.
+        """
+        count = 0
+        for key, raw in rows.items():
+            try:
+                self._backend.put(CacheEntry.from_dict(str(key), raw))
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.warning("skipping bad cache row %r (%s)", key, exc)
+                continue
+            count += 1
+        return count
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()
 
 
 class AssetRepository:

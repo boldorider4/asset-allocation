@@ -4,10 +4,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from utils import (
-    parse_cache_entry,
-    save_position_in_cache,
-)
+from utils import save_position_in_cache
 from common import (
     BROKER,
     DMEM,
@@ -119,8 +116,11 @@ def factory(
 ) -> JustETFPosition | YFinancePosition:
     if ctx.cancel_event is not None and ctx.cancel_event.is_set():
         raise UpdateCancelled(f"cancelled before building position {isin}")
-    cache = ctx.ensure_cache_loaded()
-    cached_price, cached_countries, cached_sectors = parse_cache_entry(cache.get(isin))
+    # Validated read path: the plain-dict cache is synced into the store
+    # by ``ensure_cache_loaded``; ``parsed()`` coerces like the former
+    # ``parse_cache_entry`` over the raw dict.
+    ctx.ensure_cache_loaded()
+    cached_price, cached_countries, cached_sectors = ctx.cache_repo.parsed(isin)
     fetch_prices = ctx.config.fetch_prices
     fetch_geosplit = ctx.config.fetch_geosplit
     fetch_sectorsplit = ctx.config.fetch_sectorsplit

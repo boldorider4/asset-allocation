@@ -190,6 +190,71 @@ class TestMemoryStorage(unittest.TestCase):
             MemoryStorage(CacheEntry, {"BAD": {"price": -1.0}})
 
 
+class TestLifecycleVerbs(unittest.TestCase):
+    """Backend-neutral ``open``/``snapshot``/``persist``/``close`` on every backend."""
+
+    def test_open_snapshot_persist_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backends: list[tuple[str, Storage[CacheEntry]]] = [
+                ("json", JsonStorage(Path(tmp) / "cache.json", CacheEntry)),
+                ("memory", MemoryStorage(CacheEntry)),
+            ]
+            for name, store in backends:
+                with self.subTest(backend=name):
+                    store.open()
+                    store.upsert("IE00X", {"price": 7.5})
+                    store.persist()
+                    self.assertEqual(
+                        store.snapshot(), {"IE00X": {"price": 7.5}}
+                    )
+                    store.close()
+
+    def test_persist_is_noop_when_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cache.json"
+            store = JsonStorage(path, CacheEntry)
+            store.open()
+            store.persist()
+        self.assertFalse(path.exists())
+
+    def test_snapshot_is_a_copy(self) -> None:
+        store = MemoryStorage(CacheEntry, {"A": {"price": 1.0}})
+        snap = store.snapshot()
+        snap["A"]["price"] = 999.0
+        entry = store.get("A")
+        assert entry is not None
+        self.assertEqual(entry.price, 1.0)
+
+
+class TestCacheRepositoryLifecycle(unittest.TestCase):
+    def test_restore_is_lenient_and_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, make in _backends(tmp):
+                with self.subTest(backend=name):
+                    repo = CacheRepository(make())
+                    restored = repo.restore(
+                        {"GOOD": {"price": 1.0}, "BAD": {"price": -5.0}}
+                    )
+                    self.assertEqual(restored, 1)
+                    self.assertEqual(repo.parsed("GOOD"), (1.0, None, None))
+                    self.assertEqual(repo.parsed("BAD"), (None, None, None))
+
+    def test_open_snapshot_persist_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cache.json"
+            repo = CacheRepository(JsonStorage(path, CacheEntry))
+            repo.open()
+            repo.stage("IE00X", price=4.25, update_price=True)
+            repo.persist()
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved, {"IE00X": {"price": 4.25}})
+            fresh = CacheRepository(JsonStorage(path, CacheEntry))
+            fresh.open()
+            self.assertEqual(fresh.snapshot(), {"IE00X": {"price": 4.25}})
+            fresh.close()
+            repo.close()
+
+
 # ---------------------------------------------------------------------------
 # Repository composition: identical domain assertions on every backend
 # ---------------------------------------------------------------------------
@@ -323,6 +388,12 @@ class TestPostgresStub(unittest.TestCase):
             store.commit()
         with self.assertRaises(NotImplementedError):
             store.rollback()
+        with self.assertRaises(NotImplementedError):
+            store.open()
+        with self.assertRaises(NotImplementedError):
+            store.snapshot()
+        with self.assertRaises(NotImplementedError):
+            store.persist()
 
     def test_close_safe_without_connect(self) -> None:
         store = PostgresStorage("postgresql://localhost:5432/x", "cache", CacheEntry)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import configparser
-import json
 import logging
 import os
 import threading
@@ -175,6 +174,13 @@ class RuntimeContext:
     # position in ``position.factory``; ``None`` means non-cancellable.
     # Either a threading or a multiprocessing event (child-process runs).
     cancel_event: threading.Event | _MultiprocessingEvent | None = None
+    # Lazily built ``CacheRepository`` over a ``JsonStorage`` backend for
+    # ``config.cache_file``. The plain ``cache`` dict above stays the
+    # in-memory source of truth for reads; the repository is the
+    # validated write path (see ``restore`` / ``_mirror_cache_row``).
+    # Built once: ``cache_file`` is only ever set at config construction,
+    # never mutated afterwards.
+    _cache_repo: Any = field(default=None, init=False, repr=False)
 
     # -- portfolio --
     def load_portfolio(self, path: Path | None = None) -> None:
@@ -189,21 +195,42 @@ class RuntimeContext:
         _write(path or self.config.assets_file, self.portfolio)
 
     # -- cache (in-memory + flush) --
+    @property
+    def cache_repo(self):  # type: ignore[no-untyped-def]
+        """Validated cache access: ``CacheRepository`` over ``JsonStorage``.
+
+        Lazily built against ``config.cache_file``. All cache writes in
+        the update path go through here; the plain ``cache`` dict remains
+        the in-memory read model (mirrored on every write).
+        """
+        from storage.json_storage import JsonStorage
+        from storage.records import CacheEntry
+        from storage.repositories import CacheRepository
+
+        if self._cache_repo is None:
+            self._cache_repo = CacheRepository(
+                JsonStorage(self.config.cache_file, CacheEntry)
+            )
+        return self._cache_repo
+
+    def _mirror_cache_row(self, isin: str) -> None:
+        """Copy one validated repository row back into the plain ``cache`` dict."""
+        entry = self.cache_repo.get(str(isin))
+        if entry is None:
+            self.cache.pop(str(isin), None)
+        else:
+            self.cache[str(isin)] = entry.to_dict()
+
     def ensure_cache_loaded(self) -> dict[str, Any]:
         if self.cache_loaded:
+            # Dict may have been seeded/assigned directly (notably in
+            # tests): restore it into the repository so validated reads
+            # see it.
+            self.cache_repo.restore(self.cache)
             return self.cache
-        path = self.config.cache_file
-        logger.info("loading cache from %s", path)
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.cache = data if isinstance(data, dict) else {}
-        except FileNotFoundError:
-            logger.info("cache file not found, starting with empty cache")
-            self.cache = {}
-        except json.JSONDecodeError:
-            logger.warning("cache file %s is not valid JSON; starting empty", path)
-            self.cache = {}
+        logger.info("loading cache from %s", self.config.cache_file)
+        self.cache_repo.open()
+        self.cache = self.cache_repo.snapshot()
         self.cache_loaded = True
         self.cache_dirty = False
         return self.cache
@@ -214,16 +241,14 @@ class RuntimeContext:
     def flush_cache(self) -> None:
         if not self.cache_loaded or not self.cache_dirty:
             return
-        path = self.config.cache_file
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic write (temp file + rename) so a killed update never
-        # leaves a torn cache behind.
-        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(self.cache, f, indent=2)
-        os.replace(tmp_path, path)
+        # Dict is the source of truth (it may have been mutated directly):
+        # restore, then persist through repository verbs only — no backend
+        # nouns (``load``/``save``/``connect``/``commit``) appear here, so a
+        # future backend swap touches nothing in this method.
+        self.cache_repo.restore(self.cache)
+        self.cache_repo.persist()
         self.cache_dirty = False
-        logger.info("wrote cache to %s", path)
+        logger.info("wrote cache to %s", self.config.cache_file)
 
     # -- plotter selection (explicit, no module global) --
     def plotter_class(self):  # type: ignore[no-untyped-def]
