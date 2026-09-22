@@ -28,7 +28,6 @@ import logging
 import multiprocessing
 import subprocess
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -58,10 +57,6 @@ _UPDATE_TIMER = "asalloc-update.timer"
 _mp_ctx = multiprocessing.get_context("spawn")
 TERMINATE_GRACE_S = 5.0
 KILL_GRACE_S = 5.0
-# Upper bound for one endpoint-triggered update (fat updates take minutes).
-# When the deadline passes, the worker is terminated and the job is closed
-# so the sync button can never spin forever.
-UPDATE_TIMEOUT_S = 600.0
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
@@ -548,7 +543,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         """
         if urlsplit(self.path).path != "/api/update":
             return False
-        job_id: int | None = None
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
@@ -587,7 +581,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     cancel_event,
                 ),
             )
-            deadline = time.monotonic() + UPDATE_TIMEOUT_S
             with _update_lock:
                 if _update_job is not None and _update_job["id"] == job_id:
                     _update_job["process"] = proc
@@ -600,20 +593,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 _finish_update_job(job_id, False, "update cancelled: cancelled by user")
                 self._json_status(409, {"error": "update cancelled: cancelled by user"})
                 return True
-            # Wait for the process to finish, but never forever: a hung
-            # worker is terminated at the deadline so the job always closes.
-            proc.join(timeout=max(1.0, deadline - time.monotonic()))
-            if proc.is_alive():
-                if _job_terminated(job_id):
-                    _terminate_process(proc)
-                    _finish_update_job(job_id, False, "update cancelled: cancelled by user")
-                    self._json_status(409, {"error": "update cancelled: cancelled by user"})
-                    return True
-                else:
-                    _terminate_process(proc)
-                    _finish_update_job(job_id, False, "update timed out")
-                    self._plain_status(500, "update timed out")
-                    return True
+            proc.join()
+            if _job_terminated(job_id):
+                _finish_update_job(job_id, False, "update cancelled: cancelled by user")
+                self._json_status(409, {"error": "update cancelled: cancelled by user"})
+                return True
             if proc.exitcode == 0:
                 try:
                     # Blocking take: the send lands in the OS pipe buffer,
@@ -643,17 +627,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 return True
         except Exception as exc:
             logger.warning("programmatic update failed: %s", exc)
-            if job_id is not None:
-                # Never leave a job behind: an uncleared job reports
-                # updating:true forever and wedges the sync button.
-                try:
-                    _finish_update_job(job_id, False, f"update failed: {exc}")
-                except Exception as finish_exc:
-                    logger.warning("update job cleanup failed: %s", finish_exc)
-            try:
-                self._plain_status(500, f"update failed: {exc}")
-            except Exception:
-                pass
+            self._plain_status(500, f"update failed: {exc}")
             return True
         body = json.dumps({"updated": True}).encode("utf-8")
         self.send_response(200)
