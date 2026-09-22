@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared constants (portfolio bucket keys, position field keys, etc.)."""
 
 EQUITY_PORTFOLIO = "equity_portfolio"

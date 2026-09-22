@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Explicit runtime configuration and per-run state.
 
 Replaces the former module-level globals (``utils.portfolio``,

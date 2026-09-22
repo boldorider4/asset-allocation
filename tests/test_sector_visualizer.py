@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Sector chart prep: wedge filtering, breakdown wedges, and plot_sectors wiring."""
 
 from __future__ import annotations

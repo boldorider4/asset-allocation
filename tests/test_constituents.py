@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Constituents endpoint: sections, cells, icons, and the /constituents route."""
 
 from __future__ import annotations

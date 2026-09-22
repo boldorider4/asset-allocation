@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """DWS holdings JSON country aggregation and Xtrackers factory routing."""
 
 from __future__ import annotations

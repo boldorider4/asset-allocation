@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Invesco dng-api country aggregation and factory routing."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for ``update_traderepublic_etfs_in_portfolio`` (no pytr login)."""
 
 from __future__ import annotations

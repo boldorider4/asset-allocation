@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for ``update_oskar_etfs_in_portfolio`` (no Playwright)."""
 
 from __future__ import annotations

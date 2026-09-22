@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for OSKAR cockpit wait/click helpers (mocked Playwright page)."""
 
 from __future__ import annotations

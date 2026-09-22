@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Smoke test: OSKAR cockpit headless CLI login + «Aktuelle Gewichtung» fetch.
 

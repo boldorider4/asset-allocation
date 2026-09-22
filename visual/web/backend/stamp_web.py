@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Stamp asalloc version and GitHub URL into the copied web visualizer."""
 
 from __future__ import annotations

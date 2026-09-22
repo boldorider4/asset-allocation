@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Scalable Capital positions via the ``sc`` CLI (login, holdings, overnight, logout).
 """

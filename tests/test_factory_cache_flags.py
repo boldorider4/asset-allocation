@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Factory cache behavior for ``--fetch-prices`` and ``--fetch-geosplit``."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """RegionalPortfolio sector consolidation: value-weighted dict + __add__."""
 
 from __future__ import annotations

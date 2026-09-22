@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 from .plot.visual import SECTOR_PALETTE, Visual
 from .plot.web_chart import WebChart
 from .plot.pie_chart import PieChart

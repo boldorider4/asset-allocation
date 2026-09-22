@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for ``utils.load_portfolio`` and ``utils.write_portfolio``.
 
 Run from repo root::

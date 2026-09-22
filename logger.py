@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """CLI stderr logging: level tags and ANSI-colored level segment when stderr is a TTY."""
 
 from __future__ import annotations

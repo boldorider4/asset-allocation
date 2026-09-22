@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for Scalable holdings and overnight parsing."""
 
 from __future__ import annotations

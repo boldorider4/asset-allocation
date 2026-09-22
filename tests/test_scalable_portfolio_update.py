@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Unit tests for ``update_scalable_etfs_in_portfolio`` (no ``sc`` CLI)."""
 
 from __future__ import annotations

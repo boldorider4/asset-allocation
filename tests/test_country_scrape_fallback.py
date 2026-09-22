@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A failed JustETF country scrape warns and returns an empty list instead of aborting."""
 
 from __future__ import annotations
