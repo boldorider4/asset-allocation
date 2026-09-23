@@ -110,14 +110,14 @@ def main(ctx: RuntimeContext) -> None:
         ctx.configure_web_output(incognito=incognito)
         logger.info("Writing charts to %s", ctx.output_data_dir(incognito=incognito))
         total_growth_portfolio.plot_geosplit(
-            title="95-5 Equity Portfolio",
+            title="95-5 Equity Portfolio: Geo Breakdown",
             closing_title="Total Value: {tot_value}",
             label_fontsize=7,
             autopct_fontsize=7,
             incognito=incognito,
         )
         total_growth_portfolio.plot_sectors(
-            title="Sector Breakdown",
+            title="95-5 Equity Portfolio: Sector Breakdown",
             label_fontsize=7,
             autopct_fontsize=7,
             incognito=incognito,
