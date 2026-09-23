@@ -17,6 +17,7 @@ from common import (
 )
 from scrape.scalable import (
     ScalableHolding,
+    _CASH_FETCH_KEY,
     _TAGESGELD_FETCH_KEY,
     update_scalable_etfs_in_portfolio,
 )
@@ -192,6 +193,119 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         }
         update_scalable_etfs_in_portfolio(self.ctx)
         self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO], [])
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_updates_cash_value_in_place(self, mock_fetch) -> None:
+        self.ctx.portfolio[CASH_PORTFOLIO].append(
+            {
+                "name": "Cash",
+                "value": 1.0,
+                "broker": "scalable",
+                "ISIN": None,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE0006WW1TQ4": ScalableHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+            _TAGESGELD_FETCH_KEY: ScalableHolding(
+                isin=None,
+                name="Tagesgeld",
+                shares=None,
+                value=40.32,
+                price=None,
+                is_tagesgeld=True,
+            ),
+            _CASH_FETCH_KEY: ScalableHolding(
+                isin=None,
+                name="Cash",
+                shares=None,
+                value=12.5,
+                price=None,
+                is_cash=True,
+            ),
+        }
+        update_scalable_etfs_in_portfolio(self.ctx)
+        cash = [p for p in self.ctx.portfolio[CASH_PORTFOLIO] if p["name"] == "Cash"]
+        self.assertEqual(len(cash), 1)
+        self.assertEqual(cash[0]["value"], 12.5)
+        self.assertIsNone(cash[0]["shares"])
+        self.assertIsNone(cash[0]["ISIN"])
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_adds_cash_with_null_meta(self, mock_fetch) -> None:
+        mock_fetch.return_value = {
+            "IE0006WW1TQ4": ScalableHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+            _TAGESGELD_FETCH_KEY: ScalableHolding(
+                isin=None,
+                name="Tagesgeld",
+                shares=None,
+                value=40.32,
+                price=None,
+                is_tagesgeld=True,
+            ),
+            _CASH_FETCH_KEY: ScalableHolding(
+                isin=None,
+                name="Cash",
+                shares=None,
+                value=0.0,
+                price=None,
+                is_cash=True,
+            ),
+        }
+        update_scalable_etfs_in_portfolio(self.ctx)
+        cash = [p for p in self.ctx.portfolio[CASH_PORTFOLIO] if p["name"] == "Cash"]
+        self.assertEqual(len(cash), 1)
+        self.assertEqual(cash[0]["value"], 0.0)
+        self.assertIsNone(cash[0]["ISIN"])
+        self.assertIsNone(cash[0]["shares"])
+        self.assertIsNone(cash[0]["dmem"])
+        self.assertIsNone(cash[0]["dmem_other"])
+        self.assertIsNone(cash[0]["usavn"])
+        self.assertEqual(cash[0]["broker"], "scalable")
+        self.assertNotIn("short_name", cash[0])
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_removes_cash_when_breakdown_absent(self, mock_fetch) -> None:
+        self.ctx.portfolio[CASH_PORTFOLIO].append(
+            {
+                "name": "Cash",
+                "value": 1.0,
+                "broker": "scalable",
+                "ISIN": None,
+            }
+        )
+        mock_fetch.return_value = {
+            "IE0006WW1TQ4": ScalableHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+            _TAGESGELD_FETCH_KEY: ScalableHolding(
+                isin=None,
+                name="Tagesgeld",
+                shares=None,
+                value=40.32,
+                price=None,
+                is_tagesgeld=True,
+            ),
+        }
+        update_scalable_etfs_in_portfolio(self.ctx)
+        names = [p["name"] for p in self.ctx.portfolio[CASH_PORTFOLIO]]
+        self.assertNotIn("Cash", names)
+        self.assertIn("Tagesgeld", names)
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_empty_fetch_leaves_portfolio_unchanged(self, mock_fetch) -> None:

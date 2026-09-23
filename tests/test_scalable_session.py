@@ -7,7 +7,7 @@ import io
 import unittest
 from unittest.mock import patch
 
-from scrape.scalable import Scalable, fetch_scalable_etfs, _TAGESGELD_FETCH_KEY
+from scrape.scalable import Scalable, fetch_scalable_etfs, _CASH_FETCH_KEY, _TAGESGELD_FETCH_KEY
 
 
 class FakeProc:
@@ -46,6 +46,20 @@ HOLDINGS_JSON = """
 
 OVERNIGHT = "account_name: Tagesgeld\nbalance: 40.32\n"
 
+CASH_BREAKDOWN = """
+{"ok": true, "command": "broker cash-breakdown", "data": {"result": {
+  "cash_balance": 12.5,
+  "buying_power": 0,
+  "buying_power_without_credit": 0,
+  "available_credit_line": 0,
+  "loaned": 0,
+  "pending_buy_orders_amount": 0,
+  "possible_taxes": 0,
+  "derivatives_buying_power": 0,
+  "available_for_derivatives": 0
+}}}
+"""
+
 
 class TestScalableSession(unittest.TestCase):
     def test_login_streams_activation_url_then_commands_then_logout(self) -> None:
@@ -64,6 +78,8 @@ class TestScalableSession(unittest.TestCase):
                 return FakeProc(HOLDINGS_JSON)
             if sub[:1] == ["overnight"]:
                 return FakeProc(OVERNIGHT)
+            if sub[:2] == ["broker", "cash-breakdown"]:
+                return FakeProc(CASH_BREAKDOWN)
             if sub[:1] == ["logout"]:
                 return FakeProc("")
             raise AssertionError(cmd)
@@ -79,13 +95,50 @@ class TestScalableSession(unittest.TestCase):
         self.assertEqual(calls[0], ["sc", "login", "--local-read-only"])
         self.assertEqual(calls[1], ["sc", "broker", "holdings", "--json"])
         self.assertEqual(calls[2], ["sc", "overnight"])
-        self.assertEqual(calls[3], ["sc", "logout"])
+        self.assertEqual(calls[3], ["sc", "broker", "cash-breakdown", "--json"])
+        self.assertEqual(calls[4], ["sc", "logout"])
         # The browser answers for sc: stdin is closed, not inherited.
         self.assertIs(seen_kwargs.get("stdin"), subprocess.DEVNULL)
         browser.close.assert_called_once_with()
         self.assertIn("IE0006WW1TQ4", rows)
         self.assertIn(_TAGESGELD_FETCH_KEY, rows)
         self.assertEqual(rows[_TAGESGELD_FETCH_KEY].value, 40.32)
+        self.assertIn(_CASH_FETCH_KEY, rows)
+        self.assertEqual(rows[_CASH_FETCH_KEY].value, 12.5)
+        self.assertEqual(rows[_CASH_FETCH_KEY].name, "Cash")
+        self.assertTrue(rows[_CASH_FETCH_KEY].is_cash)
+
+    def test_cash_breakdown_failure_warns_and_continues(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_popen(cmd, **kwargs):
+            calls.append(list(cmd))
+            sub = cmd[1:]
+            if sub[:1] == ["login"]:
+                return FakeLoginProc(ACTIVATION_OUTPUT, rc=0, exit_after_polls=2)
+            if sub[:2] == ["broker", "holdings"]:
+                return FakeProc(HOLDINGS_JSON)
+            if sub[:1] == ["overnight"]:
+                return FakeProc(OVERNIGHT)
+            if sub[:2] == ["broker", "cash-breakdown"]:
+                return FakeProc("boom", rc=1, err="no such command")
+            if sub[:1] == ["logout"]:
+                return FakeProc("")
+            raise AssertionError(cmd)
+
+        page = _fake_page(frames=[_fake_frame()])
+        pw, _browser = _fake_playwright(page)
+        with (
+            patch("scrape.scalable.subprocess.Popen", side_effect=fake_popen),
+            patch("playwright.sync_api.sync_playwright", return_value=pw),
+        ):
+            with self.assertLogs("scrape.scalable", level="WARNING"):
+                rows = fetch_scalable_etfs(sc_bin="sc")
+
+        self.assertIn("IE0006WW1TQ4", rows)
+        self.assertIn(_TAGESGELD_FETCH_KEY, rows)
+        self.assertNotIn(_CASH_FETCH_KEY, rows)
+        self.assertEqual(calls[-1], ["sc", "logout"])
 
     def test_logout_runs_when_holdings_fail(self) -> None:
         calls: list[list[str]] = []

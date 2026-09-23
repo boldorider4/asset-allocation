@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
-from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
+from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, PRICE, SHARES, USAVN, VALUE
 from logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes, _CACHE_SECTORS, _CACHE_COUNTRIES
 
@@ -88,10 +88,21 @@ _CONFIRM_PATTERNS = (
 _TAGESGELD_NAME = "Tagesgeld"
 _TAGESGELD_FETCH_KEY = "__SCALABLE_TAGESGELD__"
 
+_CASH_NAME = "Cash"
+_CASH_FETCH_KEY = "__SCALABLE_CASH__"
+
+# Keys of the intermediate sc-row dicts built by the parsers below. The
+# lowercase ``isin`` is the ``sc`` wire shape (not the assets-file shape,
+# where ``common.ISIN`` is ``"ISIN"``); ``NAME``/``SHARES``/``VALUE``/``PRICE``
+# from ``common`` cover the rest, so only the wire-only keys live here.
+_ROW_ISIN = "isin"
+_ROW_IS_TAGESGELD = "is_tagesgeld"
+_ROW_IS_CASH = "is_cash"
+
 
 @dataclass(frozen=True)
 class ScalableHolding:
-    """One broker holding or overnight cash row from ``sc``."""
+    """One broker holding, overnight cash row, or cash-breakdown row from ``sc``."""
 
     isin: str | None
     name: str
@@ -99,6 +110,7 @@ class ScalableHolding:
     value: float
     price: float | None
     is_tagesgeld: bool = False
+    is_cash: bool = False
 
 
 def _stream_chunks(stream):
@@ -601,6 +613,10 @@ class Scalable:
         self._require_session()
         return self._run(["overnight"], timeout=_CMD_TIMEOUT_S)
 
+    def cash_breakdown_json(self) -> str:
+        self._require_session()
+        return self._run(["broker", "cash-breakdown", "--json"], timeout=_CMD_TIMEOUT_S)
+
     def _require_session(self) -> None:
         if not self._logged_in:
             raise RuntimeError("sc session is not logged in")
@@ -711,11 +727,11 @@ def parse_holdings_json(raw: str) -> list[dict[str, Any]]:
         )
         rows.append(
             {
-                "isin": isin,
-                "name": name,
-                "shares": shares,
-                "value": value,
-                "price": price,
+                _ROW_ISIN: isin,
+                NAME: name,
+                SHARES: shares,
+                VALUE: value,
+                PRICE: price,
             }
         )
     return rows
@@ -793,25 +809,90 @@ def overnight_tagesgeld_row(raw: str) -> dict[str, Any] | None:
         None,
     )
     return {
-        "isin": None,
-        "name": _TAGESGELD_NAME,
-        "shares": None,
-        "value": balance,
-        "price": None,
-        "is_tagesgeld": True,
+        _ROW_ISIN: None,
+        NAME: _TAGESGELD_NAME,
+        SHARES: None,
+        VALUE: balance,
+        PRICE: None,
+        _ROW_IS_TAGESGELD: True,
+    }
+
+
+def _find_cash_balance_object(node: Any) -> dict[str, Any] | None:
+    """Depth-first search for the cash-breakdown object in a JSON payload."""
+    if isinstance(node, dict):
+        if "cash_balance" in node:
+            return node
+        for value in node.values():
+            found = _find_cash_balance_object(value)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _find_cash_balance_object(value)
+            if found is not None:
+                return found
+    return None
+
+
+def parse_cash_breakdown_json(raw: str) -> dict[str, str]:
+    """
+    Parse ``sc broker cash-breakdown --json`` into flat string fields.
+
+    The breakdown nests inside an ``ok``/``command``/``data`` envelope;
+    only the object carrying ``cash_balance`` is returned.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"sc broker cash-breakdown output is not JSON: {e}") from e
+    account = _find_cash_balance_object(payload)
+    if account is None:
+        return {}
+    return {str(k): str(v) for k, v in account.items() if v is not None}
+
+
+def cash_breakdown_cash_row(raw: str) -> dict[str, Any] | None:
+    """Return a Cash dict from cash-breakdown stdout, or None if absent."""
+    text = raw.strip()
+    if not text:
+        return None
+    data = parse_cash_breakdown_json(text)
+    balance_s = data.get("cash_balance")
+    if not balance_s:
+        return None
+    try:
+        balance = float(balance_s)
+    except ValueError as e:
+        raise ValueError(f"sc cash-breakdown cash_balance is not a number: {balance_s!r}") from e
+    logger.info(
+        "scalable scrape: ISIN=%s name=%s quote_mid_price=%s valuation=%s quantity=%s",
+        None,
+        _CASH_NAME,
+        None,
+        balance,
+        None,
+    )
+    return {
+        _ROW_ISIN: None,
+        NAME: _CASH_NAME,
+        SHARES: None,
+        VALUE: balance,
+        PRICE: None,
+        _ROW_IS_CASH: True,
     }
 
 
 def holdings_to_rows(holdings: list[dict[str, Any]]) -> dict[str, ScalableHolding]:
     rows: dict[str, ScalableHolding] = {}
     for item in holdings:
-        isin = item["isin"]
+        isin = item[_ROW_ISIN]
         rows[isin] = ScalableHolding(
             isin=isin,
-            name=item["name"],
-            shares=item["shares"],
-            value=item["value"],
-            price=item["price"],
+            name=item[NAME],
+            shares=item[SHARES],
+            value=item[VALUE],
+            price=item[PRICE],
             is_tagesgeld=False,
         )
     return rows
@@ -822,8 +903,9 @@ def fetch_scalable_etfs(
 ) -> dict[str, ScalableHolding]:
     """
     Login with ``sc`` via a headless browser device activation, scrape
-    broker holdings and overnight Tagesgeld, then logout. Credentials are
-    prompted in the terminal, 2FA stays on the phone.
+    broker holdings, overnight Tagesgeld, and the cash-breakdown Cash
+    balance, then logout. Credentials are prompted in the terminal, 2FA
+    stays on the phone.
     """
     rows: dict[str, ScalableHolding] = {}
     session = Scalable(sc_bin=sc_bin)
@@ -836,14 +918,31 @@ def fetch_scalable_etfs(
         if tagesgeld is not None:
             rows[_TAGESGELD_FETCH_KEY] = ScalableHolding(
                 isin=None,
-                name=tagesgeld["name"],
+                name=tagesgeld[NAME],
                 shares=None,
-                value=tagesgeld["value"],
+                value=tagesgeld[VALUE],
                 price=None,
                 is_tagesgeld=True,
             )
         else:
             logger.info("scalable: overnight scan returned no Tagesgeld")
+        try:
+            cash_breakdown_raw = session.cash_breakdown_json()
+        except Exception as exc:
+            logger.warning("scalable: cash-breakdown unavailable, skipping Cash: %s", exc)
+        else:
+            cash = cash_breakdown_cash_row(cash_breakdown_raw)
+            if cash is not None:
+                rows[_CASH_FETCH_KEY] = ScalableHolding(
+                    isin=None,
+                    name=cash[NAME],
+                    shares=None,
+                    value=cash[VALUE],
+                    price=None,
+                    is_cash=True,
+                )
+            else:
+                logger.info("scalable: cash-breakdown returned no cash_balance")
     finally:
         session.logout()
     return rows
@@ -875,6 +974,12 @@ def _is_portfolio_position_scalable_tagesgeld(position: dict[str, Any]) -> bool:
     return pos_name == _TAGESGELD_NAME and pos_broker == _SCALABLE
 
 
+def _is_portfolio_position_scalable_cash(position: dict[str, Any]) -> bool:
+    pos_name = position.get("name") or position.get("Name") or ""
+    pos_broker = position.get("broker") or position.get("Broker")
+    return pos_name == _CASH_NAME and pos_broker == _SCALABLE
+
+
 def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
     ctx.scalable_holdings = fetch_scalable_etfs()
     fetched = ctx.scalable_holdings
@@ -888,12 +993,14 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
     fetched_by_isin = {
         holding.isin: holding
         for holding in fetched.values()
-        if not holding.is_tagesgeld and holding.isin
+        if not holding.is_tagesgeld and not holding.is_cash and holding.isin
     }
     fetched_tagesgeld = fetched.get(_TAGESGELD_FETCH_KEY)
+    fetched_cash = fetched.get(_CASH_FETCH_KEY)
     to_remove: list[tuple[str, dict[str, Any]]] = []
     matched_isins: set[str] = set()
     tagesgeld_matched = False
+    cash_matched = False
 
     for bucket, positions in ctx.portfolio.items():
         for position in positions:
@@ -912,6 +1019,19 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
                     position["shares"] = None
                     position["ISIN"] = None
                     tagesgeld_matched = True
+                continue
+            if _is_portfolio_position_scalable_cash(position):
+                if fetched_cash is None:
+                    to_remove.append((bucket, position))
+                    logger.info(
+                        "update_scalable_etfs_in_portfolio: removing stale Scalable Cash from %r",
+                        bucket,
+                    )
+                else:
+                    position["value"] = fetched_cash.value
+                    position["shares"] = None
+                    position["ISIN"] = None
+                    cash_matched = True
                 continue
             pos_isin = position.get("ISIN") or position.get("isin")
             holding = fetched_by_isin.get(pos_isin)
@@ -946,6 +1066,25 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
             fetched_tagesgeld.value,
         )
 
+    if fetched_cash is not None and not cash_matched:
+        ctx.portfolio.setdefault(CASH_PORTFOLIO, []).append(
+            {
+                NAME: _CASH_NAME,
+                ISIN: None,
+                SHARES: None,
+                VALUE: fetched_cash.value,
+                BROKER: _SCALABLE,
+                DMEM: None,
+                DMEM_OTHER: None,
+                USAVN: None,
+            }
+        )
+        logger.info(
+            "update_scalable_etfs_in_portfolio: added Cash to %r (value=%s)",
+            CASH_PORTFOLIO,
+            fetched_cash.value,
+        )
+
     for holding in fetched_by_isin.values():
         if holding.isin in matched_isins:
             continue
@@ -978,6 +1117,8 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
     _clear_sector_cache_for_isins(ctx, matched_isins)
     if fetched_tagesgeld is not None:
         _clear_sector_cache_for_isins(ctx, {_TAGESGELD_FETCH_KEY})
+    if fetched_cash is not None:
+        _clear_sector_cache_for_isins(ctx, {_CASH_FETCH_KEY})
 
     for bucket, position in to_remove:
         ctx.portfolio[bucket].remove(position)

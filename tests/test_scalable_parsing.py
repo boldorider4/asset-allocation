@@ -7,7 +7,9 @@ import json
 import unittest
 
 from scrape.scalable import (
+    cash_breakdown_cash_row,
     overnight_tagesgeld_row,
+    parse_cash_breakdown_json,
     parse_holdings_json,
     parse_overnight_text,
 )
@@ -189,6 +191,64 @@ class TestParseOvernight(unittest.TestCase):
     def test_empty_overnight_is_absent(self) -> None:
         self.assertIsNone(overnight_tagesgeld_row(""))
         self.assertIsNone(overnight_tagesgeld_row("account_name: Tagesgeld\n"))
+
+
+CASH_BREAKDOWN_JSON = """
+{
+  "ok": true,
+  "command": "broker cash-breakdown",
+  "data": {
+    "result": {
+      "cash_balance": 0,
+      "buying_power": 0,
+      "buying_power_without_credit": 0,
+      "available_credit_line": 0,
+      "loaned": 0,
+      "pending_buy_orders_amount": 0,
+      "possible_taxes": 0,
+      "derivatives_buying_power": 0,
+      "available_for_derivatives": 0
+    }
+  }
+}
+"""
+
+
+class TestParseCashBreakdown(unittest.TestCase):
+    def test_parses_cash_balance_from_envelope(self) -> None:
+        data = parse_cash_breakdown_json(CASH_BREAKDOWN_JSON)
+        self.assertEqual(data["cash_balance"], "0")
+
+    def test_cash_row_shape(self) -> None:
+        row = cash_breakdown_cash_row(CASH_BREAKDOWN_JSON)
+        assert row is not None
+        self.assertEqual(row["name"], "Cash")
+        self.assertEqual(row["value"], 0.0)
+        self.assertIsNone(row["isin"])
+        self.assertIsNone(row["shares"])
+        self.assertIsNone(row["price"])
+        self.assertTrue(row["is_cash"])
+
+    def test_nonzero_balance(self) -> None:
+        raw = CASH_BREAKDOWN_JSON.replace('"cash_balance": 0', '"cash_balance": 1234.56')
+        row = cash_breakdown_cash_row(raw)
+        assert row is not None
+        self.assertEqual(row["value"], 1234.56)
+
+    def test_missing_cash_balance_is_absent(self) -> None:
+        self.assertIsNone(cash_breakdown_cash_row(""))
+        self.assertIsNone(
+            cash_breakdown_cash_row('{"ok": true, "data": {"result": {"buying_power": 0}}}')
+        )
+
+    def test_non_numeric_cash_balance_rejected(self) -> None:
+        raw = CASH_BREAKDOWN_JSON.replace('"cash_balance": 0', '"cash_balance": "lots"')
+        with self.assertRaises(ValueError):
+            cash_breakdown_cash_row(raw)
+
+    def test_rejects_invalid_json(self) -> None:
+        with self.assertRaises(ValueError):
+            cash_breakdown_cash_row("not-json")
 
 
 if __name__ == "__main__":
