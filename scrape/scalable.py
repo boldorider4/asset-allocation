@@ -948,22 +948,42 @@ def fetch_scalable_etfs(
     return rows
 
 
-def _clear_sector_cache_for_isins(ctx: RuntimeContext, isins: set[str] | str) -> None:
+def _clear_sector_cache_for_isins(
+    ctx: RuntimeContext,
+    isins: set[str] | str,
+    *,
+    clear_countries: bool = True,
+    clear_sectors: bool = True,
+) -> None:
     """Clear stale sector/country cache for the given ISINs so they get
-    refetched from JustETF on next access."""
+    refetched from JustETF on next access.
+
+    Only the requested fields are cleared: splits freshly scraped this
+    run must be kept, or the flush at end of run persists their absence.
+    """
     if isinstance(isins, str):
         isins = {isins}
+    fields = [
+        field
+        for field, wanted in (
+            (_CACHE_COUNTRIES, clear_countries),
+            (_CACHE_SECTORS, clear_sectors),
+        )
+        if wanted
+    ]
+    if not fields:
+        return
     ctx.ensure_cache_loaded()
     for isin in isins:
         if not isin:
             continue
         # Validated write path: clears the fields in the store, then
         # mirrors the row back into the plain ``ctx.cache`` dict.
-        ctx.cache_repo.clear_fields(isin, _CACHE_SECTORS, _CACHE_COUNTRIES)
+        ctx.cache_repo.clear_fields(isin, *fields)
         row = ctx.cache.get(isin)
         if isinstance(row, dict):
-            row.pop(_CACHE_SECTORS, None)
-            row.pop(_CACHE_COUNTRIES, None)
+            for field in fields:
+                row.pop(field, None)
             ctx.cache[isin] = row
     ctx.mark_cache_dirty()
 
@@ -1113,8 +1133,17 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
         {holding.isin: holding.price for holding in fetched_by_isin.values()}
     )
     # Clear stale sector/country cache for updated ISINs so they get
-    # refetched from JustETF on next access.
-    _clear_sector_cache_for_isins(ctx, matched_isins)
+    # refetched from JustETF on next access — but only what was NOT
+    # freshly scraped this run. The factory already staged fresh splits
+    # when the fetch flags are on; wiping them would delete data that the
+    # end-of-run flush then persists as gone.
+    if not ctx.config.fetch_geosplit or not ctx.config.fetch_sectorsplit:
+        _clear_sector_cache_for_isins(
+            ctx,
+            matched_isins,
+            clear_countries=not ctx.config.fetch_geosplit,
+            clear_sectors=not ctx.config.fetch_sectorsplit,
+        )
     if fetched_tagesgeld is not None:
         _clear_sector_cache_for_isins(ctx, {_TAGESGELD_FETCH_KEY})
     if fetched_cash is not None:

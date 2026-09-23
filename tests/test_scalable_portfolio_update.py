@@ -194,6 +194,60 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         update_scalable_etfs_in_portfolio(self.ctx)
         self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO], [])
 
+    def _seed_split_cache(self) -> None:
+        self.ctx.cache["IE0006WW1TQ4"] = {
+            "price": 40.315,
+            "countries": {"United States": 0.9},
+            "sectors": {"Technology": 0.5},
+        }
+
+    def _matched_holding(self) -> dict:
+        return {
+            "IE0006WW1TQ4": ScalableHolding(
+                isin="IE0006WW1TQ4",
+                name="Xtrackers",
+                shares=4,
+                value=140.0,
+                price=40.315,
+            ),
+        }
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_fresh_splits_survive_update_when_flags_on(self, mock_fetch) -> None:
+        # The reported bug: --fetch-geosplit --fetch-sectorsplit stages
+        # fresh splits, then the update wiped them from the store.
+        self.ctx.config.fetch_geosplit = True
+        self.ctx.config.fetch_sectorsplit = True
+        self._seed_split_cache()
+        mock_fetch.return_value = self._matched_holding()
+        update_scalable_etfs_in_portfolio(self.ctx)
+        row = self.ctx.cache["IE0006WW1TQ4"]
+        self.assertEqual(row["countries"], {"United States": 0.9})
+        self.assertEqual(row["sectors"], {"Technology": 0.5})
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_stale_splits_cleared_when_flags_off(self, mock_fetch) -> None:
+        # Legacy path: nothing freshly scraped, so stale splits are
+        # cleared for refetch on next access.
+        self._seed_split_cache()
+        mock_fetch.return_value = self._matched_holding()
+        update_scalable_etfs_in_portfolio(self.ctx)
+        row = self.ctx.cache["IE0006WW1TQ4"]
+        self.assertNotIn("countries", row)
+        self.assertNotIn("sectors", row)
+        self.assertEqual(row["price"], 40.315)
+
+    @patch("scrape.scalable.fetch_scalable_etfs")
+    def test_mixed_flags_clear_only_unscraped_field(self, mock_fetch) -> None:
+        self.ctx.config.fetch_geosplit = True
+        self.ctx.config.fetch_sectorsplit = False
+        self._seed_split_cache()
+        mock_fetch.return_value = self._matched_holding()
+        update_scalable_etfs_in_portfolio(self.ctx)
+        row = self.ctx.cache["IE0006WW1TQ4"]
+        self.assertEqual(row["countries"], {"United States": 0.9})
+        self.assertNotIn("sectors", row)
+
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_updates_cash_value_in_place(self, mock_fetch) -> None:
         self.ctx.portfolio[CASH_PORTFOLIO].append(

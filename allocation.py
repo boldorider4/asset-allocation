@@ -58,19 +58,27 @@ def main(ctx: RuntimeContext) -> None:
         updated_isins = update_scalable_etfs_in_portfolio(ctx)
         ctx.flush_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
-        # Invalidate sector/country cache on affected Position objects and refresh Portfolio sector aggregation
-        for portfolio in [
-            equity_portfolio,
-            fixed_maturity_bond_portfolio,
-            cash_portfolio,
-            non_regional_bond_portfolio,
-            commodity_portfolio,
-            pension_portfolio,
-        ]:
-            for position in portfolio._positions:
-                if position.isin in updated_isins:
-                    position.invalidate_cache()
-            portfolio.refresh_sectors()
+        # Invalidate staged sectors on affected Position objects and
+        # refresh Portfolio sector aggregation — but only what was NOT
+        # freshly scraped this run. With --fetch-geosplit/--fetch-sectorsplit
+        # the factory already built these objects from fresh splits, so
+        # invalidating would just burn a redundant network round-trip per
+        # ISIN (and risk empty rows on fetch failure). Countries are never
+        # invalidated: they are construction-time values with no refresh
+        # path by design (their store side stays gated in the scraper).
+        if not ctx.config.fetch_geosplit or not ctx.config.fetch_sectorsplit:
+            for portfolio in [
+                equity_portfolio,
+                fixed_maturity_bond_portfolio,
+                cash_portfolio,
+                non_regional_bond_portfolio,
+                commodity_portfolio,
+                pension_portfolio,
+            ]:
+                for position in portfolio._positions:
+                    if position.isin in updated_isins:
+                        position.invalidate_sectors()
+                portfolio.refresh_sectors()
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")

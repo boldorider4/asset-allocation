@@ -411,10 +411,14 @@ class Position(ABC):
     def sectors(self) -> list[dict[str, float | str]] | None:
         return self._sectors
 
-    def invalidate_cache(self) -> None:
-        """Clear cached sectors and countries so they are refetched on next access."""
+    def invalidate_sectors(self) -> None:
+        """Clear staged sector rows so they are refetched on next access.
+
+        Countries (and the DMEM/USAVN derived from them at construction)
+        are intentionally untouched: they are construction-time values
+        with no refresh path by design.
+        """
         self._sectors = None
-        self._countries = None
 
     def __str__(self) -> str:
         countries_list = self._countries

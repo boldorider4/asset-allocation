@@ -193,8 +193,9 @@ class Portfolio:
     def refresh_sectors(self) -> None:
         """Refresh the cached sector aggregation from Position objects.
 
-        Call this after Position objects have had their sector cache invalidated
-        (e.g. after a data update that may have changed sector allocations).
+        Call this after Position objects have had their staged sectors
+        invalidated (see ``Position.invalidate_sectors``), e.g. after a
+        data update that may have changed sector allocations.
         """
         self._sectors = self._calculate_sectors()
 
