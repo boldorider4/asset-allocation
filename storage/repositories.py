@@ -180,6 +180,40 @@ class AssetRepository:
     def remove_bucket(self, bucket: str) -> None:
         self._backend.remove(bucket)
 
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> AssetRepository:
+        """Prepare the backend for use (idempotent)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{bucket: positions}`` (bulk-only, not hot-path)."""
+        return self._backend.snapshot()
+
+    def restore(self, rows: dict[str, Any]) -> int:
+        """Bulk-load plain buckets with validation; skip bad ones with a warning.
+
+        Returns the number of buckets restored. Used to push an externally
+        seeded plain dict (e.g. ``ctx.portfolio``) into the backend.
+        """
+        count = 0
+        for key, raw in rows.items():
+            try:
+                self._backend.put(AssetBucket.from_dict(str(key), raw))
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.warning("skipping bad asset bucket %r (%s)", key, exc)
+                continue
+            count += 1
+        return count
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()
+
 
 class IsinRegistry:
     """Issuer allow-list registry over any backend (in-memory by default)."""

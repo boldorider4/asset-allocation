@@ -345,6 +345,56 @@ class TestAssetRepositoryComposition(unittest.TestCase):
                     repo.remove_bucket("equity_portfolio")
                     self.assertIsNone(repo.get_positions("equity_portfolio"))
 
+    def test_lifecycle_round_trip(self) -> None:
+        data = {"equity_portfolio": [{"ISIN": "X", "value": 1.0}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            backends: list[tuple[str, Storage[AssetBucket]]] = [
+                ("json", JsonStorage(Path(tmp) / "assets.json", AssetBucket)),
+                ("memory", MemoryStorage(AssetBucket)),
+            ]
+            for name, backend in backends:
+                with self.subTest(backend=name):
+                    repo = AssetRepository(backend)
+                    repo.open()
+                    self.assertEqual(repo.restore(data), 1)
+                    self.assertEqual(repo.snapshot(), data)
+                    repo.persist()
+                    repo.close()
+
+    def test_restore_skips_bad_buckets(self) -> None:
+        repo = AssetRepository(MemoryStorage(AssetBucket))
+        restored = repo.restore(
+            {
+                "good": [{"ISIN": "X"}],
+                "bad": "not-a-list",
+                "also-bad": [{"ISIN": "Y"}, "nope"],
+            }
+        )
+        self.assertEqual(restored, 1)
+        self.assertEqual(repo.get_positions("good"), [{"ISIN": "X"}])
+        self.assertIsNone(repo.get_positions("bad"))
+
+    def test_json_persist_matches_write_portfolio_bytes(self) -> None:
+        from utils import write_portfolio  # noqa: E402
+
+        data = {
+            "equity_portfolio": [{"ISIN": "X", "value": 1.0}],
+            "bond_portfolio": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            expected = Path(tmp) / "expected.json"
+            write_portfolio(expected, data)  # type: ignore[arg-type]
+            actual = Path(tmp) / "actual.json"
+            repo = AssetRepository(JsonStorage(actual, AssetBucket))
+            repo.open()
+            repo.restore(data)
+            repo.persist()
+            # Byte-identical: same atomic tmp+rename write, indent=2,
+            # non-ASCII preserved, trailing newline.
+            self.assertEqual(
+                actual.read_bytes(), expected.read_bytes()
+            )
+
 
 class TestIsinRegistryComposition(unittest.TestCase):
     def test_seeded_registry_all_issuers(self) -> None:

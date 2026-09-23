@@ -220,7 +220,7 @@ def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
                     position["shares"] = shares
                     updated_count += 1
         if updated_count:
-            ctx.flush_portfolio()
+            ctx.persist_portfolio()
             logger.info(
                 "wrote %d OSKAR share estimate(s) to portfolio file",
                 updated_count,
@@ -249,7 +249,7 @@ def persist_fetched_values_in_portfolio(ctx: Any) -> None:
                     position["value"] = new_value
                     updated_count += 1
         if updated_count:
-            ctx.flush_portfolio()
+            ctx.persist_portfolio()
             logger.info(
                 "wrote %d fetch-prices value(s) to portfolio file",
                 updated_count,

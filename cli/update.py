@@ -44,19 +44,19 @@ def main(ctx: RuntimeContext) -> None:
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
-        ctx.flush_portfolio()
+        ctx.persist_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
     if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
         update_scalable_etfs_in_portfolio(ctx)
-        ctx.flush_portfolio()
+        ctx.persist_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
         update_traderepublic_etfs_in_portfolio(ctx)
-        ctx.flush_portfolio()
+        ctx.persist_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
     # Composition from the final dicts: the factory stages cache backfills

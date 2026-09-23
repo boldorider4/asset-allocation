@@ -303,18 +303,92 @@ class RuntimeContext:
     # Built once: ``cache_file`` is only ever set at config construction,
     # never mutated afterwards.
     _cache_repo: Any = field(default=None, init=False, repr=False)
+    # Lazily built ``AssetRepository`` over a ``JsonStorage`` backend for
+    # ``config.assets_file``. The plain ``portfolio`` dict stays the
+    # in-memory model mutated by scrapers and persist helpers; the
+    # repository owns file persistence only.
+    _asset_repo: Any = field(default=None, init=False, repr=False)
 
     # -- portfolio --
+    @property
+    def asset_repo(self):  # type: ignore[no-untyped-def]
+        """Validated assets access: ``AssetRepository`` over ``JsonStorage``.
+
+        Lazily built against ``config.assets_file``.
+        """
+        from storage.json_storage import JsonStorage
+        from storage.records import AssetBucket
+        from storage.repositories import AssetRepository
+
+        if self._asset_repo is None:
+            self._asset_repo = AssetRepository(
+                JsonStorage(self.config.assets_file, AssetBucket)
+            )
+        return self._asset_repo
+
+    @staticmethod
+    def _validate_portfolio_shape(data: Any) -> None:
+        """Reject malformed assets payloads exactly like ``utils.load_portfolio``.
+
+        Raises ``ValueError`` on a non-dict root, non-list buckets, or
+        non-dict rows — strictness the pipeline has always relied on
+        (unlike the lenient cache loader, a corrupt assets file must fail
+        loudly instead of silently loading partial data).
+        """
+        if not isinstance(data, dict):
+            raise ValueError("assets root must be a JSON object")
+        for key, positions in data.items():
+            if not isinstance(positions, list):
+                raise ValueError(f"{key!r} must be a JSON array")
+            for i, pos in enumerate(positions):
+                if not isinstance(pos, dict):
+                    raise ValueError(f"{key}[{i}] must be a JSON object")
+
     def load_portfolio(self, path: Path | None = None) -> None:
-        from utils import load_portfolio as _load
+        import json as _json
 
+        target = path or self.config.assets_file
+        # Strict gate first: missing file / invalid JSON / malformed shape
+        # propagate exactly as ``utils.load_portfolio`` always did.
+        with open(target, encoding="utf-8") as f:
+            raw = _json.load(f)
+        self._validate_portfolio_shape(raw)
+        repo = (
+            self._asset_repo_for(path)
+            if path is not None and Path(path) != self.config.assets_file
+            else self.asset_repo
+        )
+        # Evict backend rows absent from the file so a reused backend can't
+        # leak stale buckets into the dict (all repo verbs; no backend nouns).
+        for key in list(repo.snapshot()):
+            if key not in raw:
+                repo.remove_bucket(key)
+        repo.restore(raw)
+        data = repo.snapshot()
         self.portfolio.clear()
-        self.portfolio.update(_load(path or self.config.assets_file))
+        self.portfolio.update(data)
 
-    def flush_portfolio(self, path: Path | None = None) -> None:
-        from utils import write_portfolio as _write
+    def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
+        """Short-lived repository bound to an explicit path (not the config file)."""
+        from storage.json_storage import JsonStorage
+        from storage.records import AssetBucket
+        from storage.repositories import AssetRepository
 
-        _write(path or self.config.assets_file, self.portfolio)
+        return AssetRepository(JsonStorage(Path(path), AssetBucket))
+
+    def persist_portfolio(self, path: Path | None = None) -> None:
+        if path is not None and Path(path) != self.config.assets_file:
+            repo = self._asset_repo_for(path)
+            repo.open()
+        else:
+            repo = self.asset_repo
+        # Drop backend rows absent from the dict so the file ends up
+        # exactly equal to it (same as the old overwrite semantics).
+        for key in list(repo.snapshot()):
+            if key not in self.portfolio:
+                repo.remove_bucket(key)
+        repo.restore(self.portfolio)
+        repo.persist()
 
     # -- cache (in-memory + flush) --
     @property
