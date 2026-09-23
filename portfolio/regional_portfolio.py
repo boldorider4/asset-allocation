@@ -19,7 +19,6 @@ attach_color_stderr_handler_for_module(logger)
 class RegionalPortfolio(Portfolio):
     def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None):
         super().__init__(name, positions, ctx=ctx)
-        plotter = self._ctx.plotter_class()
 
         if self._value <= 0 and self._positions:
             logger.warning(
@@ -29,8 +28,18 @@ class RegionalPortfolio(Portfolio):
             )
 
         # Partition positions into labeled groups and regional positions
+        # (membership is construction-time; values are object snapshots —
+        # refreshes rebuild derived artifacts, never the partition itself).
         self._labeled_groups, self._regional_positions = self._partition_and_group_labeled()
+        self._build_geo_visualizers()
 
+    def _build_geo_visualizers(self) -> None:
+        """(Re)build DMEM/USAVN/geosplit visualizers from current state.
+
+        Shared by construction and ``refresh_countries`` so the two can
+        never drift apart.
+        """
+        plotter = self._ctx.plotter_class()
         labeled_value = sum(g.total_value for g in self._labeled_groups)
         regional_value = self._value - labeled_value
         scale_regional = regional_value / self._value if self._value > 0 else 0.0
@@ -88,6 +97,16 @@ class RegionalPortfolio(Portfolio):
             closing_title="Value: {:.2f}".format(self._value),
             factor={"value": self._value, "unit": "Euro"},
         )
+
+    def refresh_countries(self) -> None:
+        """Refresh geo state after a holdings update.
+
+        Heals positions missing countries (see ``Position.refresh_geo``),
+        recomputes the DMEM/USAVN aggregates, and rebuilds the geo
+        visualizers so merged charts pick up the fresh data.
+        """
+        super().refresh_countries()
+        self._build_geo_visualizers()
 
     def plot_dmem(self) -> None:
         if self._dmem_visualizer is not None:

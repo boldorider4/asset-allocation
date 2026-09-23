@@ -420,6 +420,28 @@ class Position(ABC):
         """
         self._sectors = None
 
+    def refresh_geo(self) -> bool:
+        """Refetch missing countries and recompute DMEM/USAVN from them.
+
+        Only acts when there are no usable rows (missing or empty, e.g.
+        wiped from the cache): rows are reset so the lazy fetch runs over
+        the specialized scraper of the concrete class (the accessor only
+        fetches on ``None``), and the recompute is exact because
+        DMEM/USAVN computed over no rows equal their baselines.
+        Already-populated rows are never recomputed, so a second call
+        cannot double-add weights. Returns True when fresh rows were
+        picked up.
+        """
+        if self._countries:
+            return False
+        self._countries = None
+        rows = self.countries()
+        if not rows:
+            return False
+        self._dmem = self._compute_dev_vs_em_market()
+        self._usavn = self._compute_us_vs_exus_market()
+        return True
+
     def __str__(self) -> str:
         countries_list = self._countries
         countries_str = ""

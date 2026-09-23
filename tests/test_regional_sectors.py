@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from portfolio.portfolio import Portfolio
@@ -114,6 +114,55 @@ class TestRegionalAdd(unittest.TestCase):
         # parent-class consolidation still applies to the merged positions
         self.assertAlmostEqual(merged.sectors["Technology"], 100.0 / 150.0)
         self.assertAlmostEqual(merged.sectors["Other"], 50.0 / 150.0)
+
+
+def _refresh_stub(*, dmem=1.0, usavn=0.5, heal=None):
+    ns = SimpleNamespace(
+        value=100.0,
+        dmem=dmem,
+        usavn=usavn,
+        sectors=lambda: [{"name": "Technology", "weight_pct": 100.0}],
+        _short_name=None,
+        _name="stub",
+        _isin="XX000STUB00",
+    )
+    if heal is None:
+        ns.refresh_geo = Mock(return_value=False)
+    else:
+        ns.refresh_geo = Mock(side_effect=lambda: heal(ns))
+    return ns
+
+
+class TestRefreshCountries(unittest.TestCase):
+    def test_noop_rebuilds_identical(self) -> None:
+        ns = _refresh_stub()
+        port = _regional("R", [ns])
+        before = (dict(port._geosplit_data), list(port._dmem), list(port._usavn))
+        viz_before = port._geosplit_visualizer
+        port.refresh_countries()
+        ns.refresh_geo.assert_called_once_with()
+        self.assertEqual(port._dmem, before[1])
+        self.assertEqual(port._usavn, before[2])
+        self.assertEqual(port._geosplit_data, before[0])
+        self.assertEqual(port._geosplit_visualizer._data, before[0])
+
+    def test_heal_rebuilds_visualizers(self) -> None:
+        def heal(ns):
+            ns.dmem = 0.6
+            ns.usavn = 0.2
+            return True
+
+        ns = _refresh_stub(heal=heal)
+        port = _regional("R", [ns])
+        # Construction reflects dmem=1.0/usavn=0.5.
+        self.assertAlmostEqual(port._geosplit_data["Equity US"], 0.5)
+        viz_before = port._geosplit_visualizer
+        port.refresh_countries()
+        # Healed: developed=0.6, us_within=(100*0.2)/(100*0.6)=1/3.
+        self.assertEqual(port._dmem, [0.6])
+        self.assertAlmostEqual(port._geosplit_data["Equity US"], (1 / 3) * 0.6)
+        self.assertEqual(port._geosplit_visualizer._data, port._geosplit_data)
+        self.assertIsNot(port._geosplit_visualizer, viz_before)
 
 
 if __name__ == "__main__":

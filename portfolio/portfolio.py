@@ -199,6 +199,17 @@ class Portfolio:
         """
         self._sectors = self._calculate_sectors()
 
+    def refresh_countries(self) -> None:
+        """Refresh DMEM/USAVN aggregates from Position objects.
+
+        Positions missing countries refetch them first (see
+        ``Position.refresh_geo``); otherwise a pure recompute, no network.
+        """
+        for position in self._positions:
+            position.refresh_geo()
+        self._dmem = self._calculate_dmem()
+        self._usavn = self._calculate_usavn()
+
     def _live_total(self, *, incognito: bool) -> float:
         """Display total: stored clear value, scaled for incognito passes."""
         scale = self._ctx.value_factor if incognito else 1.0

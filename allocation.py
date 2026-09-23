@@ -66,6 +66,9 @@ def main(ctx: RuntimeContext) -> None:
         # ISIN (and risk empty rows on fetch failure). Countries are never
         # invalidated: they are construction-time values with no refresh
         # path by design (their store side stays gated in the scraper).
+        # refresh_countries() heals positions missing countries (e.g. wiped
+        # from the cache) via refetch and rebuilds the geo visualizers so
+        # merged charts pick it up; otherwise a pure recompute, no network.
         if not ctx.config.fetch_geosplit or not ctx.config.fetch_sectorsplit:
             for portfolio in [
                 equity_portfolio,
@@ -79,6 +82,7 @@ def main(ctx: RuntimeContext) -> None:
                     if position.isin in updated_isins:
                         position.invalidate_sectors()
                 portfolio.refresh_sectors()
+                portfolio.refresh_countries()
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
