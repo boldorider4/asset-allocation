@@ -41,6 +41,7 @@ PlotterKind = Literal["web", "pie-chart"]
 
 _VALID_SOURCES: tuple[str, ...] = ("justetf", "yfinance")
 _VALID_PLOTTERS: tuple[str, ...] = ("web", "pie-chart")
+_VALID_LOG_LEVELS: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR")
 
 
 @dataclass
@@ -48,6 +49,19 @@ class ServerConfig:
     port: int
     address: str
     directory: Path
+    # Disk layout: the served data tree lives at ``directory/data_dir``.
+    # Kept separate from the plotter output dir on purpose: one instance
+    # may serve what another one wrote.
+    data_dir: str = "data"
+
+
+@dataclass
+class PlotterConfig:
+    """Chart output layout (the write side, independent of the serve side)."""
+
+    output_dir: Path | None = None
+    clear_dir: str = "clear"
+    incognito_dir: str = "incognito"
 
 
 @dataclass
@@ -73,6 +87,7 @@ class AppConfig:
             directory=Path.home() / ".local" / "asalloc" / "visualizer",
         )
     )
+    plotter_config: PlotterConfig = field(default_factory=PlotterConfig)
     log_level: str = "INFO"
 
     @property
@@ -90,12 +105,28 @@ class AppConfig:
         return DEFAULT_CONFIG_PATH
 
     @classmethod
-    def server_from_ini(cls, path: Path | None = None) -> ServerConfig:
+    def _ini_parser(cls, path: Path | None) -> tuple[Path, configparser.ConfigParser]:
         cfg_path = cls.config_path(path)
         parser = configparser.ConfigParser()
         if not cfg_path.is_file():
             raise FileNotFoundError(f"config file not found: {cfg_path}")
         parser.read(cfg_path, encoding="utf-8")
+        return cfg_path, parser
+
+    @classmethod
+    def _resolve_ini_path(
+        cls, cfg_path: Path, raw: str | None, fallback: Path | None
+    ) -> Path | None:
+        if not raw or not raw.strip():
+            return fallback
+        path = Path(raw.strip()).expanduser()
+        if not path.is_absolute():
+            path = (cfg_path.parent / path).resolve()
+        return path
+
+    @classmethod
+    def server_from_ini(cls, path: Path | None = None) -> ServerConfig:
+        cfg_path, parser = cls._ini_parser(path)
         port = parser.getint("server", "port")
         address = parser.get("server", "address", fallback="localhost").strip() or "localhost"
         raw = parser.get(
@@ -106,17 +137,96 @@ class AppConfig:
         directory = Path(raw).expanduser()
         if not directory.is_absolute():
             directory = (cfg_path.parent / directory).resolve()
-        return ServerConfig(port=port, address=address, directory=directory)
+        data_dir = (
+            parser.get("server", "plotter_data_dir", fallback="data").strip() or "data"
+        )
+        return ServerConfig(port=port, address=address, directory=directory, data_dir=data_dir)
+
+    @classmethod
+    def _update_from_ini(cls, path: Path | None = None) -> dict[str, Any]:
+        """``[update]`` section with today's defaults; missing file → defaults."""
+        defaults: dict[str, Any] = {
+            "fetch_prices": False,
+            "fetch_geosplit": False,
+            "fetch_sectorsplit": False,
+            "plot_clear": False,
+            "plot_incognito": False,
+            "log_level": "INFO",
+            "assets_file": DEFAULT_ASSETS_PATH,
+            "cache_file": DEFAULT_CACHE_PATH,
+        }
+        try:
+            cfg_path, parser = cls._ini_parser(path)
+        except FileNotFoundError:
+            return defaults
+        if not parser.has_section("update"):
+            return defaults
+        values = dict(defaults)
+        for flag in (
+            "fetch_prices",
+            "fetch_geosplit",
+            "fetch_sectorsplit",
+            "plot_clear",
+            "plot_incognito",
+        ):
+            values[flag] = parser.getboolean("update", flag, fallback=defaults[flag])
+        log_level = parser.get("update", "log_level", fallback="INFO").strip() or "INFO"
+        if log_level not in _VALID_LOG_LEVELS:
+            raise ValueError(f"unknown log level {log_level!r}")
+        values["log_level"] = log_level
+        values["assets_file"] = cls._resolve_ini_path(
+            cfg_path,
+            parser.get("update", "assets_file", fallback=None),
+            DEFAULT_ASSETS_PATH,
+        )
+        values["cache_file"] = cls._resolve_ini_path(
+            cfg_path,
+            parser.get("update", "cache_file", fallback=None),
+            DEFAULT_CACHE_PATH,
+        )
+        return values
+
+    @classmethod
+    def _plotter_from_ini(cls, path: Path | None = None) -> tuple[PlotterKind, PlotterConfig]:
+        """``[plotter]`` section; missing file/keys → today's defaults."""
+        try:
+            cfg_path, parser = cls._ini_parser(path)
+        except FileNotFoundError:
+            return "web", PlotterConfig()
+        kind = parser.get("plotter", "type", fallback="web").strip() or "web"
+        if kind not in _VALID_PLOTTERS:
+            raise ValueError(f"unknown plotter {kind!r}")
+        output_raw = parser.get("plotter", "output_dir", fallback=None)
+        output_dir = cls._resolve_ini_path(cfg_path, output_raw, fallback=None)
+        clear_dir = (
+            parser.get("plotter", "clear_directory", fallback="clear").strip() or "clear"
+        )
+        incognito_dir = (
+            parser.get("plotter", "incognito_directory", fallback="incognito").strip()
+            or "incognito"
+        )
+        return kind, PlotterConfig(  # type: ignore[return-value]
+            output_dir=output_dir, clear_dir=clear_dir, incognito_dir=incognito_dir
+        )
 
     @classmethod
     def from_ini(cls, path: Path | None = None) -> AppConfig:
-        return cls(server=cls.server_from_ini(path))
+        server = cls.server_from_ini(path)
+        update = cls._update_from_ini(path)
+        kind, plotter_config = cls._plotter_from_ini(path)
+        return cls(server=server, plotter=kind, plotter_config=plotter_config, **update)
 
     @classmethod
     def from_cli(
         cls, args: argparse.Namespace, ini_path: Path | None = None
     ) -> AppConfig:
-        """Build from parsed ``update`` args; server section from ini."""
+        """Build from parsed ``update`` args over ini defaults; CLI wins.
+
+        Explicit CLI flags (anything not ``None``) override the ``[update]``
+        and ``[plotter]`` sections; unset flags fall back to them, then to
+        today's defaults. ``position_source`` and broker fetch flags have
+        no ini keys and behave as before.
+        """
         try:
             server = cls.server_from_ini(ini_path)
         except FileNotFoundError:
@@ -125,29 +235,39 @@ class AppConfig:
                 address="localhost",
                 directory=Path.home() / ".local" / "asalloc" / "visualizer",
             )
+        ini_update = cls._update_from_ini(ini_path)
+        ini_kind, ini_plotter = cls._plotter_from_ini(ini_path)
+
+        def pick(cli_value: Any, ini_value: Any) -> Any:
+            return cli_value if cli_value is not None else ini_value
+
         source = getattr(args, "position_source", "justetf")
         if source not in _VALID_SOURCES:
             raise ValueError(f"unknown position source {source!r}")
-        plotter = getattr(args, "plot", "web")
+        plotter = pick(getattr(args, "plot", None), ini_kind)
         if plotter not in _VALID_PLOTTERS:
             raise ValueError(f"unknown plotter {plotter!r}")
+        log_level = pick(getattr(args, "log_level", None), ini_update["log_level"])
+        if log_level not in _VALID_LOG_LEVELS:
+            raise ValueError(f"unknown log level {log_level!r}")
         assets = getattr(args, "assets_file", None)
         cache = getattr(args, "cache_file", None)
         return cls(
-            fetch_prices=bool(getattr(args, "fetch_prices", False)),
-            fetch_geosplit=bool(getattr(args, "fetch_geosplit", False)),
-            fetch_sectorsplit=bool(getattr(args, "fetch_sectorsplit", False)),
+            fetch_prices=bool(pick(getattr(args, "fetch_prices", None), ini_update["fetch_prices"])),
+            fetch_geosplit=bool(pick(getattr(args, "fetch_geosplit", None), ini_update["fetch_geosplit"])),
+            fetch_sectorsplit=bool(pick(getattr(args, "fetch_sectorsplit", None), ini_update["fetch_sectorsplit"])),
             fetch_oskar=bool(getattr(args, "fetch_oskar", False)),
             fetch_scalable=bool(getattr(args, "fetch_scalable", False)),
             fetch_traderepublic=bool(getattr(args, "fetch_tr", False)),
-            plot_clear=bool(getattr(args, "plot_clear", False)),
-            plot_incognito=bool(getattr(args, "plot_incognito", False)),
+            plot_clear=bool(pick(getattr(args, "plot_clear", None), ini_update["plot_clear"])),
+            plot_incognito=bool(pick(getattr(args, "plot_incognito", None), ini_update["plot_incognito"])),
             position_source=source,  # type: ignore[arg-type]
             plotter=plotter,  # type: ignore[arg-type]
-            assets_file=Path(assets) if assets else DEFAULT_ASSETS_PATH,
-            cache_file=Path(cache) if cache else DEFAULT_CACHE_PATH,
+            assets_file=Path(assets) if assets else ini_update["assets_file"],
+            cache_file=Path(cache) if cache else ini_update["cache_file"],
             server=server,
-            log_level=getattr(args, "log_level", "INFO"),
+            plotter_config=ini_plotter,
+            log_level=log_level,
         )
 
 
@@ -260,9 +380,19 @@ class RuntimeContext:
             raise ValueError(f"unknown plotter {self.config.plotter!r}") from exc
 
     def output_data_dir(self, *, incognito: bool = False) -> Path:
-        """Chart output dir: ``data/incognito`` for incognito passes, else ``data/clear``."""
-        base = self.config.server.directory / "data"
-        return base / "incognito" if incognito else base / "clear"
+        """Chart output dir: the configured plotter output dir (or the
+        legacy ``server.directory/data`` tree) plus the clear/incognito
+        subdir. The write side is independent of the serve side on
+        purpose: one instance may serve what another one wrote."""
+        base = self.config.plotter_config.output_dir
+        if base is None:
+            base = self.config.server.directory / self.config.server.data_dir
+        subdir = (
+            self.config.plotter_config.incognito_dir
+            if incognito
+            else self.config.plotter_config.clear_dir
+        )
+        return base / subdir
 
     def configure_web_output(self, *, incognito: bool = False):  # type: ignore[no-untyped-def]
         """Point WebChart file output at the pass's dir; reset seq."""

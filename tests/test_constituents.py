@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -1258,6 +1259,11 @@ class TestConstituentsRoute(unittest.TestCase):
         )
         spawn_patch.start()
         self.addCleanup(spawn_patch.stop)
+        # Isolate the stub worker from the real config file: the worker
+        # reads ini defaults, which must not leak repo settings into tests.
+        env_patch = patch.dict(os.environ, {"ASALLOC_CONFIG": str(tmp / "nope.ini")})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
@@ -1681,6 +1687,42 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertIn("boom", body)
         self.assertNotIn("Traceback", body)
 
+    def test_post_update_reads_ini_defaults(self) -> None:
+        from unittest.mock import patch
+
+        seen = {}
+        ini = Path(self._holder.name) / "asalloc.ini"
+        ini.write_text(
+            "[server]\nport = 1\n"
+            "[update]\nfetch_geosplit = True\n"
+            "plot_incognito = True\n"
+            "[plotter]\noutput_dir = plots\n",
+            encoding="utf-8",
+        )
+
+        def fake_main(ctx) -> None:
+            seen["config"] = ctx.config
+
+        with (
+            patch("allocation.main", side_effect=fake_main),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+            patch.dict(os.environ, {"ASALLOC_CONFIG": str(ini)}),
+        ):
+            status, _ = self._post_update()
+        self.assertEqual(status, 200)
+        config = seen["config"]
+        # Lite POST carries no flags: ini values apply.
+        self.assertTrue(config.fetch_geosplit)
+        self.assertFalse(config.fetch_prices)
+        self.assertTrue(config.plot_clear)
+        self.assertTrue(config.plot_incognito)
+        self.assertEqual(
+            config.plotter_config.output_dir, ini.parent / "plots"
+        )
+        # Explicit handler arguments still win over ini.
+        self.assertEqual(str(config.assets_file), str(self.assets))
+
     def test_post_update_fat_mode_sets_fetch_and_both_plots(self) -> None:
         import logging
         from unittest.mock import patch
@@ -1907,6 +1949,10 @@ class TestUpdateCancellation(unittest.TestCase):
         )
         spawn_patch.start()
         self.addCleanup(spawn_patch.stop)
+        # Isolate the stub worker from the real config file (see above).
+        env_patch = patch.dict(os.environ, {"ASALLOC_CONFIG": str(tmp / "nope.ini")})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),

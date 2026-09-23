@@ -112,5 +112,56 @@ class TestDashboardEndpoint(unittest.TestCase):
         self.assertNotIn("DASHBOARD", body)
 
 
+class TestCustomDataLayout(unittest.TestCase):
+    """Renamed on-disk data trees still serve under the fixed /data prefix."""
+
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        self.root = Path(self._holder.name) / "visualizer"
+        (self.root / "customdir" / "bright").mkdir(parents=True)
+        (self.root / "customdir" / "dark").mkdir(parents=True)
+        (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
+        (self.root / "customdir" / "bright" / "01-a.raw").write_text(
+            "BRIGHT", encoding="utf-8"
+        )
+        (self.root / "customdir" / "dark" / "01-a.raw").write_text(
+            "DARK", encoding="utf-8"
+        )
+        handler = functools.partial(
+            DashboardHandler,
+            directory=str(self.root),
+            data_dirname="customdir",
+            clear_dirname="bright",
+            incognito_dirname="dark",
+        )
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.addCleanup(self._httpd.shutdown)
+
+    def _get(self, path: str, referer: str | None = None) -> tuple[int, str]:
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        if referer is not None:
+            req.add_header("Referer", referer)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def _dashboard(self, query: str = "") -> str:
+        return f"http://127.0.0.1:{self.port}/dashboard{query}"
+
+    def test_renamed_tree_serves_both_modes(self) -> None:
+        status, body = self._get("/data/01-a.raw", referer=self._dashboard())
+        self.assertEqual((status, body), (200, "BRIGHT"))
+        status, body = self._get(
+            "/data/01-a.raw", referer=self._dashboard("?incognito=true")
+        )
+        self.assertEqual((status, body), (200, "DARK"))
+
+
 if __name__ == "__main__":
     unittest.main()

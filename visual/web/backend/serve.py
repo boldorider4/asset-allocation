@@ -62,6 +62,10 @@ DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
 GALLERY_PATHS = ("/", "/index.html", "/index.htm", "/dashboard", "/dashboard/")
 DATA_PREFIX = "/data"
+# On-disk chart layout under the served directory. The URL prefix stays
+# /data (frontend contract); the disk names are overridable per handler
+# so instances can serve renamed trees.
+DATA_DIRNAME = "data"
 CLEAR_DIR = "clear"
 INCOGNITO_DIR = "incognito"
 
@@ -189,24 +193,47 @@ def _update_worker(
     """Child-process entry point: build a fresh context and run the update.
 
     Only picklable arguments cross the boundary; the ``RuntimeContext``
-    and log suppression are constructed here. Sends ``{"ok", "error"}``
+    and log suppression are constructed here. Update/plotter defaults
+    come from the ini file (``fat`` upgrades them like explicit CLI
+    flags); explicit handler arguments always win. Sends ``{"ok", "error"}``
     down the pipe; a killed child sends nothing and the parent reads the
     exit code instead. The send lands in the OS pipe buffer, so it
     survives the child dying with no flush dance.
     """
     from allocation import main as run_update
-    from context import AppConfig, RuntimeContext, ServerConfig
+    from context import AppConfig, PlotterConfig, RuntimeContext, ServerConfig
     from position.factory import UpdateCancelled
 
+    try:
+        ini_cfg = AppConfig.from_ini()
+    except Exception as exc:
+        logger.warning("update worker: ignoring unreadable config: %s", exc)
+        ini_cfg = None
+    if ini_cfg is None:
+        ini_fetch = (False, False, False)
+        ini_incognito = False
+        ini_plotter = PlotterConfig()
+    else:
+        ini_fetch = (
+            ini_cfg.fetch_prices,
+            ini_cfg.fetch_geosplit,
+            ini_cfg.fetch_sectorsplit,
+        )
+        ini_incognito = ini_cfg.plot_incognito
+        ini_plotter = ini_cfg.plotter_config
+    fetch_prices, fetch_geosplit, fetch_sectorsplit = (
+        (True, True, True) if fat else ini_fetch
+    )
     config = AppConfig(
         assets_file=Path(assets_file),
         cache_file=Path(cache_file),
-        fetch_prices=fat,
-        fetch_geosplit=fat,
-        fetch_sectorsplit=fat,
+        fetch_prices=fetch_prices,
+        fetch_geosplit=fetch_geosplit,
+        fetch_sectorsplit=fetch_sectorsplit,
         plot_clear=True,
-        plot_incognito=fat,
+        plot_incognito=True if fat else ini_incognito,
         server=ServerConfig(port=0, address="localhost", directory=Path(directory)),
+        plotter_config=ini_plotter,
     )
     ctx = RuntimeContext(config=config)
     ctx.cancel_event = cancel_event
@@ -284,9 +311,22 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return True
 
-    def __init__(self, *args, assets_file=None, cache_file=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        assets_file=None,
+        cache_file=None,
+        data_dirname=None,
+        clear_dirname=None,
+        incognito_dirname=None,
+        **kwargs,
+    ):
         self._assets_file = assets_file
         self._cache_file = cache_file
+        # On-disk chart layout (defaults mirror the served /data tree).
+        self._data_dirname = data_dirname or DATA_DIRNAME
+        self._clear_dirname = clear_dirname or CLEAR_DIR
+        self._incognito_dirname = incognito_dirname or INCOGNITO_DIR
         super().__init__(*args, **kwargs)
 
     def _serve_update_status(self) -> bool:
@@ -789,9 +829,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             mode = referer_incognito(self.headers)
             if mode is not None:
                 rest = url_path[len(DATA_PREFIX):].lstrip("/")
-                subdir = INCOGNITO_DIR if mode else CLEAR_DIR
-                url_path = f"{DATA_PREFIX}/{subdir}/{rest}" if rest else f"{DATA_PREFIX}/{subdir}/"
-                return super().translate_path(url_path)
+                subdir = self._incognito_dirname if mode else self._clear_dirname
+                disk_path = (
+                    f"/{self._data_dirname}/{subdir}/{rest}"
+                    if rest
+                    else f"/{self._data_dirname}/{subdir}/"
+                )
+                return super().translate_path(disk_path)
         return super().translate_path(path)
 
 
@@ -802,6 +846,9 @@ def serve_forever(
     directory: str,
     assets_file: str | None = None,
     cache_file: str | None = None,
+    data_dirname: str = DATA_DIRNAME,
+    clear_dirname: str = CLEAR_DIR,
+    incognito_dirname: str = INCOGNITO_DIR,
 ) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
     handler = functools.partial(
@@ -809,6 +856,9 @@ def serve_forever(
         directory=directory,
         assets_file=assets_file,
         cache_file=cache_file,
+        data_dirname=data_dirname,
+        clear_dirname=clear_dirname,
+        incognito_dirname=incognito_dirname,
     )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
@@ -822,6 +872,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--directory", required=True, help="Visualizer directory to serve.")
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
+    parser.add_argument("--plotter-data-dir", default=DATA_DIRNAME, help="On-disk data dir name under --directory (default: data).")
+    parser.add_argument("--plotter-clear-dir", default=CLEAR_DIR, help="On-disk clear charts subdir name (default: clear).")
+    parser.add_argument("--plotter-incognito-dir", default=INCOGNITO_DIR, help="On-disk incognito charts subdir name (default: incognito).")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     serve_forever(
@@ -830,6 +883,9 @@ def main(argv: list[str] | None = None) -> None:
         directory=args.directory,
         assets_file=args.assets_file,
         cache_file=args.cache_file,
+        data_dirname=args.plotter_data_dir,
+        clear_dirname=args.plotter_clear_dir,
+        incognito_dirname=args.plotter_incognito_dir,
     )
 
 

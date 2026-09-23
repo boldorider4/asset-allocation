@@ -45,6 +45,7 @@ def server_port(path: Path | None = None) -> int:
 
 def cmd_update(args: argparse.Namespace) -> None:
     config = AppConfig.from_cli(args)
+    configure_cli_logging(getattr(logging, config.log_level))
     ctx = RuntimeContext(config=config)
     run_update(ctx)
 
@@ -133,10 +134,15 @@ def cmd_serve(args: argparse.Namespace) -> None:
     from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
 
     cfg = load_server_config()
+    try:
+        ini_cfg = AppConfig.from_ini()
+    except (FileNotFoundError, ValueError):
+        ini_cfg = AppConfig()
+    ini_plotter, ini_data_dir = ini_cfg.plotter_config, ini_cfg.server.data_dir
     cfg.directory.mkdir(parents=True, exist_ok=True)
-    (cfg.directory / "data").mkdir(exist_ok=True)
-    (cfg.directory / "data" / "clear").mkdir(exist_ok=True)
-    (cfg.directory / "data" / "incognito").mkdir(exist_ok=True)
+    (cfg.directory / ini_data_dir).mkdir(exist_ok=True)
+    (cfg.directory / ini_data_dir / ini_plotter.clear_dir).mkdir(exist_ok=True)
+    (cfg.directory / ini_data_dir / ini_plotter.incognito_dir).mkdir(exist_ok=True)
     pid_file = cfg.directory / ".serve.pid"
     already = [pid for pid in _find_server_pids(cfg.port)]
     if already:
@@ -164,6 +170,12 @@ def cmd_serve(args: argparse.Namespace) -> None:
             str(assets_file),
             "--cache-file",
             str(cache_file),
+            "--plotter-data-dir",
+            ini_data_dir,
+            "--plotter-clear-dir",
+            ini_plotter.clear_dir,
+            "--plotter-incognito-dir",
+            ini_plotter.incognito_dir,
         ],
         cwd=cfg.directory,
         stdout=subprocess.DEVNULL,
@@ -196,6 +208,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-prices",
         action="store_true",
+        default=None,
         help=(
             "Scrape live JustETF/Yahoo quotes and refresh the price in "
             "cache.json. Holdings values then come from shares × quote, and "
@@ -211,6 +224,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-geosplit",
         action="store_true",
+        default=None,
         help=(
             "Scrape country allocations (JustETF) and write them to cache.json. "
             "Without this flag, country weights are read from cache."
@@ -219,6 +233,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-sectorsplit",
         action="store_true",
+        default=None,
         help=(
             "Scrape sector allocations (JustETF) and write them to cache.json. "
             "Without this flag, sector weights are read from cache."
@@ -247,11 +262,13 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-oskar",
         action="store_true",
+        default=None,
         help="Log into Oskar and scrape ETF positions. Missing share counts are estimated from holdings value / quote (cached, or freshly fetched if --fetch-prices is also set).",
     )
     update.add_argument(
         "--fetch-scalable",
         action="store_true",
+        default=None,
         help="Log into Scalable via a headless browser device login and scrape "
         "broker holdings. Email/password are prompted in the terminal, 2FA "
         "stays on your phone; needs an interactive terminal.",
@@ -259,23 +276,26 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-tr",
         action="store_true",
+        default=None,
         help="Log into Trade Republic via pytr and scrape broker holdings.",
     )
     update.add_argument(
         "--plot-clear",
         action="store_true",
+        default=None,
         help="Emit charts with real values.",
     )
     update.add_argument(
         "--plot-incognito",
         action="store_true",
+        default=None,
         help="Emit charts with fake (scaled) values.",
     )
     update.add_argument(
         "--plot",
         choices=("web", "pie-chart"),
-        default="web",
-        help="Chart backend: web writes *.raw files; pie-chart opens matplotlib windows.",
+        default=None,
+        help="Chart backend: web writes *.raw files; pie-chart opens matplotlib windows (default: config.ini [plotter] type, else web).",
     )
     update.add_argument(
         "--log-level",
@@ -299,8 +319,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging level for stderr (default: INFO). Use DEBUG for verbose OSKAR steps.",
+        default=None,
+        help="Logging level for stderr (default: config.ini [update] log_level, else INFO). Use DEBUG for verbose OSKAR steps.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -338,7 +358,7 @@ def main(argv: list[str] | None = None) -> None:
     stop_serve.set_defaults(func=cmd_stop)
 
     args = parser.parse_args(argv)
-    configure_cli_logging(getattr(logging, args.log_level))
+    configure_cli_logging(getattr(logging, getattr(args, "log_level", None) or "ERROR"))
     args.func(args)
 
 
