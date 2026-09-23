@@ -39,14 +39,10 @@ def main(ctx: RuntimeContext) -> None:
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
-    # Create Portfolio objects first (needed for cache invalidation after updates)
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], ctx=ctx)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], ctx=ctx)
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], ctx=ctx)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
-
+    # Broker scrapes run FIRST: they only need the raw asset dicts (fresh
+    # values, shares and composition) and never Position/Portfolio objects.
+    # Everything composed below is therefore built from final holdings, so
+    # plotted totals can never lag the JSON flushed here.
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
@@ -55,34 +51,9 @@ def main(ctx: RuntimeContext) -> None:
 
     if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
-        updated_isins = update_scalable_etfs_in_portfolio(ctx)
+        update_scalable_etfs_in_portfolio(ctx)
         ctx.flush_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
-        # Invalidate staged sectors on affected Position objects and
-        # refresh Portfolio sector aggregation — but only what was NOT
-        # freshly scraped this run. With --fetch-geosplit/--fetch-sectorsplit
-        # the factory already built these objects from fresh splits, so
-        # invalidating would just burn a redundant network round-trip per
-        # ISIN (and risk empty rows on fetch failure). Countries are never
-        # invalidated: they are construction-time values with no refresh
-        # path by design (their store side stays gated in the scraper).
-        # refresh_countries() heals positions missing countries (e.g. wiped
-        # from the cache) via refetch and rebuilds the geo visualizers so
-        # merged charts pick it up; otherwise a pure recompute, no network.
-        if not ctx.config.fetch_geosplit or not ctx.config.fetch_sectorsplit:
-            for portfolio in [
-                equity_portfolio,
-                fixed_maturity_bond_portfolio,
-                cash_portfolio,
-                non_regional_bond_portfolio,
-                commodity_portfolio,
-                pension_portfolio,
-            ]:
-                for position in portfolio._positions:
-                    if position.isin in updated_isins:
-                        position.invalidate_sectors()
-                portfolio.refresh_sectors()
-                portfolio.refresh_countries()
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
@@ -90,11 +61,30 @@ def main(ctx: RuntimeContext) -> None:
         ctx.flush_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
+    # Composition from the final dicts: the factory stages cache backfills
+    # and estimates OSKAR shares (value/price via a JustETF position quote)
+    # from fresh scrape values, queuing them for the persists below. Added
+    # holdings become positions; removed ones simply have none.
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], ctx=ctx)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], ctx=ctx)
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], ctx=ctx)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
+
+    # The persists consume the factory-queued pending writes, so they must
+    # run after composition; the dict updates they apply match what the
+    # objects already resolve to, keeping both in sync.
+    persist_oskar_shares_in_portfolio(ctx)
+    persist_fetched_values_in_portfolio(ctx)
+
     logger.info("Computing incognito display factor")
     apply_incognito_scaling(ctx)
 
-    persist_oskar_shares_in_portfolio(ctx)
-    persist_fetched_values_in_portfolio(ctx)
+    # Sector and geo splits were calculated once at composition above from
+    # trusted staged splits (or freshly scraped ones when the fetch flags
+    # are on). No second pass: staged splits are never wiped by broker
+    # runs, so there is nothing to invalidate or refetch here.
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 

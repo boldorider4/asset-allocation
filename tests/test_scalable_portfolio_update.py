@@ -226,19 +226,19 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(row["sectors"], {"Technology": 0.5})
 
     @patch("scrape.scalable.fetch_scalable_etfs")
-    def test_stale_splits_cleared_when_flags_off(self, mock_fetch) -> None:
-        # Legacy path: nothing freshly scraped, so stale splits are
-        # cleared for refetch on next access.
+    def test_staged_splits_kept_when_flags_off(self, mock_fetch) -> None:
+        # Trust-staged policy: broker runs never wipe splits, so staged
+        # countries/sectors survive the update untouched.
         self._seed_split_cache()
         mock_fetch.return_value = self._matched_holding()
         update_scalable_etfs_in_portfolio(self.ctx)
         row = self.ctx.cache["IE0006WW1TQ4"]
-        self.assertNotIn("countries", row)
-        self.assertNotIn("sectors", row)
+        self.assertEqual(row["countries"], {"United States": 0.9})
+        self.assertEqual(row["sectors"], {"Technology": 0.5})
         self.assertEqual(row["price"], 40.315)
 
     @patch("scrape.scalable.fetch_scalable_etfs")
-    def test_mixed_flags_clear_only_unscraped_field(self, mock_fetch) -> None:
+    def test_mixed_flags_keep_staged_fields(self, mock_fetch) -> None:
         self.ctx.config.fetch_geosplit = True
         self.ctx.config.fetch_sectorsplit = False
         self._seed_split_cache()
@@ -246,7 +246,7 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         update_scalable_etfs_in_portfolio(self.ctx)
         row = self.ctx.cache["IE0006WW1TQ4"]
         self.assertEqual(row["countries"], {"United States": 0.9})
-        self.assertNotIn("sectors", row)
+        self.assertEqual(row["sectors"], {"Technology": 0.5})
 
     @patch("scrape.scalable.fetch_scalable_etfs")
     def test_updates_cash_value_in_place(self, mock_fetch) -> None:
@@ -399,10 +399,11 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         }
         self.ctx.config.fetch_prices = False
         update_scalable_etfs_in_portfolio(self.ctx)
-        # Cache should be marked dirty because sector cache is cleared
-        # even when fetch_prices is False, to force sector refetch on next access.
-        self.assertTrue(self.ctx.cache_dirty)
-        # But price cache should not be populated
+        # Nothing touches the cache without --fetch-prices: no quotes are
+        # staged and staged splits are never wiped, so the cache stays
+        # clean.
+        self.assertFalse(self.ctx.cache_dirty)
+        # And price cache should not be populated
         for entry in self.ctx.cache.values():
             self.assertNotIn("price", entry)
 

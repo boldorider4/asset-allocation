@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """End-to-end cache survival across ``cli.update.main`` with --fetch-scalable.
 
-Regression test for the reported bug: ``asalloc update --fetch-scalable
---fetch-geosplit --fetch-sectorsplit`` deleted sectors/countries from the
-cache for every matched ISIN (factory staged fresh splits, then the
-update wiped them and the flush persisted the hole), while the same run
-without ``--fetch-scalable`` rewrote them.
+Staged splits are trusted as-is: broker runs never wipe them, so with
+the fetch flags on the factory stages fresh splits once, and with the
+flags off the staged splits are reused with zero extra network. Splits
+refresh only on explicit fetch runs.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ FRESH_COUNTRIES = [
 FRESH_SECTORS = [{"name": "Technology", "weight_pct": 100.0}]
 
 
-def _seed_files(tmp: Path, *, splits: bool = True) -> tuple[Path, Path, Path]:
+def _seed_files(tmp: Path) -> tuple[Path, Path, Path]:
     assets = tmp / "assets.json"
     cache = tmp / "cache.json"
     viz = tmp / "viz"
@@ -62,14 +61,8 @@ def _seed_files(tmp: Path, *, splits: bool = True) -> tuple[Path, Path, Path]:
             {
                 ISIN: {
                     "price": 10.0,
-                    **(
-                        {
-                            "countries": {"France": 0.5},
-                            "sectors": {"Finance": 0.5},
-                        }
-                        if splits
-                        else {}
-                    ),
+                    "countries": {"France": 0.5},
+                    "sectors": {"Finance": 0.5},
                 }
             }
         ),
@@ -90,12 +83,12 @@ def _holding() -> dict:
     }
 
 
-def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool, splits: bool = True):
+def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
     from unittest.mock import MagicMock
 
     from cli.update import main as run_update
 
-    assets, cache, viz = _seed_files(tmp, splits=splits)
+    assets, cache, viz = _seed_files(tmp)
     config = AppConfig(
         fetch_scalable=True,
         fetch_geosplit=geosplit,
@@ -157,32 +150,18 @@ class TestScalableUpdateKeepsFreshSplits(unittest.TestCase):
         countries_mock.assert_called_once_with()
         sectors_mock.assert_called_once_with()
 
-    def test_flags_off_keeps_legacy_clear(self) -> None:
+    def test_flags_off_keeps_staged_splits(self) -> None:
         stored, countries_mock, sectors_mock = _run_main(
             Path(self._holder.name), geosplit=False, sectorsplit=False
         )
         row = stored[ISIN]
-        self.assertNotIn("countries", row)
-        self.assertNotIn("sectors", row)
+        # Nothing wipes staged splits anymore: they survive the run
+        # untouched and are reused with zero extra network.
+        self.assertEqual(row["countries"], {"France": 0.5})
+        self.assertEqual(row["sectors"], {"Finance": 0.5})
         self.assertEqual(row["price"], 10.0)
-        # No stealth countries scrape: cached countries are used as-is,
-        # only sectors refetch after invalidation.
         countries_mock.assert_not_called()
-        sectors_mock.assert_called_once_with()
-
-    def test_flags_off_heals_wiped_countries(self) -> None:
-        # Post-wipe cache (price only): refresh_countries refetches the
-        # missing splits for memory/charts but never stages them — the
-        # cache file shape is unchanged without the flags.
-        stored, countries_mock, sectors_mock = _run_main(
-            Path(self._holder.name),
-            geosplit=False,
-            sectorsplit=False,
-            splits=False,
-        )
-        countries_mock.assert_called_once_with()
-        sectors_mock.assert_called_once_with()
-        self.assertEqual(stored[ISIN], {"price": 10.0})
+        sectors_mock.assert_not_called()
 
 
 if __name__ == "__main__":

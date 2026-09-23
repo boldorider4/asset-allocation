@@ -190,26 +190,6 @@ class Portfolio:
                 consolidated[label] = consolidated.get(label, 0.0) + share
         return _normalize_sector_fractions(consolidated)
 
-    def refresh_sectors(self) -> None:
-        """Refresh the cached sector aggregation from Position objects.
-
-        Call this after Position objects have had their staged sectors
-        invalidated (see ``Position.invalidate_sectors``), e.g. after a
-        data update that may have changed sector allocations.
-        """
-        self._sectors = self._calculate_sectors()
-
-    def refresh_countries(self) -> None:
-        """Refresh DMEM/USAVN aggregates from Position objects.
-
-        Positions missing countries refetch them first (see
-        ``Position.refresh_geo``); otherwise a pure recompute, no network.
-        """
-        for position in self._positions:
-            position.refresh_geo()
-        self._dmem = self._calculate_dmem()
-        self._usavn = self._calculate_usavn()
-
     def _live_total(self, *, incognito: bool) -> float:
         """Display total: stored clear value, scaled for incognito passes."""
         scale = self._ctx.value_factor if incognito else 1.0
