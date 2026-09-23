@@ -230,6 +230,8 @@ class AppConfig:
         try:
             server = cls.server_from_ini(ini_path)
         except FileNotFoundError:
+            if ini_path is not None:
+                raise
             server = ServerConfig(
                 port=8765,
                 address="localhost",

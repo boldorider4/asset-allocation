@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli import cmd_stop, cmd_update, load_server_config
+from cli import cmd_serve, cmd_stop, cmd_update, load_server_config, main
 from context import AppConfig, ServerConfig
 from visual import PLOTTERS, plotter_class
 from visual.plot.pie_chart import PieChart
@@ -69,6 +70,117 @@ class TestCliPlotFlags(unittest.TestCase):
         self.assertTrue(config.plot_clear)
         self.assertTrue(config.plot_incognito)
         self.assertTrue(str(config.cache_file).endswith("cache.json"))
+
+
+class TestConfigFlag(unittest.TestCase):
+    def _ini(self, tmp: Path) -> Path:
+        path = tmp / "custom.ini"
+        path.write_text(
+            "[server]\nport = 8765\ndirectory = vis\n"
+            "[update]\nfetch_geosplit = True\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def _update_ns(self, tmp: Path, config) -> argparse.Namespace:
+        return argparse.Namespace(
+            fetch_prices=None,
+            fetch_geosplit=None,
+            fetch_sectorsplit=None,
+            fetch_oskar=None,
+            fetch_scalable=None,
+            fetch_tr=None,
+            assets_file=tmp / "assets.json",
+            cache_file=tmp / "cache.json",
+            position_source="justetf",
+            plot_clear=None,
+            plot_incognito=None,
+            plot=None,
+            log_level=None,
+            config=config,
+        )
+
+    def test_config_file_feeds_from_cli(self) -> None:
+        import cli
+
+        seen: dict = {}
+        orig = cli.RuntimeContext
+
+        class FakeCtx:
+            def __init__(self, config) -> None:
+                seen["config"] = config
+
+        cli.RuntimeContext = FakeCtx  # type: ignore[assignment]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                args = self._update_ns(Path(tmp), Path(tmp) / "custom.ini")
+                self._ini(Path(tmp))
+                with patch(
+                    "cli.run_update", side_effect=lambda ctx: seen.setdefault("ran", True)
+                ):
+                    cmd_update(args)
+        finally:
+            cli.RuntimeContext = orig
+        self.assertTrue(seen.get("ran"))
+        self.assertTrue(seen["config"].fetch_geosplit)
+        self.assertFalse(seen["config"].fetch_prices)
+
+    def test_explicit_missing_config_raises(self) -> None:
+        import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self._update_ns(Path(tmp), Path(tmp) / "nope.ini")
+            with patch("cli.run_update"):
+                with self.assertRaises(FileNotFoundError):
+                    cmd_update(args)
+
+    def test_serve_propagates_config_env_and_layout(self) -> None:
+        import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini(Path(tmp))
+            (Path(tmp) / "visualizer").mkdir()
+            calls: dict = {}
+            prev = os.environ.get("ASALLOC_CONFIG")
+
+            def fake_popen(cmd, **kwargs):
+                calls["cmd"] = list(cmd)
+                calls["env"] = os.environ.get("ASALLOC_CONFIG")
+                raise RuntimeError("stop here")
+
+            try:
+                with patch("cli._find_server_pids", return_value=[]), patch(
+                    "cli.subprocess.Popen", side_effect=fake_popen
+                ):
+                    with self.assertRaises(RuntimeError):
+                        cmd_serve(
+                            argparse.Namespace(
+                                assets_file=None,
+                                cache_file=None,
+                                config=ini,
+                            )
+                        )
+            finally:
+                if prev is None:
+                    os.environ.pop("ASALLOC_CONFIG", None)
+                else:
+                    os.environ["ASALLOC_CONFIG"] = prev
+            self.assertEqual(calls["env"], str(ini))
+            self.assertEqual(calls["cmd"][calls["cmd"].index("--plotter-data-dir") + 1], "data")
+            self.assertIn("--plotter-clear-dir", calls["cmd"])
+
+    def test_config_flag_parses_before_and_after_subcommand(self) -> None:
+        seen: list = []
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini(Path(tmp))
+            with patch(
+                "cli.load_server_config",
+                side_effect=lambda path=None: seen.append(path) or
+                ServerConfig(port=1, address="localhost", directory=Path(tmp)),
+            ):
+                main(["--config", str(ini), "stop-serve"])
+                main(["stop-serve", "--config", str(ini)])
+        self.assertEqual(seen, [Path(ini), Path(ini)])
 
 
 class TestServerConfig(unittest.TestCase):

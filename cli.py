@@ -44,7 +44,7 @@ def server_port(path: Path | None = None) -> int:
 
 
 def cmd_update(args: argparse.Namespace) -> None:
-    config = AppConfig.from_cli(args)
+    config = AppConfig.from_cli(args, ini_path=getattr(args, "config", None))
     configure_cli_logging(getattr(logging, config.log_level))
     ctx = RuntimeContext(config=config)
     run_update(ctx)
@@ -93,8 +93,8 @@ def _find_server_pids(port: int) -> list[int]:
 
 def cmd_stop(_args: argparse.Namespace) -> None:
     # Resolves the pid file from the same config `serve` used, so custom
-    # ASALLOC_CONFIG files and relative `directory` values agree on location.
-    cfg = load_server_config()
+    # --config files and relative `directory` values agree on location.
+    cfg = load_server_config(getattr(_args, "config", None))
     pid_file = cfg.directory / ".serve.pid"
     if not pid_file.is_file():
         logger.warning("No visualizer server pid file at %s; nothing to stop.", pid_file)
@@ -133,9 +133,13 @@ def cmd_stop(_args: argparse.Namespace) -> None:
 def cmd_serve(args: argparse.Namespace) -> None:
     from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
 
-    cfg = load_server_config()
+    cfg = load_server_config(getattr(args, "config", None))
+    if getattr(args, "config", None) is not None:
+        # Propagate to the server child (and its update workers), which
+        # read ini defaults from the environment.
+        os.environ["ASALLOC_CONFIG"] = str(args.config)
     try:
-        ini_cfg = AppConfig.from_ini()
+        ini_cfg = AppConfig.from_ini(getattr(args, "config", None))
     except (FileNotFoundError, ValueError):
         ini_cfg = AppConfig()
     ini_plotter, ini_data_dir = ini_cfg.plotter_config, ini_cfg.server.data_dir
@@ -201,6 +205,18 @@ def cmd_serve(args: argparse.Namespace) -> None:
         cfg.address,
         cfg.port,
         proc.pid,
+    )
+
+
+def _add_config_flag(parser: argparse.ArgumentParser, *, default=None) -> None:
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=default,
+        help=(
+            "Path to config.ini (overrides $ASALLOC_CONFIG and the built-in "
+            "default). May be given before or after the subcommand."
+        ),
     )
 
 
@@ -322,12 +338,14 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Logging level for stderr (default: config.ini [update] log_level, else INFO). Use DEBUG for verbose OSKAR steps.",
     )
+    _add_config_flag(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     update = subparsers.add_parser(
         "update",
         help="Load the assets file, optionally scrape brokers/prices, and write charts.",
     )
+    _add_config_flag(update, default=argparse.SUPPRESS)
     _add_update_flags(update)
     update.set_defaults(func=cmd_update)
 
@@ -335,6 +353,7 @@ def main(argv: list[str] | None = None) -> None:
         "serve",
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
     )
+    _add_config_flag(serve, default=argparse.SUPPRESS)
     serve.add_argument(
         "--assets-file",
         type=Path,
@@ -355,6 +374,7 @@ def main(argv: list[str] | None = None) -> None:
         "stop-serve",
         help="Stop the background visualizer server started by serve (pid file from config.ini).",
     )
+    _add_config_flag(stop_serve, default=argparse.SUPPRESS)
     stop_serve.set_defaults(func=cmd_stop)
 
     args = parser.parse_args(argv)

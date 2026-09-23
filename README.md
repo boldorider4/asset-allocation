@@ -64,6 +64,7 @@ Useful `update` flags:
 
 | Flag | Purpose |
 | --- | --- |
+| `--config PATH` | Use a `config.ini` other than `$ASALLOC_CONFIG` (may go before or after the subcommand) |
 | `--fetch-prices` | Scrape live quotes into `cache.json` |
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
 | `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
