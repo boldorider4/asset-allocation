@@ -5,7 +5,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from utils import save_position_in_cache
-from common import (
+from cli.common import (
     BROKER,
     DMEM,
     DMEM_OTHER,
@@ -35,10 +35,10 @@ from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
 from scrape.scalable import _SCALABLE as SCALABLE
 from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

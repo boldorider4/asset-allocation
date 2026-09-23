@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from common import (
+from cli.common import (
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
     EQUITY_PORTFOLIO,
@@ -20,7 +20,7 @@ from scrape.traderepublic import (
     _CASH_FETCH_KEY,
     update_traderepublic_etfs_in_portfolio,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from utils import write_portfolio
 
 

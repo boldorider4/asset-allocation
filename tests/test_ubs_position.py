@@ -16,7 +16,7 @@ from position.ubs_position import (
     _UBS_PRODUCT_EXISTS,
     ubs_product_url_exists,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BD4TXV59"
 _INST_ID = "1694907"

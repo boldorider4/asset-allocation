@@ -25,7 +25,7 @@ def _stub(*, value, sectors, dmem=1.0, usavn=0.5):
 
 
 def _ctx():
-    from context import AppConfig, RuntimeContext
+    from cli.context import AppConfig, RuntimeContext
 
     return RuntimeContext(config=AppConfig(plotter="web"))
 

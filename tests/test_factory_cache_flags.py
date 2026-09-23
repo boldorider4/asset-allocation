@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from portfolio.portfolio import Portfolio
 from position.factory import factory
 from position.justetf_position import JustETFPosition

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from common import (
+from cli.common import (
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
     EQUITY_PORTFOLIO,
@@ -21,7 +21,7 @@ from scrape.scalable import (
     _TAGESGELD_FETCH_KEY,
     update_scalable_etfs_in_portfolio,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from utils import write_portfolio
 
 

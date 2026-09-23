@@ -7,7 +7,7 @@ from typing import Any
 
 import ccy
 
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
 from position.position import (
     _LIST_OF_DEVELOPED_MARKETS,

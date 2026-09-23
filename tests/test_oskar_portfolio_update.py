@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from scrape.oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 
 class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):

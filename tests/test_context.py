@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from visual.plot.pie_chart import PieChart
 from visual.plot.web_chart import WebChart
 
@@ -89,7 +89,7 @@ class TestFromCli(unittest.TestCase):
         self.assertEqual(config.server.port, 8765)
 
     def test_defaults_point_at_repo_files(self) -> None:
-        from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
 
         with tempfile.TemporaryDirectory() as tmp:
             ini = Path(tmp) / "config.ini"
@@ -134,7 +134,7 @@ class TestUpdateFromIni(unittest.TestCase):
         self.assertEqual(values["cache_file"], Path(tmp) / "sub" / "c.json")
 
     def test_missing_section_gives_defaults(self) -> None:
-        from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
 
         with tempfile.TemporaryDirectory() as tmp:
             values = AppConfig._update_from_ini(
@@ -280,7 +280,7 @@ class TestFromCliIniMerge(unittest.TestCase):
 
 class TestRuntimeContextCache(unittest.TestCase):
     def _ctx(self, tmp: Path) -> RuntimeContext:
-        from context import AppConfig as Cfg
+        from cli.context import AppConfig as Cfg
 
         return RuntimeContext(
             config=Cfg(
@@ -409,7 +409,7 @@ class TestIncognitoOutputDir(unittest.TestCase):
 
 class TestPlotterOutputDir(unittest.TestCase):
     def test_output_dir_overrides_serve_tree(self) -> None:
-        from context import PlotterConfig
+        from cli.context import PlotterConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
@@ -423,7 +423,7 @@ class TestPlotterOutputDir(unittest.TestCase):
             self.assertEqual(ctx.output_data_dir(incognito=True), out / "incognito")
 
     def test_custom_subdir_names(self) -> None:
-        from context import PlotterConfig
+        from cli.context import PlotterConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
@@ -440,7 +440,7 @@ class TestPlotterOutputDir(unittest.TestCase):
             )
 
     def test_server_data_dir_renames_legacy_tree(self) -> None:
-        from context import ServerConfig
+        from cli.context import ServerConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             server = ServerConfig(
@@ -457,7 +457,7 @@ class TestPlotterOutputDir(unittest.TestCase):
 
 
 def _server(directory: Path):
-    from context import ServerConfig
+    from cli.context import ServerConfig
 
     return ServerConfig(port=8765, address="localhost", directory=directory)
 

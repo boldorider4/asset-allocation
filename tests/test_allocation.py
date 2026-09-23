@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""End-to-end cache survival across ``allocation.main`` with --fetch-scalable.
+"""End-to-end cache survival across ``cli.update.main`` with --fetch-scalable.
 
 Regression test for the reported bug: ``asalloc update --fetch-scalable
 --fetch-geosplit --fetch-sectorsplit`` deleted sectors/countries from the
@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from context import AppConfig, RuntimeContext, ServerConfig  # noqa: E402
+from cli.context import AppConfig, RuntimeContext, ServerConfig  # noqa: E402
 from scrape.scalable import ScalableHolding  # noqa: E402
 
 ISIN = "XX000UNKNOWN1"
@@ -93,7 +93,7 @@ def _holding() -> dict:
 def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool, splits: bool = True):
     from unittest.mock import MagicMock
 
-    from allocation import main as run_update
+    from cli.update import main as run_update
 
     assets, cache, viz = _seed_files(tmp, splits=splits)
     config = AppConfig(
@@ -130,7 +130,7 @@ class TestScalableUpdateKeepsFreshSplits(unittest.TestCase):
     def setUp(self) -> None:
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
-        # allocation.main points WebChart output at the run's dir via
+        # cli.update.main points WebChart output at the run's dir via
         # class globals; restore them so other tests are unaffected.
         from visual.plot.web_chart import WebChart
 

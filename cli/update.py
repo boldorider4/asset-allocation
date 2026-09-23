@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from common import (
+from cli.common import (
     BOND_PORTFOLIO,
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
@@ -12,7 +12,7 @@ from common import (
     FIXED_MATURITY_BOND_PORTFOLIO,
     PENSION_PORTFOLIO,
 )
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from scrape.oskar import update_oskar_etfs_in_portfolio
@@ -25,7 +25,7 @@ from utils import (
 )
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -34,7 +34,7 @@ attach_color_stderr_handler_for_module(logger)
 def main(ctx: RuntimeContext) -> None:
     """Run the update pipeline against an explicit ``RuntimeContext``."""
     if ctx is None:
-        raise TypeError("allocation.main requires an explicit RuntimeContext (ctx)")
+        raise TypeError("cli.update.main requires an explicit RuntimeContext (ctx)")
     ctx.load_portfolio()
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()

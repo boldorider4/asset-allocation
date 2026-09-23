@@ -8,12 +8,12 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
 
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
 from position.position import fold_unknown_sector_label
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

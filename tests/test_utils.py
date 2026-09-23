@@ -26,7 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from unittest.mock import patch  # noqa: E402
 
-from context import AppConfig, RuntimeContext  # noqa: E402
+from cli.context import AppConfig, RuntimeContext  # noqa: E402
 from utils import (  # noqa: E402
     apply_incognito_scaling,
     load_portfolio,

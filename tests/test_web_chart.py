@@ -31,7 +31,7 @@ class TestWebChart(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_default_visualizer_is_web_chart(self) -> None:
-        from context import AppConfig, RuntimeContext
+        from cli.context import AppConfig, RuntimeContext
 
         self.assertIs(PLOTTERS["web"], WebChart)
         self.assertIs(RuntimeContext(config=AppConfig(plotter="web")).plotter_class(), WebChart)

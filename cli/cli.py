@@ -9,9 +9,9 @@ import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from allocation import main as run_update
-from context import AppConfig, RuntimeContext, ServerConfig
-from logger import attach_color_stderr_handler_for_module, configure_cli_logging
+from cli.update import main as run_update
+from cli.context import AppConfig, RuntimeContext, ServerConfig
+from cli.logger import attach_color_stderr_handler_for_module, configure_cli_logging
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -131,7 +131,7 @@ def cmd_stop(_args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    from context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+    from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
 
     cfg = load_server_config(getattr(args, "config", None))
     if getattr(args, "config", None) is not None:

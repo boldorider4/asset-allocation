@@ -74,7 +74,7 @@ def _write_files(tmp: Path) -> tuple[Path, Path]:
 class _StubUpdateProcess:
     """Test double for the spawned update worker.
 
-    Runs the target in a thread so ``allocation.main`` patches apply.
+    Runs the target in a thread so ``cli.update.main`` patches apply.
     ``terminate``/``kill`` only mark the call; real stopping comes from
     the cancel event, mirroring a graceful child shutdown.
     """
@@ -1249,7 +1249,7 @@ class TestConstituentsRoute(unittest.TestCase):
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
         # Updates run in stubbed child processes (threads), so
-        # ``allocation.main`` patches apply and no real worker spawns.
+        # ``cli.update.main`` patches apply and no real worker spawns.
         del _SPAWNED_STUBS[:]
         from unittest.mock import patch
 
@@ -1653,7 +1653,7 @@ class TestConstituentsRoute(unittest.TestCase):
 
         before = logging.getLogger().level
         with (
-            patch("allocation.main", side_effect=fake_main),
+            patch("cli.update.main", side_effect=fake_main),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
         ):
@@ -1678,7 +1678,7 @@ class TestConstituentsRoute(unittest.TestCase):
         from unittest.mock import patch
 
         with (
-            patch("allocation.main", side_effect=RuntimeError("boom")),
+            patch("cli.update.main", side_effect=RuntimeError("boom")),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
         ):
@@ -1704,7 +1704,7 @@ class TestConstituentsRoute(unittest.TestCase):
             seen["config"] = ctx.config
 
         with (
-            patch("allocation.main", side_effect=fake_main),
+            patch("cli.update.main", side_effect=fake_main),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
             patch.dict(os.environ, {"ASALLOC_CONFIG": str(ini)}),
@@ -1735,7 +1735,7 @@ class TestConstituentsRoute(unittest.TestCase):
 
         before = logging.getLogger().level
         with (
-            patch("allocation.main", side_effect=fake_main),
+            patch("cli.update.main", side_effect=fake_main),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
         ):
@@ -1763,7 +1763,7 @@ class TestConstituentsRoute(unittest.TestCase):
             seen["config"] = ctx.config
 
         with (
-            patch("allocation.main", side_effect=fake_main),
+            patch("cli.update.main", side_effect=fake_main),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
         ):
@@ -1805,7 +1805,7 @@ class TestConstituentsRoute(unittest.TestCase):
         def run() -> None:
             try:
                 with (
-                    patch("allocation.main", side_effect=fake_main),
+                    patch("cli.update.main", side_effect=fake_main),
                     patch("visual.web.backend.serve._quiesce_update_units"),
                     patch("visual.web.backend.serve._restore_update_timer"),
                 ):
@@ -1839,7 +1839,7 @@ class TestConstituentsRoute(unittest.TestCase):
                 "visual.web.backend.serve._quiesce_update_units",
                 side_effect=RuntimeError("no systemd"),
             ),
-            patch("allocation.main") as no_run,
+            patch("cli.update.main") as no_run,
             patch(
                 "visual.web.backend.serve._restore_update_timer"
             ) as no_restore,
@@ -1851,7 +1851,7 @@ class TestConstituentsRoute(unittest.TestCase):
         no_restore.assert_not_called()
         # The job flag clears, so a later update is not stuck at 409.
         with (
-            patch("allocation.main"),
+            patch("cli.update.main"),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch("visual.web.backend.serve._restore_update_timer"),
         ):
@@ -1862,7 +1862,7 @@ class TestConstituentsRoute(unittest.TestCase):
         from unittest.mock import patch
 
         with (
-            patch("allocation.main"),
+            patch("cli.update.main"),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch(
                 "visual.web.backend.serve._restore_update_timer"
@@ -1876,7 +1876,7 @@ class TestConstituentsRoute(unittest.TestCase):
         from unittest.mock import patch
 
         with (
-            patch("allocation.main", side_effect=RuntimeError("boom")),
+            patch("cli.update.main", side_effect=RuntimeError("boom")),
             patch("visual.web.backend.serve._quiesce_update_units"),
             patch(
                 "visual.web.backend.serve._restore_update_timer"
@@ -2005,7 +2005,7 @@ class TestUpdateCancellation(unittest.TestCase):
         def first() -> None:
             try:
                 with (
-                    patch("allocation.main", side_effect=fake_main),
+                    patch("cli.update.main", side_effect=fake_main),
                     patch("visual.web.backend.serve._quiesce_update_units"),
                     patch("visual.web.backend.serve._restore_update_timer"),
                 ):
@@ -2017,7 +2017,7 @@ class TestUpdateCancellation(unittest.TestCase):
         thread.start()
         try:
             self.assertTrue(entered.wait(timeout=30))
-            with patch("allocation.main") as no_run:
+            with patch("cli.update.main") as no_run:
                 status, body = self._post_path("/api/update")
                 no_run.assert_not_called()
             self.assertEqual(status, 409)
@@ -2046,7 +2046,7 @@ class TestUpdateCancellation(unittest.TestCase):
         def run_update() -> None:
             try:
                 with (
-                    patch("allocation.main", side_effect=fake_main),
+                    patch("cli.update.main", side_effect=fake_main),
                     patch("visual.web.backend.serve._quiesce_update_units"),
                     patch("visual.web.backend.serve._restore_update_timer"),
                 ):
@@ -2092,7 +2092,7 @@ class TestUpdateCancellation(unittest.TestCase):
         def run_update() -> None:
             try:
                 with (
-                    patch("allocation.main", side_effect=fake_main),
+                    patch("cli.update.main", side_effect=fake_main),
                     patch("visual.web.backend.serve._quiesce_update_units"),
                     patch("visual.web.backend.serve._restore_update_timer"),
                 ):

@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import (
+from cli.common import (
     BROKER,
     DMEM,
     DMEM_OTHER,

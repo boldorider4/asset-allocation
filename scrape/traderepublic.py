@@ -19,12 +19,12 @@ from typing import Any
 
 from typing import TYPE_CHECKING
 
-from common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
-from logger import attach_color_stderr_handler_for_module
+from cli.common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
+from cli.logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

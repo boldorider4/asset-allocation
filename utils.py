@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from common import (
+from cli.common import (
     DEFAULT_ISIN_PORTFOLIO_BUCKET,
     ISIN_TO_PORTFOLIO,
 )
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from storage.records import CacheEntry
 
 logger = logging.getLogger(__name__)

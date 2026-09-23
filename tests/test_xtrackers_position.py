@@ -19,7 +19,7 @@ from position.xtrackers_position import (
     _DWS_PRODUCT_EXISTS,
     dws_product_url_exists,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BTJRMP35"
 _SLUG = "IE00BTJRMP35-msci-emerging-markets-ucits-etf-1c"

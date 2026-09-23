@@ -20,7 +20,7 @@ from position.state_street_position import (
     _SSGA_PRODUCT_EXISTS,
     ssga_product_url_exists,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE00B4YBJ215"
 _GEO = {

@@ -19,10 +19,11 @@ class TestLiteUpdateUnit(unittest.TestCase):
                 return line
         self.fail("no ExecStart in lite unit")
 
-    def test_lite_runs_plain_update_with_clear_charts_only(self) -> None:
+    def test_lite_runs_plain_update_with_both_chart_modes(self) -> None:
         cmd = self._exec_start()
         self.assertIn("asalloc update", cmd)
         self.assertIn("--plot-clear", cmd)
+        self.assertIn("--plot-incognito", cmd)
         self.assertIn("--log-level ERROR", cmd)
         # Same files as the dashboard endpoint worker (serve --assets-file /
         # --cache-file): otherwise the two update paths persist to different
@@ -36,7 +37,6 @@ class TestLiteUpdateUnit(unittest.TestCase):
             "--fetch-oskar",
             "--fetch-scalable",
             "--fetch-tr",
-            "--plot-incognito",
         ):
             self.assertNotIn(flag, cmd)
 

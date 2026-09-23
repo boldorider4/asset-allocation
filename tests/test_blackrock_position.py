@@ -19,7 +19,7 @@ from position.blackrock_position import (
 )
 from position.factory import factory
 from position.justetf_position import JustETFPosition
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BKM4GZ66"
 _HOLDINGS_CSV = """Fund Holdings as of,10/Sept/2026

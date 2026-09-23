@@ -9,7 +9,7 @@ import numpy as np
 
 from position.factory import factory as _factory
 from position.position import Position
-from common import (
+from cli.common import (
     BROKER,
     DMEM,
     DMEM_OTHER,
@@ -21,11 +21,11 @@ from common import (
     USAVN,
     VALUE,
 )
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from visual import SECTOR_PALETTE, Visual
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -376,7 +376,7 @@ class Portfolio:
 
 
 if __name__ == "__main__":
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
     _ctx = RuntimeContext()
     _ctx.ensure_cache_loaded()

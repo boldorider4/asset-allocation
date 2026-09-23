@@ -9,11 +9,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from scrape.oskar import _OSKAR
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

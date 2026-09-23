@@ -22,7 +22,7 @@ from position.l_and_g_position import (
     _LANDG_PORTFOLIO_PART_ID,
     landg_product_url_exists,
 )
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE000Z9UVQ99"
 _LISTING = {

@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
 
 logger = logging.getLogger(__name__)

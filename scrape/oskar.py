@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
-from logger import attach_color_stderr_handler_for_module
-from common import (
+from cli.logger import attach_color_stderr_handler_for_module
+from cli.common import (
     BOND_PORTFOLIO,
     BROKER,
     CASH_PORTFOLIO,

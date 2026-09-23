@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from position.position import Position
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 
 class YFinancePosition(Position):

@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from context import AppConfig, RuntimeContext, ServerConfig
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 from portfolio.portfolio import Portfolio
 from portfolio.regional_portfolio import RegionalPortfolio
 

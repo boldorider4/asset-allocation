@@ -19,7 +19,7 @@ from position.invesco_position import (
     invesco_product_url_exists,
 )
 from position.justetf_position import JustETFPosition
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE00BKS7L097"
 _HOLDINGS_ISIN = "IE000PJL7R74"

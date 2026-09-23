@@ -9,7 +9,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from position.justetf_position import JustETFPosition
 
 _ISIN = "LU1547515137"

@@ -25,7 +25,7 @@ def _stub(*, value, sectors, dmem=1.0, usavn=0.5, short_name=None):
 
 
 def _portfolio(cls, name, stubs):
-    from context import AppConfig, RuntimeContext
+    from cli.context import AppConfig, RuntimeContext
 
     ctx = RuntimeContext(config=AppConfig(plotter="web"))
     with patch("portfolio.portfolio._factory", side_effect=list(stubs)):
@@ -185,7 +185,7 @@ class TestSectorVisualizer(unittest.TestCase):
         # No sector rows on either side: everything lands in Other.
         # Must use the recording plotter: the real WebChart would write a
         # stray *.raw file into the user's visualizer data dir.
-        with patch("context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
+        with patch("cli.context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
             left = _portfolio(RegionalPortfolio, "A", [_stub(value=100.0, sectors=None)])
             right = _portfolio(RegionalPortfolio, "B", [_stub(value=100.0, sectors=None)])
             merged = left + right
@@ -286,7 +286,7 @@ class TestSectorVisualizer(unittest.TestCase):
         port.plot_sectors()  # must not raise
 
     def test_plot_sectors_reuses_persistent_visualizer(self) -> None:
-        with patch("context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
+        with patch("cli.context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
             port = _portfolio(
                 RegionalPortfolio,
                 "R",
@@ -306,7 +306,7 @@ class TestSectorVisualizer(unittest.TestCase):
         self.assertEqual(viz._data, {"Technology": 1.0})
 
     def test_merged_portfolio_has_persistent_visualizer(self) -> None:
-        with patch("context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
+        with patch("cli.context.RuntimeContext.plotter_class", return_value=_RecordingPlotter):
             left = _portfolio(
                 RegionalPortfolio,
                 "A",

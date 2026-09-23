@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli import cmd_serve, cmd_stop, cmd_update, load_server_config, main
-from context import AppConfig, ServerConfig
+from cli.cli import cmd_serve, cmd_stop, cmd_update, load_server_config, main
+from cli.context import AppConfig, ServerConfig
 from visual import PLOTTERS, plotter_class
 from visual.plot.pie_chart import PieChart
 from visual.plot.web_chart import WebChart
@@ -27,7 +27,7 @@ class TestCliPlotFlags(unittest.TestCase):
             plotter_class("nope")
 
     def test_cmd_update_builds_config_with_new_flags(self) -> None:
-        import cli
+        import cli.cli as cli
 
         seen: dict = {}
         orig = cli.RuntimeContext
@@ -55,7 +55,7 @@ class TestCliPlotFlags(unittest.TestCase):
                     log_level="INFO",
                 )
                 with patch(
-                    "cli.run_update", side_effect=lambda ctx: seen.setdefault("ran", True)
+                    "cli.cli.run_update", side_effect=lambda ctx: seen.setdefault("ran", True)
                 ), patch.object(
                     AppConfig, "server_from_ini", return_value=AppConfig().server
                 ):
@@ -101,7 +101,7 @@ class TestConfigFlag(unittest.TestCase):
         )
 
     def test_config_file_feeds_from_cli(self) -> None:
-        import cli
+        import cli.cli as cli
 
         seen: dict = {}
         orig = cli.RuntimeContext
@@ -116,7 +116,7 @@ class TestConfigFlag(unittest.TestCase):
                 args = self._update_ns(Path(tmp), Path(tmp) / "custom.ini")
                 self._ini(Path(tmp))
                 with patch(
-                    "cli.run_update", side_effect=lambda ctx: seen.setdefault("ran", True)
+                    "cli.cli.run_update", side_effect=lambda ctx: seen.setdefault("ran", True)
                 ):
                     cmd_update(args)
         finally:
@@ -126,16 +126,16 @@ class TestConfigFlag(unittest.TestCase):
         self.assertFalse(seen["config"].fetch_prices)
 
     def test_explicit_missing_config_raises(self) -> None:
-        import cli
+        import cli.cli as cli
 
         with tempfile.TemporaryDirectory() as tmp:
             args = self._update_ns(Path(tmp), Path(tmp) / "nope.ini")
-            with patch("cli.run_update"):
+            with patch("cli.cli.run_update"):
                 with self.assertRaises(FileNotFoundError):
                     cmd_update(args)
 
     def test_serve_propagates_config_env_and_layout(self) -> None:
-        import cli
+        import cli.cli as cli
 
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini(Path(tmp))
@@ -149,8 +149,8 @@ class TestConfigFlag(unittest.TestCase):
                 raise RuntimeError("stop here")
 
             try:
-                with patch("cli._find_server_pids", return_value=[]), patch(
-                    "cli.subprocess.Popen", side_effect=fake_popen
+                with patch("cli.cli._find_server_pids", return_value=[]), patch(
+                    "cli.cli.subprocess.Popen", side_effect=fake_popen
                 ):
                     with self.assertRaises(RuntimeError):
                         cmd_serve(
@@ -174,7 +174,7 @@ class TestConfigFlag(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini(Path(tmp))
             with patch(
-                "cli.load_server_config",
+                "cli.cli.load_server_config",
                 side_effect=lambda path=None: seen.append(path) or
                 ServerConfig(port=1, address="localhost", directory=Path(tmp)),
             ):
@@ -213,7 +213,7 @@ class TestStop(unittest.TestCase):
 
     def test_missing_pid_file_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("cli.load_server_config", return_value=self._cfg(tmp)):
+            with patch("cli.cli.load_server_config", return_value=self._cfg(tmp)):
                 cmd_stop(argparse.Namespace())  # must not raise
 
     def test_malformed_pid_file_is_removed(self) -> None:
@@ -221,7 +221,7 @@ class TestStop(unittest.TestCase):
             pid_file = Path(tmp) / "visualizer" / ".serve.pid"
             self._cfg(tmp)  # ensures directory exists
             pid_file.write_text("not-a-pid", encoding="utf-8")
-            with patch("cli.load_server_config", return_value=self._cfg(tmp)):
+            with patch("cli.cli.load_server_config", return_value=self._cfg(tmp)):
                 cmd_stop(argparse.Namespace())
             self.assertFalse(pid_file.exists())
 
@@ -230,7 +230,7 @@ class TestStop(unittest.TestCase):
             cfg = self._cfg(tmp)
             pid_file = cfg.directory / ".serve.pid"
             pid_file.write_text("999999999", encoding="utf-8")
-            with patch("cli.load_server_config", return_value=cfg):
+            with patch("cli.cli.load_server_config", return_value=cfg):
                 cmd_stop(argparse.Namespace())
             self.assertFalse(pid_file.exists())
 
@@ -242,8 +242,8 @@ class TestStop(unittest.TestCase):
             self.addCleanup(lambda: proc.kill() if proc.poll() is None else None)
             pid_file.write_text(str(proc.pid), encoding="utf-8")
             with (
-                patch("cli.load_server_config", return_value=cfg),
-                patch("cli._pid_is_server", return_value=True),
+                patch("cli.cli.load_server_config", return_value=cfg),
+                patch("cli.cli._pid_is_server", return_value=True),
             ):
                 cmd_stop(argparse.Namespace())
             self.assertIsNotNone(proc.wait(timeout=10))
@@ -256,7 +256,7 @@ class TestStop(unittest.TestCase):
             proc = subprocess.Popen(["sleep", "60"])
             self.addCleanup(lambda: proc.kill() if proc.poll() is None else None)
             pid_file.write_text(str(proc.pid), encoding="utf-8")
-            with patch("cli.load_server_config", return_value=cfg):
+            with patch("cli.cli.load_server_config", return_value=cfg):
                 cmd_stop(argparse.Namespace())  # sleep has no serve marker
             self.assertIsNone(proc.poll())
             self.assertFalse(pid_file.exists())

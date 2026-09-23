@@ -200,8 +200,8 @@ def _update_worker(
     exit code instead. The send lands in the OS pipe buffer, so it
     survives the child dying with no flush dance.
     """
-    from allocation import main as run_update
-    from context import AppConfig, PlotterConfig, RuntimeContext, ServerConfig
+    from cli.update import main as run_update
+    from cli.context import AppConfig, PlotterConfig, RuntimeContext, ServerConfig
     from position.factory import UpdateCancelled
 
     try:

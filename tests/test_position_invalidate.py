@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from context import AppConfig, RuntimeContext  # noqa: E402
+from cli.context import AppConfig, RuntimeContext  # noqa: E402
 from position.justetf_position import JustETFPosition  # noqa: E402
 
 ISIN = "XX000UNKNOWN1"

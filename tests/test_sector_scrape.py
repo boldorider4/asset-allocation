@@ -11,7 +11,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 from position.factory import factory
 from position.justetf_position import JustETFPosition
 from position.position import Position

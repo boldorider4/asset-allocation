@@ -13,10 +13,10 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 from position.position import Position, fold_unknown_sector_label
-from logger import attach_color_stderr_handler_for_module
+from cli.logger import attach_color_stderr_handler_for_module
 
 if TYPE_CHECKING:
-    from context import RuntimeContext
+    from cli.context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)

@@ -30,7 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 def _spawn_child_imports(conn) -> None:
     """Child entry point: import the full endpoint-worker chain."""
     try:
-        from allocation import main as run_update  # noqa: F401
+        from cli.update import main as run_update  # noqa: F401
 
         import portfolio.regional_portfolio  # noqa: F401
         import scrape.scalable  # noqa: F401

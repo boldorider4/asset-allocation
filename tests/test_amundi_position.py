@@ -18,7 +18,7 @@ from position.amundi_position import (
 )
 from position.factory import factory
 from position.justetf_position import JustETFPosition
-from context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext
 
 _ISIN = "IE000BI8OT95"
 _PRODUCTS = {
