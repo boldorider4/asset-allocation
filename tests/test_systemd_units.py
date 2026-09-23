@@ -24,6 +24,11 @@ class TestLiteUpdateUnit(unittest.TestCase):
         self.assertIn("asalloc update", cmd)
         self.assertIn("--plot-clear", cmd)
         self.assertIn("--log-level ERROR", cmd)
+        # Same files as the dashboard endpoint worker (serve --assets-file /
+        # --cache-file): otherwise the two update paths persist to different
+        # caches and each misses the other's writes.
+        self.assertIn("--assets-file %h/.local/asalloc/assets.json", cmd)
+        self.assertIn("--cache-file %h/.local/asalloc/cache.json", cmd)
         for flag in (
             "--fetch-prices",
             "--fetch-geosplit",
@@ -34,6 +39,13 @@ class TestLiteUpdateUnit(unittest.TestCase):
             "--plot-incognito",
         ):
             self.assertNotIn(flag, cmd)
+
+    def test_full_update_unit_shares_cache_with_endpoint(self) -> None:
+        text = (REPO_ROOT / "systemd" / "asalloc-update.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--cache-file %h/.local/asalloc/cache.json", text)
+        self.assertIn("--assets-file %h/.local/asalloc/assets.json", text)
 
     def test_make_service_copies_but_never_enables_lite_unit(self) -> None:
         lines = (REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
