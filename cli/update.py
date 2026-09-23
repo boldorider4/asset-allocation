@@ -39,10 +39,8 @@ def main(ctx: RuntimeContext) -> None:
     ctx.ensure_cache_loaded()
     ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
-    # Broker scrapes run FIRST: they only need the raw asset dicts (fresh
-    # values, shares and composition) and never Position/Portfolio objects.
-    # Everything composed below is therefore built from final holdings, so
-    # plotted totals can never lag the JSON flushed here.
+    # Broker scrapes run FIRST
+    # Everything composed below is built from final holdings
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
@@ -62,9 +60,7 @@ def main(ctx: RuntimeContext) -> None:
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
     # Composition from the final dicts: the factory stages cache backfills
-    # and estimates OSKAR shares (value/price via a JustETF position quote)
-    # from fresh scrape values, queuing them for the persists below. Added
-    # holdings become positions; removed ones simply have none.
+    # and estimates OSKAR shares from fresh scrape values, queuing them for the persists below.
     equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
     fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], ctx=ctx)
     cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], ctx=ctx)
@@ -72,9 +68,7 @@ def main(ctx: RuntimeContext) -> None:
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
 
-    # The persists consume the factory-queued pending writes, so they must
-    # run after composition; the dict updates they apply match what the
-    # objects already resolve to, keeping both in sync.
+    # The persists consume the factory-queued pending writes
     persist_oskar_shares_in_portfolio(ctx)
     persist_fetched_values_in_portfolio(ctx)
 
@@ -82,9 +76,7 @@ def main(ctx: RuntimeContext) -> None:
     apply_incognito_scaling(ctx)
 
     # Sector and geo splits were calculated once at composition above from
-    # trusted staged splits (or freshly scraped ones when the fetch flags
-    # are on). No second pass: staged splits are never wiped by broker
-    # runs, so there is nothing to invalidate or refetch here.
+    # trusted staged splits (or freshly scraped ones when the fetch flags are on)
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
