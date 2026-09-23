@@ -129,7 +129,3 @@ To use matplotlib windows instead, pass `--plot pie-chart` (or set `DEFAULT_VISU
 Licensed under `AGPL-3.0-or-later` — see `LICENSE`. If you run a modified
 version as a backend/network service, you must offer the modified source
 to its users.
-
-## Disclaimer
-
-This is a personal tooling repo, not financial advice. Prices and third-party sites can be wrong or unavailable; verify anything material before you act.
