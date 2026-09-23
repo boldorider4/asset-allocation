@@ -194,7 +194,11 @@ def write_portfolio(path: Path, data: dict[str, list[dict]]) -> None:
 
 
 def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
-    """Apply all fresh OSKAR share estimates and write the assets file once."""
+    """Apply all fresh OSKAR share estimates and write the assets file once.
+
+    Only rows whose shares actually changed are written, so re-estimating
+    every run never rewrites an untouched assets file.
+    """
     if not ctx.pending_oskar_shares:
         return
     # Lazy import: ``scrape.oskar`` imports portfolio constants only.
@@ -212,7 +216,7 @@ def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
                 shares = ctx.pending_oskar_shares.get(
                     (str(pos_isin), float(pos_value))
                 )
-                if shares is not None:
+                if shares is not None and position.get("shares") != shares:
                     position["shares"] = shares
                     updated_count += 1
         if updated_count:

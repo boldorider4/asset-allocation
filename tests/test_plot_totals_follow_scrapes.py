@@ -73,15 +73,18 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
     from cli.update import main as run_update
 
     assets, cache, viz = _seed_files(tmp, broker=broker, shares=shares)
+    flags = {
+        "fetch_prices": False,
+        "fetch_geosplit": False,
+        "fetch_sectorsplit": False,
+        **fetch,
+    }
     config = AppConfig(
-        fetch_prices=False,
-        fetch_geosplit=False,
-        fetch_sectorsplit=False,
         plot_clear=True,
         assets_file=assets,
         cache_file=cache,
         server=ServerConfig(port=0, address="localhost", directory=viz),
-        **fetch,
+        **flags,
     )
     ctx = RuntimeContext(config=config)
     run_update(ctx)
@@ -147,12 +150,19 @@ class TestOskarPlotTotals(PlotTotalsTestBase):
                 category="",
             )
         }
-        with patch("scrape.oskar.fetch_oskar_etfs", return_value=etfs):
+        # Estimation needs both flags: fresh cockpit value + fresh quote.
+        with (
+            patch("scrape.oskar.fetch_oskar_etfs", return_value=etfs),
+            patch(
+                "position.justetf_position.JustETFPosition._fast_info_price",
+                return_value=CACHED_PRICE,
+            ),
+        ):
             raw_text, stored = _run_main(
                 Path(self._holder.name),
                 broker=_OSKAR,
                 shares=None,
-                fetch={"fetch_oskar": True},
+                fetch={"fetch_oskar": True, "fetch_prices": True},
             )
         self.assertEqual(stored["equity_portfolio"][0]["value"], NEW_VALUE)
         # Shares estimated as value/price from a JustETF position quote.

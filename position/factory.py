@@ -280,12 +280,18 @@ def factory(
             update_sectors=update_sectors,
         )
 
-    # OSKAR cockpit has no share count or unit price. After a live scrape,
-    # estimate shares from holdings value / the available quote (fresh or cached)
-    # and queue them for batch persistence after all Position objects exist.
+    # OSKAR cockpit has no share count or unit price. On runs with both
+    # --fetch-oskar and --fetch-prices, estimate shares from the fresh
+    # holdings value / the fresh quote and queue them for batch persistence
+    # after all Position objects exist.
     if prefer_scrape_value and position.price is not None and broker == OSKAR and isin:
         estimated_shares: float | None = None
-        if shares is None and value is not None and position.price:
+        if (
+            value is not None
+            and position.price
+            and ctx.config.fetch_oskar
+            and ctx.config.fetch_prices
+        ):
             estimated_shares = float(value) / float(position.price)
             position._shares = estimated_shares
             logger.info(

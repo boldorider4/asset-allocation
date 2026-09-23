@@ -180,7 +180,9 @@ class TestFactoryCacheFlags(unittest.TestCase):
         with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
             pos = self._factory(broker="oskar", value=140.0, shares=4)
         self.assertEqual(pos.price, 99.5)
-        self.assertEqual(pos.shares, 4)
+        # Set shares are re-estimated from the fresh value/quote, but the
+        # value itself still prevails over shares × quote.
+        self.assertEqual(pos.shares, 140.0 / 99.5)
         self.assertEqual(pos.value, 140.0)
 
     def test_oskar_fetch_prices_queues_shares_for_batch_write(self) -> None:
@@ -263,7 +265,9 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(other_row["shares"], 50.0 / 99.5)
         write.assert_called_once()
 
-    def test_oskar_estimates_shares_from_cached_price(self) -> None:
+    def test_oskar_no_estimation_without_fetch_prices(self) -> None:
+        # Estimation needs a fresh quote: fetch_oskar alone (cached price)
+        # estimates nothing, even for share-less rows.
         self.ctx.config.fetch_oskar = True
         self.ctx.config.fetch_prices = False
         self.ctx.portfolio.clear()
@@ -285,9 +289,53 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 pos = self._factory(broker="oskar", value=199.0, shares=None, price=None)
             persist_oskar_shares_in_portfolio(self.ctx)
         self.assertEqual(pos.price, 10.0)
-        self.assertEqual(pos.shares, 199.0 / 10.0)
-        self.assertEqual(self.ctx.portfolio["equity_portfolio"][0]["shares"], 19.9)
+        self.assertIsNone(pos.shares)
+        self.assertIsNone(self.ctx.portfolio["equity_portfolio"][0]["shares"])
+        self.assertEqual(self.ctx.pending_oskar_shares, {})
+        write.assert_not_called()
+
+    def test_oskar_refreshes_set_shares_when_both_flags_set(self) -> None:
+        self.ctx.config.fetch_oskar = True
+        self.ctx.config.fetch_prices = True
+        self.ctx.portfolio.clear()
+        self.ctx.portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 5.0,
+                "value": 199.0,
+                "broker": "oskar",
+            }
+        ]
+        with patch("utils.write_portfolio") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                pos = self._factory(broker="oskar", value=199.0, shares=5.0, price=None)
+            persist_oskar_shares_in_portfolio(self.ctx)
+        self.assertEqual(pos.shares, 199.0 / 99.5)
+        self.assertEqual(self.ctx.portfolio["equity_portfolio"][0]["shares"], 199.0 / 99.5)
         write.assert_called_once()
+
+    def test_oskar_no_rewrite_when_estimate_unchanged(self) -> None:
+        self.ctx.config.fetch_oskar = True
+        self.ctx.config.fetch_prices = True
+        self.ctx.portfolio.clear()
+        self.ctx.portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 199.0 / 99.5,
+                "value": 199.0,
+                "broker": "oskar",
+            }
+        ]
+        with patch("utils.write_portfolio") as write:
+            with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+                pos = self._factory(
+                    broker="oskar", value=199.0, shares=199.0 / 99.5, price=None
+                )
+            persist_oskar_shares_in_portfolio(self.ctx)
+        self.assertEqual(pos.shares, 199.0 / 99.5)
+        write.assert_not_called()
 
     def test_oskar_does_not_estimate_shares_when_quote_missing(self) -> None:
         self.ctx.config.fetch_oskar = True
