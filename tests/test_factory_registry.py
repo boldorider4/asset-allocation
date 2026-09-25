@@ -9,6 +9,7 @@ Anything unresolved falls back to the generic constructors.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -163,6 +164,63 @@ class TestProbePhase(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, Boom)
         self.assertEqual(ctx.isin_registry.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
+
+
+class TestRegistryFlush(unittest.TestCase):
+    def _probe_hit_ctx(self, isin: str) -> RuntimeContext:
+        ctx = _ctx()
+        with (
+            patch("position.factory.dws_product_url_exists", return_value=False),
+            patch("position.factory.amundi_product_url_exists", return_value=False),
+            patch("position.factory.ubs_product_url_exists", return_value=False),
+            patch("position.factory.invesco_product_url_exists", return_value=False),
+            patch("position.factory.landg_product_url_exists", return_value=False),
+            patch("position.factory.ishares_product_url_exists", return_value=True),
+            _no_fetch(),
+        ):
+            factory(isin=isin, name="iShares Whatever", shares=1, price=10.0, ctx=ctx)
+        return ctx
+
+    def test_probe_hit_survives_flush_to_disk(self) -> None:
+        ctx = self._probe_hit_ctx("XX000PROBE9")
+        ctx.flush_isin_registry()
+        on_disk = json.loads(Path(ctx.config.isin_file).read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["XX000PROBE9"]["issuer"], "ishares")
+
+    def test_reloaded_registry_takes_db_path_without_probes(self) -> None:
+        ctx = self._probe_hit_ctx("XX000PROBE9")
+        ctx.flush_isin_registry()
+        reloaded = RuntimeContext(
+            config=AppConfig(
+                fetch_geosplit=True,
+                fetch_prices=False,
+                cache_file=ctx.config.cache_file,
+                assets_file=ctx.config.assets_file,
+                isin_file=ctx.config.isin_file,
+            )
+        )
+        reloaded.cache = {}
+        reloaded.cache_loaded = True
+        with (
+            patch(
+                "position.factory._probe_issuer_for_isin",
+                side_effect=AssertionError("probe must not run on a DB hit"),
+            ),
+            _no_fetch(),
+        ):
+            pos = factory(
+                isin="XX000PROBE9",
+                name="iShares Whatever",
+                shares=1,
+                price=10.0,
+                ctx=reloaded,
+            )
+        self.assertIsInstance(pos, BlackRockPosition)
+
+    def test_flush_without_registry_touch_creates_no_file(self) -> None:
+        ctx = _ctx()
+        ctx.flush_isin_registry()
+        self.assertFalse(Path(ctx.config.isin_file).exists())
 
 
 if __name__ == "__main__":

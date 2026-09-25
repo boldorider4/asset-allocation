@@ -345,7 +345,9 @@ class RuntimeContext:
         """ISIN registry: ``IsinRegistry`` over ``JsonStorage``.
 
         Lazily built against ``config.isin_file`` and opened eagerly.
-        Read-only use: the registry file is never written by the app.
+        Factory probe hits and broker bucket mappings stage writes here;
+        they become durable only via :meth:`flush_isin_registry` (callers
+        own durability — no backend nouns leak past ``persist()``).
         """
         from storage.json_storage import JsonStorage
         from storage.records import IsinRecord
@@ -461,6 +463,19 @@ class RuntimeContext:
         self.cache_loaded = True
         self.cache_dirty = False
         return self.cache
+
+    def flush_isin_registry(self) -> None:
+        """Persist staged registry writes (probe hits, bucket mappings).
+
+        No-op when the registry was never touched: without a built repo
+        there is nothing staged, so no file is created. A built-but-clean
+        repo is also a no-op — the backend's ``persist()`` skips clean
+        state, keeping this safe for every backend (save / commit /
+        no-op).
+        """
+        if self._isin_repo is None:
+            return
+        self._isin_repo.persist()
 
     def mark_cache_dirty(self) -> None:
         self.cache_dirty = True
