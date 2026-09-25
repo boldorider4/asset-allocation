@@ -1068,7 +1068,7 @@ def update_scalable_etfs_in_portfolio(ctx: RuntimeContext) -> set[str]:
     for holding in fetched_by_isin.values():
         if holding.isin in matched_isins:
             continue
-        bucket = bucket_for_isin(holding.isin)
+        bucket = bucket_for_isin(ctx, holding.isin)
         ctx.portfolio.setdefault(bucket, []).append(
             {
                 NAME: holding.name,

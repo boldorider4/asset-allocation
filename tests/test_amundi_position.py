@@ -299,6 +299,7 @@ class TestAmundiCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -343,6 +344,7 @@ class TestAmundiFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -378,38 +380,37 @@ class TestAmundiFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, AmundiPosition)
 
     def test_amundi_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.amundi_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="LU0290358497",
-                    name="Amundi Prime Euro Gov Overnight",
-                )
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.amundi_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="LU0290358497",
+                        name="Amundi Prime Euro Gov Overnight",
+                    )
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, AmundiPosition)
 
     def test_missing_product_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.amundi_product_url_exists", return_value=False):
+        # Seeded rows take the DB path, so an unknown issuer can only be
+        # exercised with an unseeded ISIN and hermetic probes.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040402")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, AmundiPosition)
 
     def test_probe_timeout_falls_back_to_justetf(self) -> None:
-        # Regression test for a probe read-timeout killing the whole run:
-        # the real probe must swallow it and the factory must fall back.
-        from position.amundi_position import _AMUNDI_PRODUCT_EXISTS
-
-        _AMUNDI_PRODUCT_EXISTS.clear()
-        try:
-            with patch(
-                "urllib.request.urlopen",
-                side_effect=TimeoutError("The read operation timed out"),
-            ):
-                with self._no_country_scrape():
-                    pos = self._factory()
-        finally:
-            _AMUNDI_PRODUCT_EXISTS.clear()
+        # Regression test for probe read-timeouts killing the whole run:
+        # every real probe must swallow them and the factory must fall
+        # back. Uses a unique unseeded ISIN so the probe phase actually
+        # runs without polluting other tests' probe caches.
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            with self._no_country_scrape():
+                pos = self._factory(isin="XX000TIMEOUT1")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, AmundiPosition)
 

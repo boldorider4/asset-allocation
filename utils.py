@@ -5,10 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from cli.common import (
-    DEFAULT_ISIN_PORTFOLIO_BUCKET,
-    ISIN_TO_PORTFOLIO,
-)
+from cli.common import DEFAULT_ISIN_PORTFOLIO_BUCKET
 from cli.logger import attach_color_stderr_handler_for_module
 from storage.records import CacheEntry
 
@@ -258,10 +255,14 @@ def persist_fetched_values_in_portfolio(ctx: Any) -> None:
         ctx.pending_fetched_values.clear()
 
 
-def bucket_for_isin(isin: str) -> str:
-    """Map an ISIN to a portfolio bucket; unknown ISINs fall back to equity."""
-    bucket = ISIN_TO_PORTFOLIO.get(isin)
-    if bucket is None:
+def bucket_for_isin(ctx: Any, isin: str | None) -> str:
+    """Map an ISIN to a portfolio bucket via the ISIN registry.
+
+    Falls back to the default (equity) bucket with a warning when the
+    ISIN has no registry row or the row carries no bucket.
+    """
+    bucket = ctx.isin_registry.get_bucket_for_isin(isin) if isin else None
+    if not bucket:
         logger.warning(
             "unknown ISIN %s; using %r",
             isin,

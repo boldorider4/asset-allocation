@@ -233,6 +233,7 @@ class TestUbsCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -277,6 +278,7 @@ class TestUbsFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -319,24 +321,33 @@ class TestUbsFactoryRouting(unittest.TestCase):
         exists.assert_not_called()
         self.assertIsInstance(pos, UBSPosition)
 
-    def test_ubs_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.ubs_product_url_exists", return_value=False) as exists:
+    def test_ubs_in_name_uses_ubs_despite_probe_miss(self) -> None:
+        # Compounded UBS rule: a UBS-ish name alone suffices (HA4 fallback
+        # inside the class), so the probe miss must not block routing.
+        # Other vendors stay hermetically missed.
+        with (
+            patch("position.factory.dws_product_url_exists", return_value=False),
+            patch("position.factory.amundi_product_url_exists", return_value=False),
+            patch("position.factory.invesco_product_url_exists", return_value=False),
+            patch("position.factory.landg_product_url_exists", return_value=False),
+            patch("position.factory.ubs_product_url_exists", return_value=False),
+        ):
             with self._no_country_scrape():
                 pos = self._factory(
                     isin="LU0290358497",
                     name="UBS ETF MSCI EMU UCITS ETF",
                 )
-        exists.assert_called_once_with("LU0290358497")
-        self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, UBSPosition)
+        self.assertIsInstance(pos, UBSPosition)
 
     def test_ha4_resolved_ubs_name_uses_ubs_without_allowlist(self) -> None:
-        with patch("position.factory.ubs_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="IE00B3XXRP09",
-                    name="UBS Core MSCI USA UCITS ETF",
-                )
+        with patch("position.factory.dws_product_url_exists", return_value=False):
+            with patch("position.factory.amundi_product_url_exists", return_value=False):
+                with patch("position.factory.ubs_product_url_exists", return_value=True):
+                    with self._no_country_scrape():
+                        pos = self._factory(
+                            isin="IE00B3XXRP09",
+                            name="UBS Core MSCI USA UCITS ETF",
+                        )
         self.assertIsInstance(pos, UBSPosition)
 
     def test_amundi_does_not_use_ubs(self) -> None:

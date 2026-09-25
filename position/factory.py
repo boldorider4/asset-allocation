@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from utils import save_position_in_cache
 from cli.common import (
     BROKER,
+    DEFAULT_ISIN_PORTFOLIO_BUCKET,
     DMEM,
     DMEM_OTHER,
     NAME,
@@ -19,7 +20,6 @@ from cli.common import (
 from position.amundi_position import AmundiPosition, amundi_product_url_exists
 from position.blackrock_position import (
     BlackRockPosition,
-    _ISHARES_PRODUCT_IDS,
     ishares_product_url_exists,
 )
 from position.invesco_position import InvescoPosition, invesco_product_url_exists
@@ -60,27 +60,6 @@ def _name_looks_like_ubs(name: str | None) -> bool:
     return bool(name) and "ubs" in name.casefold()
 
 
-def _name_looks_like_invesco(name: str | None) -> bool:
-    return bool(name) and "invesco" in name.casefold()
-
-
-def _name_looks_like_landg(name: str | None) -> bool:
-    if not name:
-        return False
-    folded = name.casefold()
-    return any(
-        token in folded
-        for token in (
-            "l&g",
-            "l & g",
-            "lgim",
-            "landg",
-            "legal & general",
-            "legal and general",
-        )
-    )
-
-
 def _scrape_holdings_value_prevails(
     broker: str | None, value: float | None, ctx: RuntimeContext
 ) -> bool:
@@ -98,6 +77,65 @@ def _scrape_holdings_value_prevails(
     # Without ``--fetch-prices``, an earlier scrape (or a previous
     # ``--fetch-prices`` write) in the assets file stays authoritative.
     return fresh_scrape or not ctx.config.fetch_prices
+
+
+# Issuer slug -> specialized Position class. The ISIN registry (not the
+# removed per-issuer allowlists) decides which slug an ISIN has.
+_ISSUER_POSITION: dict[str, type[JustETFPosition]] = {
+    "dws": XtrackersPosition,
+    "ishares": BlackRockPosition,
+    "amundi": AmundiPosition,
+    "ssga": StateStreetPosition,
+    "ubs": UBSPosition,
+    "invesco": InvescoPosition,
+    "landg": LAndGPosition,
+}
+
+
+def _position_has_data(position: JustETFPosition | YFinancePosition) -> bool:
+    """True when a built position actually yielded split rows.
+
+    Reads the resolved attributes (never the lazy accessors, which could
+    re-trigger network fetches). An empty specialized build means the
+    vendor source had nothing usable for this ISIN.
+    """
+    return bool(position._countries) or bool(position._sectors)
+
+
+def _validate_data_for_flags(fetch_geosplit: bool, fetch_sectorsplit: bool) -> bool:
+    """Whether an empty specialized build counts as failure.
+
+    Only when BOTH split flags are on: with a single flag, routing tests
+    (and real runs) legitimately leave the other split empty, so
+    emptiness carries no failure signal there.
+    """
+    return bool(fetch_geosplit and fetch_sectorsplit)
+
+
+def _probe_issuer_for_isin(isin: str, name: str | None, registry) -> str | None:  # type: ignore[no-untyped-def]
+    """Infer the issuer slug for an unregistered ISIN via vendor probes.
+
+    Ordered like the historical dispatch chain. First-run-only cost:
+    hits are registered, so later runs take the DB path and skip probes
+    entirely. ``ishares``/``ssga`` resolve without network (their URLs
+    need a registry product ref, so unknown ISINs short-circuit). A
+    UBS-ish name alone also suffices (HA4 fallback inside the class).
+    """
+    if dws_product_url_exists(isin):
+        return "dws"
+    if ishares_product_url_exists(isin, registry.get_product_ref_for_isin(isin)):
+        return "ishares"
+    if amundi_product_url_exists(isin):
+        return "amundi"
+    if ssga_product_url_exists(isin, registry.get_product_ref_for_isin(isin)):
+        return "ssga"
+    if ubs_product_url_exists(isin) or _name_looks_like_ubs(name):
+        return "ubs"
+    if invesco_product_url_exists(isin):
+        return "invesco"
+    if landg_product_url_exists(isin):
+        return "landg"
+    return None
 
 
 def factory(
@@ -170,80 +208,87 @@ def factory(
     }
     position: JustETFPosition | YFinancePosition
 
-    if (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in XtrackersPosition.ISINS
-        and dws_product_url_exists(isin)
-    ):
-        logger.info("Factory: using XtrackersPosition for %s", isin)
-        position = XtrackersPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in _ISHARES_PRODUCT_IDS
-        and ishares_product_url_exists(isin)
-    ):
-        logger.info("Factory: using BlackRockPosition for %s", isin)
-        position = BlackRockPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in AmundiPosition.ISINS
-        and amundi_product_url_exists(isin)
-    ):
-        logger.info("Factory: using AmundiPosition for %s", isin)
-        position = AmundiPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in StateStreetPosition.ISINS
-        and ssga_product_url_exists(isin)
-    ):
-        logger.info("Factory: using StateStreetPosition for %s", isin)
-        position = StateStreetPosition(isin, **ctor_kwargs)
-    elif (fetch_geosplit or fetch_sectorsplit) and isin in UBSPosition.ISINS:
-        logger.info("Factory: using UBSPosition for %s", isin)
-        position = UBSPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in InvescoPosition.ISINS
-        and invesco_product_url_exists(isin)
-    ):
-        logger.info("Factory: using InvescoPosition for %s", isin)
-        position = InvescoPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and isin in LAndGPosition.ISINS
-        and landg_product_url_exists(isin)
-    ):
-        logger.info("Factory: using LAndGPosition for %s", isin)
-        position = LAndGPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and _name_looks_like_invesco(name)
-        and invesco_product_url_exists(isin)
-    ):
-        logger.info("Factory: using InvescoPosition for %s (dng-api)", isin)
-        position = InvescoPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and _name_looks_like_ubs(name)
-        and ubs_product_url_exists(isin)
-    ):
-        # Allowlist is the no-probe path. Other UBS-named ETFs still have HA4
-        # constituents when etfinstidfromisin returns an instId.
-        logger.info("Factory: using UBSPosition for %s (HA4 instId)", isin)
-        position = UBSPosition(isin, **ctor_kwargs)
-    elif (
-        (fetch_geosplit or fetch_sectorsplit)
-        and _name_looks_like_landg(name)
-        and landg_product_url_exists(isin)
-    ):
-        logger.info("Factory: using LAndGPosition for %s (fund-centre)", isin)
-        position = LAndGPosition(isin, **ctor_kwargs)
-    elif position_source == YFINANCE:
-        position = YFinancePosition(isin, **ctor_kwargs)
-    elif position_source == JUSTETF or use_broker_quote:
-        position = JustETFPosition(isin, **ctor_kwargs)
-    else:
-        raise ValueError(f"Unknown position_source: {position_source!r}")
+    # Issuer-driven dispatch in two passes. Pass 1 consults the ISIN
+    # registry and constructs a DB hit directly — no URL probes. Pass 2
+    # (unknown issuer, or a DB-hit build that yielded no data) runs the
+    # vendor probes once via the helper and registers the outcome.
+    # Anything unresolved falls back to the generic JustETF/YFinance
+    # constructors below. DWS reachability GETs and holdings scrapes are
+    # only needed when refreshing splits; cached splits use generic
+    # positions like any other ETF.
+    fetch_splits = fetch_geosplit or fetch_sectorsplit
+    registry = ctx.isin_registry
+    issuer = registry.get_issuer_for_isin(isin) if isin else None
+    if isin and isin not in registry:
+        registry.register_isin(isin, bucket=DEFAULT_ISIN_PORTFOLIO_BUCKET)
+
+    def _build_specialized(
+        position_cls: type[JustETFPosition], *, validate_data: bool
+    ) -> JustETFPosition | None:
+        """Construct, returning None when the build is unusable.
+
+        Hard failures (RuntimeError/OSError) always fall back. An empty
+        build (no countries AND no sectors) falls back only when both
+        split flags are on — with a single flag the other split is
+        legitimately empty, so emptiness carries no failure signal there.
+        """
+        try:
+            candidate = position_cls(isin, **ctor_kwargs)
+        except (RuntimeError, OSError) as exc:
+            logger.warning(
+                "Factory: %s failed for %s (%s); falling back",
+                position_cls.__name__,
+                isin,
+                exc,
+            )
+            return None
+        if validate_data and not _position_has_data(candidate):
+            logger.warning(
+                "Factory: %s returned no data for %s; falling back",
+                position_cls.__name__,
+                isin,
+            )
+            return None
+        return candidate
+
+    validate_data = _validate_data_for_flags(fetch_geosplit, fetch_sectorsplit)
+    position_cls: type[JustETFPosition] | None = None
+    if fetch_splits and issuer in _ISSUER_POSITION:
+        logger.info(
+            "Factory: using %s for %s (registry)",
+            _ISSUER_POSITION[issuer].__name__,
+            isin,
+        )
+        built = _build_specialized(_ISSUER_POSITION[issuer], validate_data=validate_data)
+        position_cls = _ISSUER_POSITION[issuer] if built is not None else None
+        position = built  # type: ignore[assignment]
+    if position_cls is None and fetch_splits and isin and issuer not in ("justetf", "yfinance"):
+        inferred = _probe_issuer_for_isin(isin, name, registry)
+        if inferred is not None:
+            logger.info(
+                "Factory: using %s for %s (probed)",
+                _ISSUER_POSITION[inferred].__name__,
+                isin,
+            )
+            registry.set_issuer_for_isin(isin, inferred)
+            built = _build_specialized(_ISSUER_POSITION[inferred], validate_data=validate_data)
+            position_cls = _ISSUER_POSITION[inferred] if built is not None else None
+            position = built  # type: ignore[assignment]
+    if position_cls is None:
+        if position_source == YFINANCE:
+            position = YFinancePosition(isin, **ctor_kwargs)
+            if isin:
+                registry.register_isin(
+                    isin, issuer="yfinance", bucket=DEFAULT_ISIN_PORTFOLIO_BUCKET
+                )
+        elif position_source == JUSTETF or use_broker_quote:
+            position = JustETFPosition(isin, **ctor_kwargs)
+            if isin:
+                registry.register_isin(
+                    isin, issuer="justetf", bucket=DEFAULT_ISIN_PORTFOLIO_BUCKET
+                )
+        else:
+            raise ValueError(f"Unknown position_source: {position_source!r}")
 
     # A fetched quote is always written back to the cache (even without
     # ``--fetch-prices``) when the row had no cached price, so the cost of a

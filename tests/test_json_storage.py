@@ -24,7 +24,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from storage import (  # noqa: E402
-    DEFAULT_ISIN_RECORDS,
     AssetBucket,
     AssetRepository,
     CacheEntry,
@@ -116,6 +115,22 @@ class TestDictRow(unittest.TestCase):
     def test_bad_issuer_rejected(self) -> None:
         with self.assertRaises(ValueError):
             IsinRecord("IE00X", {"issuer": "nope"})
+
+    def test_blank_key_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            IsinRecord("   ", {"issuer": "dws"})
+
+    def test_nullable_fields_accepted(self) -> None:
+        record = IsinRecord("IE00X", {})
+        self.assertIsNone(record.issuer)
+        self.assertIsNone(record.bucket)
+        self.assertIsNone(record.product_ref)
+        record = IsinRecord(
+            "IE00Y",
+            {"issuer": "dws", "bucket": "equity_portfolio", "product_ref": None},
+        )
+        self.assertEqual(record.issuer, "dws")
+        self.assertEqual(record.bucket, "equity_portfolio")
 
 
 class TestJsonStorageBackend(unittest.TestCase):
@@ -397,34 +412,61 @@ class TestAssetRepositoryComposition(unittest.TestCase):
 
 
 class TestIsinRegistryComposition(unittest.TestCase):
-    def test_seeded_registry_all_issuers(self) -> None:
+    def test_seeded_registry_known_rows(self) -> None:
         registry = IsinRegistry.seeded()
-        for isin, spec in DEFAULT_ISIN_RECORDS.items():
-            with self.subTest(isin=isin):
-                self.assertTrue(registry.belongs_to(isin, spec["issuer"]))
-                self.assertEqual(registry.issuers_for(isin), {spec["issuer"]})
-                self.assertEqual(
-                    registry.product_ref_for(isin), spec["product_ref"]
-                )
-        self.assertTrue(registry.belongs_to("IE000BI8OT95", "amundi"))
-        self.assertFalse(registry.belongs_to("IE00BKM4GZ66", "amundi"))
-        self.assertEqual(registry.issuers_for("unknown"), frozenset())
-        self.assertIsNone(registry.product_ref_for("unknown"))
+        self.assertEqual(registry.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
+        self.assertEqual(registry.get_product_ref_for_isin("IE00BKM4GZ66"), "264659")
+        self.assertEqual(registry.get_issuer_for_isin("IE000BI8OT95"), "amundi")
+        self.assertEqual(
+            registry.get_bucket_for_isin("DE000EWG2LD7"), "commodity_portfolio"
+        )
+        self.assertEqual(
+            registry.get_bucket_for_isin("LU2233156582"),
+            "fixed_maturity_bond_portfolio",
+        )
+        self.assertIsNone(registry.get_issuer_for_isin("unknown"))
+        self.assertIsNone(registry.get_bucket_for_isin("unknown"))
+        self.assertIsNone(registry.get_product_ref_for_isin("unknown"))
         self.assertIn("IE00BKM4GZ66", registry)
 
     def test_seeded_registry_over_json_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "registry.json"
             registry = IsinRegistry.seeded(JsonStorage(path, IsinRecord))
-            self.assertTrue(registry.belongs_to("IE00BKM4GZ66", "ishares"))
-            self.assertEqual(registry.product_ref_for("IE00BKM4GZ66"), "264659")
+            self.assertEqual(registry.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
+            self.assertEqual(registry.get_product_ref_for_isin("IE00BKM4GZ66"), "264659")
+            registry.persist()
+            fresh = IsinRegistry(JsonStorage(path, IsinRecord))
+            fresh.open()
+            self.assertEqual(fresh.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
+            self.assertEqual(
+                fresh.get_bucket_for_isin("DE000EWG2LD7"), "commodity_portfolio"
+            )
 
-    def test_register_new_entry(self) -> None:
+    def test_register_isin_fills_only_missing(self) -> None:
         registry = IsinRegistry.seeded()
-        registry.register("IE00NEWX01", "dws")
-        self.assertTrue(registry.belongs_to("IE00NEWX01", "dws"))
+        record = registry.register_isin("IE00NEWX01", issuer="dws", bucket="equity_portfolio")
+        self.assertEqual(record.issuer, "dws")
+        # Existing decided values are never overwritten...
+        same = registry.register_isin("IE00NEWX01", issuer="amundi", bucket="bond_portfolio")
+        self.assertEqual(same.issuer, "dws")
+        self.assertEqual(same.bucket, "equity_portfolio")
+        # ...but null fields get filled.
+        registry.register_isin("IE00NEWX02", bucket="equity_portfolio")
+        filled = registry.register_isin("IE00NEWX02", issuer="ubs")
+        self.assertEqual(filled.issuer, "ubs")
+        self.assertEqual(filled.bucket, "equity_portfolio")
         with self.assertRaises(ValueError):
-            registry.register("IE00BADX01", "nope")
+            registry.register_isin("IE00BADX01", issuer="nope")
+
+    def test_set_issuer_overwrites(self) -> None:
+        registry = IsinRegistry.seeded()
+        registry.set_issuer_for_isin("IE00NEWX03", "dws")
+        self.assertEqual(registry.get_issuer_for_isin("IE00NEWX03"), "dws")
+        registry.set_issuer_for_isin("IE00NEWX03", "ubs")
+        self.assertEqual(registry.get_issuer_for_isin("IE00NEWX03"), "ubs")
+        with self.assertRaises(ValueError):
+            registry.set_issuer_for_isin("IE00NEWX03", "nope")
 
 
 class TestPostgresStub(unittest.TestCase):

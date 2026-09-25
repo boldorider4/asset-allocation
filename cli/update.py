@@ -112,4 +112,5 @@ def main(ctx: RuntimeContext) -> None:
             incognito=incognito,
         )
     ctx.flush_cache()
+    ctx.isin_registry.persist()
     ctx.plotter_class().finish_plots()

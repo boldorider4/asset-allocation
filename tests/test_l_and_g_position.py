@@ -280,6 +280,7 @@ class TestLandGFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -315,7 +316,16 @@ class TestLandGFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, LAndGPosition)
 
     def test_lg_in_name_without_allowlist_still_probes(self) -> None:
-        with patch("position.factory.landg_product_url_exists", return_value=True):
+        # Unseeded ISIN: the probe phase runs; other vendors must miss
+        # (hermetic False mocks — ishares/ssga short-circuit without
+        # network) for the landg hit.
+        with (
+            patch("position.factory.dws_product_url_exists", return_value=False),
+            patch("position.factory.amundi_product_url_exists", return_value=False),
+            patch("position.factory.ubs_product_url_exists", return_value=False),
+            patch("position.factory.invesco_product_url_exists", return_value=False),
+            patch("position.factory.landg_product_url_exists", return_value=True),
+        ):
             with self._no_country_scrape():
                 pos = self._factory(
                     isin="IE00B3CNHJ55",
@@ -324,9 +334,11 @@ class TestLandGFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, LAndGPosition)
 
     def test_missing_product_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.landg_product_url_exists", return_value=False):
+        # Seeded rows take the DB path, so an unknown issuer can only be
+        # exercised with an unseeded ISIN and hermetic probes.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040406")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, LAndGPosition)
 
@@ -363,6 +375,7 @@ class TestLandGSectorFetch(unittest.TestCase):
                 fetch_sectorsplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )

@@ -28,6 +28,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -489,17 +490,17 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.countries(), [])
 
     def test_yfinance_geosplit_does_not_become_justetf(self) -> None:
+        # Seeded rows take the DB path, so the yfinance fallback needs an
+        # unseeded ISIN; hermetic probes keep the run offline-clean.
         self.ctx.config.position_source = "yfinance"
         self.ctx.config.fetch_geosplit = True
         self.ctx.config.fetch_scalable = False
         with patch.object(YFinancePosition, "_fast_info_price", return_value=12.0):
-            with patch(
-                "position.factory.ssga_product_url_exists", return_value=False
-            ):
+            with patch("position.factory._probe_issuer_for_isin", return_value=None):
                 pos = self._factory(
                     price=None,
                     broker="other",
-                    isin="IE00B4YBJ215",
+                    isin="XX000YF01",
                     name="iShares Core MSCI World UCITS ETF",
                 )
         self.assertIsInstance(pos, YFinancePosition)
