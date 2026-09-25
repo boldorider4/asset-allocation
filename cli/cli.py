@@ -142,11 +142,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
         ini_cfg = AppConfig.from_ini(getattr(args, "config", None))
     except (FileNotFoundError, ValueError):
         ini_cfg = AppConfig()
-    ini_plotter, ini_data_dir = ini_cfg.plotter_config, ini_cfg.server.data_dir
+    ini_data_dir = ini_cfg.server.data_dir
     cfg.directory.mkdir(parents=True, exist_ok=True)
     (cfg.directory / ini_data_dir).mkdir(exist_ok=True)
-    (cfg.directory / ini_data_dir / ini_plotter.clear_dir).mkdir(exist_ok=True)
-    (cfg.directory / ini_data_dir / ini_plotter.incognito_dir).mkdir(exist_ok=True)
     pid_file = cfg.directory / ".serve.pid"
     already = [pid for pid in _find_server_pids(cfg.port)]
     if already:
@@ -176,10 +174,6 @@ def cmd_serve(args: argparse.Namespace) -> None:
             str(cache_file),
             "--plotter-data-dir",
             ini_data_dir,
-            "--plotter-clear-dir",
-            ini_plotter.clear_dir,
-            "--plotter-incognito-dir",
-            ini_plotter.incognito_dir,
         ],
         cwd=cfg.directory,
         stdout=subprocess.DEVNULL,
@@ -301,18 +295,6 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         action="store_true",
         default=None,
         help="Log into Trade Republic via pytr and scrape broker holdings.",
-    )
-    update.add_argument(
-        "--plot-clear",
-        action="store_true",
-        default=None,
-        help="Emit charts with real values.",
-    )
-    update.add_argument(
-        "--plot-incognito",
-        action="store_true",
-        default=None,
-        help="Emit charts with fake (scaled) values.",
     )
     update.add_argument(
         "--plot",

@@ -69,14 +69,12 @@ Useful `update` flags:
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
 | `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
-| `--plot-clear` | Emit charts with real values to `data/clear/` |
-| `--plot-incognito` | Emit charts with fake (scaled) values to `data/incognito/` |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
 
-The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/clear/` — or `data/incognito/` when `asalloc update --plot-incognito` is used (both passes can run in one invocation; the scrape runs once). Scaffold the JS app (without touching existing raw files) with:
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/` (the `[plotter] output_dir`). Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
 make web
@@ -90,15 +88,15 @@ make serve
 asalloc serve
 ```
 
-Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the clear charts, or `http://localhost:8765/dashboard?incognito=true` for the incognito set — same gallery, only the data root differs (`data/clear/` vs `data/incognito/`).
+Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the charts — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 
 `http://localhost:8765/constituents` shows the holdings from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
 
-Clicking Dashboard runs a lite refresh first — but only if a cell was edited since the page loaded, in which case it navigates to the dashboard once the refresh completes (`POST /api/update`: no scraping flags, clear charts only, log level ERROR). With no edits it navigates straight to the dashboard.
+Clicking Dashboard runs a lite refresh first — but only if a cell was edited since the page loaded, in which case it navigates to the dashboard once the refresh completes (`POST /api/update`: no scraping flags, log level ERROR). With no edits it navigates straight to the dashboard.
 
 Editing shares immediately recomputes value as shares × cached price (and vice versa), so the file always holds a consistent pair; without a cached price the sibling is left untouched and the edited box gets a red flare. Empty means `0`, locked cells are rejected server-side, and a normal save flashes green then reverts on failure. A missing cached price is live-fetched once for that position and written back to the cache. For admin use, `make service` also copies `systemd/asalloc-lite-update.service` (same lite update) but leaves it disabled — start it yourself when needed.
 
-The dashboard's Sync Prices button posts `{"mode": "fat"}` to the same endpoint for a fat refresh (live prices, geosplits, and sectorsplits for both clear and incognito charts; broker scrapes never run there). It takes minutes and reloads the gallery when done. Leaving via Edit cancels a running endpoint update first (`POST /api/cancel`); only one endpoint update runs at a time, timer/systemd runs are unaffected.
+The dashboard's Sync Prices button posts `{"mode": "fat"}` to the same endpoint for a fat refresh (live prices, geosplits, and sectorsplits; broker scrapes never run there). It takes minutes and reloads the gallery when done. Leaving via Edit cancels a running endpoint update first (`POST /api/cancel`); only one endpoint update runs at a time, timer/systemd runs are unaffected.
 
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 

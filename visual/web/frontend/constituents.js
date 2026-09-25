@@ -21,6 +21,11 @@
  * (server-rendered row swaps in). OK stays disabled until broker, name,
  * and value-or-ISIN-plus-shares are set. Discard via the draft trash
  * button or Escape.
+ *
+ * The incognito button blurs Value/Shares figures via a body.incognito
+ * CSS class (price, names, and ISINs stay sharp). Instant toggle with
+ * no reload: history.replaceState carries ?incognito=true, shared with
+ * the dashboard round trip; blurred inputs stay editable.
  */
 (function () {
   "use strict";
@@ -788,6 +793,67 @@
     status.hidden = !text;
   }
 
+  function isIncognitoMode() {
+    try {
+      return (
+        new URLSearchParams(window.location.search).get("incognito") === "true"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function applyIncognitoState(active, syncUrl) {
+    if (syncUrl === undefined) {
+      syncUrl = true;
+    }
+    document.body.classList.toggle("incognito", active);
+    const toggle = document.getElementById("incognito-link");
+    if (toggle) {
+      if (active) {
+        toggle.setAttribute("aria-pressed", "true");
+        toggle.setAttribute("href", "/constituents");
+        toggle.setAttribute("title", "Exit incognito mode");
+        toggle.setAttribute("aria-label", "Exit incognito mode");
+      } else {
+        toggle.removeAttribute("aria-pressed");
+        toggle.setAttribute("href", "/constituents?incognito=true");
+        toggle.setAttribute("title", "Incognito mode");
+        toggle.setAttribute("aria-label", "Incognito mode");
+      }
+    }
+    const overview = document.getElementById("overview-link");
+    if (overview) {
+      overview.setAttribute(
+        "href",
+        active ? "/dashboard?incognito=true" : "/dashboard"
+      );
+    }
+    if (syncUrl) {
+      try {
+        const url = active ? "/constituents?incognito=true" : "/constituents";
+        window.history.replaceState(null, "", url);
+      } catch {
+        // Non-pushState contexts: visuals already applied.
+      }
+    }
+  }
+
+  function wireIncognitoToggle() {
+    // Paint the initial state from the URL (deep links, round trip);
+    // the URL already carries the state, so don't rewrite it.
+    applyIncognitoState(isIncognitoMode(), false);
+    const toggle = document.getElementById("incognito-link");
+    if (!toggle) {
+      return;
+    }
+    // Instant toggle: no reload — pure CSS blur flip.
+    toggle.addEventListener("click", function (event) {
+      event.preventDefault();
+      applyIncognitoState(!document.body.classList.contains("incognito"));
+    });
+  }
+
   function setOverlay(visible) {
     const overlay = document.getElementById("update-overlay");
     if (overlay) {
@@ -825,6 +891,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    wireIncognitoToggle();
     const overview = document.getElementById("overview-link");
     if (overview) {
       overview.addEventListener("click", refreshAndGo);

@@ -22,8 +22,9 @@ class TestLiteUpdateUnit(unittest.TestCase):
     def test_lite_runs_plain_update_with_both_chart_modes(self) -> None:
         cmd = self._exec_start()
         self.assertIn("asalloc update", cmd)
-        self.assertIn("--plot-clear", cmd)
-        self.assertIn("--plot-incognito", cmd)
+        self.assertIn("--plot web", cmd)
+        self.assertNotIn("--plot-clear", cmd)
+        self.assertNotIn("--plot-incognito", cmd)
         self.assertIn("--log-level ERROR", cmd)
         # Same files as the dashboard endpoint worker (serve --assets-file /
         # --cache-file): otherwise the two update paths persist to different

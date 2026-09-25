@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Dashboard endpoint: /dashboard serves index.html with clear/incognito data roots."""
+"""Dashboard endpoint: /dashboard serves index.html; /data/* serves literally."""
 
 from __future__ import annotations
 
@@ -20,13 +20,9 @@ class TestDashboardEndpoint(unittest.TestCase):
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
         self.root = Path(self._holder.name) / "visualizer"
-        (self.root / "data" / "clear").mkdir(parents=True)
-        (self.root / "data" / "incognito").mkdir(parents=True)
+        (self.root / "data").mkdir(parents=True)
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
-        (self.root / "data" / "clear" / "01-a.raw").write_text("CLEAR", encoding="utf-8")
-        (self.root / "data" / "incognito" / "01-a.raw").write_text(
-            "INCOGNITO", encoding="utf-8"
-        )
+        (self.root / "data" / "01-a.raw").write_text("PLAIN", encoding="utf-8")
         handler = functools.partial(DashboardHandler, directory=str(self.root))
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -71,38 +67,28 @@ class TestDashboardEndpoint(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, "DASHBOARD")
 
-    def test_data_listing_defaults_to_clear(self) -> None:
-        status, body = self._get("/data/", referer=self._dashboard())
-        self.assertEqual(status, 200)
-        self.assertIn("01-a.raw", body)
-
-    def test_data_file_clear_vs_incognito_by_referer(self) -> None:
+    def test_data_file_served_literally_regardless_of_referer(self) -> None:
+        status, body = self._get("/data/01-a.raw")
+        self.assertEqual((status, body), (200, "PLAIN"))
         status, body = self._get("/data/01-a.raw", referer=self._dashboard())
-        self.assertEqual((status, body), (200, "CLEAR"))
-        status, body = self._get(
-            "/data/01-a.raw", referer=self._dashboard("?incognito=false")
-        )
-        self.assertEqual((status, body), (200, "CLEAR"))
+        self.assertEqual((status, body), (200, "PLAIN"))
         status, body = self._get(
             "/data/01-a.raw", referer=self._dashboard("?incognito=true")
         )
-        self.assertEqual((status, body), (200, "INCOGNITO"))
+        self.assertEqual((status, body), (200, "PLAIN"))
 
-    def test_data_listing_follows_incognito_referer(self) -> None:
-        status, body = self._get("/data/", referer=self._dashboard("?incognito=true"))
+    def test_data_listing_shows_file(self) -> None:
+        status, body = self._get("/data/")
         self.assertEqual(status, 200)
         self.assertIn("01-a.raw", body)
 
-    def test_unknown_flag_falls_back_to_clear(self) -> None:
+    def test_unknown_query_still_serves_same_file(self) -> None:
+        status, body = self._get("/data/01-a.raw?incognito=yes")
+        self.assertEqual((status, body), (200, "PLAIN"))
         status, body = self._get(
             "/data/01-a.raw", referer=self._dashboard("?incognito=yes")
         )
-        self.assertEqual((status, body), (200, "CLEAR"))
-
-    def test_no_referer_serves_path_literally(self) -> None:
-        # data/ root holds no charts after the clear/incognito split.
-        status, _ = self._get("/data/01-a.raw")
-        self.assertEqual(status, 404)
+        self.assertEqual((status, body), (200, "PLAIN"))
 
     def test_traversal_stays_jailed(self) -> None:
         status, body = self._get(
@@ -119,21 +105,13 @@ class TestCustomDataLayout(unittest.TestCase):
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
         self.root = Path(self._holder.name) / "visualizer"
-        (self.root / "customdir" / "bright").mkdir(parents=True)
-        (self.root / "customdir" / "dark").mkdir(parents=True)
+        (self.root / "customdir").mkdir(parents=True)
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
-        (self.root / "customdir" / "bright" / "01-a.raw").write_text(
-            "BRIGHT", encoding="utf-8"
-        )
-        (self.root / "customdir" / "dark" / "01-a.raw").write_text(
-            "DARK", encoding="utf-8"
-        )
+        (self.root / "customdir" / "01-a.raw").write_text("PLAIN", encoding="utf-8")
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
             data_dirname="customdir",
-            clear_dirname="bright",
-            incognito_dirname="dark",
         )
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -154,13 +132,15 @@ class TestCustomDataLayout(unittest.TestCase):
     def _dashboard(self, query: str = "") -> str:
         return f"http://127.0.0.1:{self.port}/dashboard{query}"
 
-    def test_renamed_tree_serves_both_modes(self) -> None:
+    def test_renamed_tree_serves_literally(self) -> None:
+        status, body = self._get("/data/01-a.raw")
+        self.assertEqual((status, body), (200, "PLAIN"))
         status, body = self._get("/data/01-a.raw", referer=self._dashboard())
-        self.assertEqual((status, body), (200, "BRIGHT"))
+        self.assertEqual((status, body), (200, "PLAIN"))
         status, body = self._get(
             "/data/01-a.raw", referer=self._dashboard("?incognito=true")
         )
-        self.assertEqual((status, body), (200, "DARK"))
+        self.assertEqual((status, body), (200, "PLAIN"))
 
 
 if __name__ == "__main__":

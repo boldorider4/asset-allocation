@@ -505,6 +505,47 @@ class TestRenderConstituentsPage(unittest.TestCase):
             render_constituents_page(sections, incognito=True),
         )
 
+    def test_constituents_has_incognito_button_left_of_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        plain = render_constituents_page(sections)
+        veiled = render_constituents_page(sections, incognito=True)
+        for page in (plain, veiled):
+            incognito_pos = page.index('id="incognito-link"')
+            overview_pos = page.index('id="overview-link"')
+            self.assertLess(incognito_pos, overview_pos)
+            self.assertIn('class="incognito-glyph"', page)
+        self.assertIn('href="/constituents?incognito=true"', plain)
+        self.assertIn('aria-pressed="true"', veiled)
+        self.assertIn('href="/constituents"', veiled)
+
+    def test_incognito_blur_is_frontend_only(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        # Euro figures are wrapped in blur-able spans; labels, pcts, and
+        # card titles never get the class.
+        self.assertIn('"euro"', app_js)
+        self.assertIn("appendFigureSpans", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # Instant toggle: no reload, state via replaceState + body class.
+        self.assertIn("replaceState", dashboard_js)
+        self.assertIn('classList.toggle("incognito"', dashboard_js)
+        self.assertIn("applyIncognitoState", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("replaceState", constituents_js)
+        self.assertIn('classList.toggle("incognito"', constituents_js)
+        self.assertIn("wireIncognitoToggle", constituents_js)
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("body.incognito .euro", css)
+        self.assertIn("blur(", css)
+        self.assertIn('input[data-field="value"]', css)
+        self.assertIn('input[data-field="shares"]', css)
+        self.assertIn('span.cell-box.locked[data-field="value"]', css)
+        self.assertIn('span.cell-box.locked[data-field="shares"]', css)
+        # Price figures are never blurred.
+        self.assertNotIn('data-field="price"', css)
+
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
         self.assertIn('id="update-overlay" class="overlay" hidden', page)
@@ -1667,8 +1708,8 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(config.fetch_oskar)
         self.assertFalse(config.fetch_scalable)
         self.assertFalse(config.fetch_traderepublic)
-        self.assertTrue(config.plot_clear)
-        self.assertFalse(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(seen["level"], logging.ERROR)
         self.assertEqual(logging.getLogger().level, before)
         self.assertEqual(str(config.assets_file), str(self.assets))
@@ -1695,7 +1736,7 @@ class TestConstituentsRoute(unittest.TestCase):
         ini.write_text(
             "[server]\nport = 1\n"
             "[update]\nfetch_geosplit = True\n"
-            "plot_incognito = True\n"
+            "fetch_sectorsplit = True\n"
             "[plotter]\noutput_dir = plots\n",
             encoding="utf-8",
         )
@@ -1714,16 +1755,17 @@ class TestConstituentsRoute(unittest.TestCase):
         config = seen["config"]
         # Lite POST carries no flags: ini values apply.
         self.assertTrue(config.fetch_geosplit)
+        self.assertTrue(config.fetch_sectorsplit)
         self.assertFalse(config.fetch_prices)
-        self.assertTrue(config.plot_clear)
-        self.assertTrue(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(
             config.plotter_config.output_dir, ini.parent / "plots"
         )
         # Explicit handler arguments still win over ini.
         self.assertEqual(str(config.assets_file), str(self.assets))
 
-    def test_post_update_fat_mode_sets_fetch_and_both_plots(self) -> None:
+    def test_post_update_fat_mode_sets_fetch(self) -> None:
         import logging
         from unittest.mock import patch
 
@@ -1749,8 +1791,8 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(config.fetch_oskar)
         self.assertFalse(config.fetch_scalable)
         self.assertFalse(config.fetch_traderepublic)
-        self.assertTrue(config.plot_clear)
-        self.assertTrue(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(seen["level"], logging.ERROR)
         self.assertEqual(logging.getLogger().level, before)
 
@@ -1777,8 +1819,10 @@ class TestConstituentsRoute(unittest.TestCase):
                 status = resp.status
         self.assertEqual(status, 200)
         self.assertFalse(seen["config"].fetch_prices)
-        self.assertTrue(seen["config"].plot_clear)
-        self.assertFalse(seen["config"].plot_incognito)
+        self.assertFalse(seen["config"].fetch_geosplit)
+        self.assertFalse(seen["config"].fetch_sectorsplit)
+        self.assertFalse(hasattr(seen["config"], "plot_clear"))
+        self.assertFalse(hasattr(seen["config"], "plot_incognito"))
 
     def test_update_status_idle(self) -> None:
         status, body = self._get("/api/update")

@@ -569,6 +569,20 @@ def render_constituents_page(
 ) -> str:
     """Render display sections as a full standalone HTML page."""
     overview_href = "/dashboard?incognito=true" if incognito else "/dashboard"
+    if incognito:
+        incognito_button = (
+            '<a id="incognito-link" class="nav-button icon-button" '
+            'href="/constituents" aria-pressed="true" title="Exit incognito mode" '
+            'aria-label="Exit incognito mode">'
+            '<span class="incognito-glyph" aria-hidden="true"></span></a>'
+        )
+    else:
+        incognito_button = (
+            '<a id="incognito-link" class="nav-button icon-button" '
+            'href="/constituents?incognito=true" title="Incognito mode" '
+            'aria-label="Incognito mode">'
+            '<span class="incognito-glyph" aria-hidden="true"></span></a>'
+        )
     parts: list[str] = []
     for index, (label, rows) in enumerate(sections):
         if index:
@@ -608,6 +622,7 @@ def render_constituents_page(
     <header class="masthead">
       <h1>Constituents</h1>
       <div class="nav-buttons">
+        {incognito_button}
         <a id="overview-link" class="nav-button" href="{overview_href}">Dashboard</a>
       </div>
       <p id="update-status" class="status" hidden></p>

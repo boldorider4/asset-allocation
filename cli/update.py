@@ -21,7 +21,6 @@ from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 from utils import (
     persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
-    apply_incognito_scaling,
 )
 
 if TYPE_CHECKING:
@@ -37,7 +36,6 @@ def main(ctx: RuntimeContext) -> None:
         raise TypeError("cli.update.main requires an explicit RuntimeContext (ctx)")
     ctx.load_portfolio()
     ctx.ensure_cache_loaded()
-    ctx.configure_web_output()
     logger.info("Loading portfolio from %s", ctx.config.assets_file)
     # Broker scrapes run FIRST
     # Everything composed below is built from final holdings
@@ -72,45 +70,35 @@ def main(ctx: RuntimeContext) -> None:
     persist_oskar_shares_in_portfolio(ctx)
     persist_fetched_values_in_portfolio(ctx)
 
-    logger.info("Computing incognito display factor")
-    apply_incognito_scaling(ctx)
-
     # Sector and geo splits were calculated once at composition above from
     # trusted staged splits (or freshly scraped ones when the fetch flags are on)
     total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
     total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
 
-    passes = [
-        incognito
-        for incognito, requested in (
-            (False, ctx.config.plot_clear),
-            (True, ctx.config.plot_incognito),
-        )
-        if requested
-    ]
-    for incognito in passes:
-        ctx.configure_web_output(incognito=incognito)
-        logger.info("Writing charts to %s", ctx.output_data_dir(incognito=incognito))
-        total_growth_portfolio.plot_geosplit(
-            title="95-5 Equity Portfolio: Geo Breakdown",
-            closing_title="Total Value: {tot_value}",
-            label_fontsize=7,
-            autopct_fontsize=7,
-            incognito=incognito,
-        )
-        total_growth_portfolio.plot_sectors(
-            title="95-5 Equity Portfolio: Sector Breakdown",
-            label_fontsize=7,
-            autopct_fontsize=7,
-            incognito=incognito,
-        )
-        total_portfolio.plot_geosplit(
-            title="Complete Portfolio",
-            closing_title="Net Worth: {tot_value}",
-            label_fontsize=7,
-            autopct_fontsize=7,
-            incognito=incognito,
-        )
+    output_dir = ctx.output_data_dir()
+    plotter = ctx.plotter_class()
+    if hasattr(plotter, "data_dir"):
+        plotter.data_dir = output_dir
+        plotter._slug_counts = {}
+        plotter._plot_seq = 0
+    logger.info("Writing charts to %s", output_dir)
+    total_growth_portfolio.plot_geosplit(
+        title="95-5 Equity Portfolio: Geo Breakdown",
+        closing_title="Total Value: {tot_value}",
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
+    total_growth_portfolio.plot_sectors(
+        title="95-5 Equity Portfolio: Sector Breakdown",
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
+    total_portfolio.plot_geosplit(
+        title="Complete Portfolio",
+        closing_title="Net Worth: {tot_value}",
+        label_fontsize=7,
+        autopct_fontsize=7,
+    )
     ctx.flush_cache()
     ctx.flush_isin_registry()
     ctx.plotter_class().finish_plots()

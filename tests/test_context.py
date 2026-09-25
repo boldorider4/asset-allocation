@@ -25,8 +25,6 @@ def _update_ns(**overrides) -> argparse.Namespace:
         "assets_file": None,
         "cache_file": None,
         "position_source": "justetf",
-        "plot_clear": False,
-        "plot_incognito": False,
         "plot": "web",
         "log_level": "INFO",
     }
@@ -120,15 +118,13 @@ class TestUpdateFromIni(unittest.TestCase):
                 Path(tmp),
                 "[server]\nport = 8765\n"
                 "[update]\nfetch_prices = True\nfetch_geosplit = yes\n"
-                "fetch_sectorsplit = on\nplot_clear = True\nplot_incognito = 1\n"
+                "fetch_sectorsplit = on\n"
                 "log_level = DEBUG\nassets_file = a.json\ncache_file = sub/c.json\n",
             )
             values = AppConfig._update_from_ini(path)
         self.assertTrue(values["fetch_prices"])
         self.assertTrue(values["fetch_geosplit"])
         self.assertTrue(values["fetch_sectorsplit"])
-        self.assertTrue(values["plot_clear"])
-        self.assertTrue(values["plot_incognito"])
         self.assertEqual(values["log_level"], "DEBUG")
         self.assertEqual(values["assets_file"], Path(tmp) / "a.json")
         self.assertEqual(values["cache_file"], Path(tmp) / "sub" / "c.json")
@@ -140,7 +136,7 @@ class TestUpdateFromIni(unittest.TestCase):
             values = AppConfig._update_from_ini(
                 self._ini(Path(tmp), "[server]\nport = 8765\n")
             )
-        self.assertFalse(any(values[k] for k in ("fetch_prices", "plot_clear")))
+        self.assertFalse(any(values[k] for k in ("fetch_prices", "fetch_geosplit", "fetch_sectorsplit")))
         self.assertEqual(values["log_level"], "INFO")
         self.assertEqual(values["assets_file"], DEFAULT_ASSETS_PATH)
         self.assertEqual(values["cache_file"], DEFAULT_CACHE_PATH)
@@ -171,22 +167,17 @@ class TestPlotterFromIni(unittest.TestCase):
             path = Path(tmp) / "config.ini"
             path.write_text(
                 "[server]\nport = 8765\n"
-                "[plotter]\ntype = pie-chart\noutput_dir = plots\n"
-                "clear_directory = bright\nincognito_directory = dark\n",
+                "[plotter]\ntype = pie-chart\noutput_dir = plots\n",
                 encoding="utf-8",
             )
             kind, plotter = AppConfig._plotter_from_ini(path)
         self.assertEqual(kind, "pie-chart")
         self.assertEqual(plotter.output_dir, Path(tmp) / "plots")
-        self.assertEqual(plotter.clear_dir, "bright")
-        self.assertEqual(plotter.incognito_dir, "dark")
 
     def test_missing_file_gives_defaults(self) -> None:
         kind, plotter = AppConfig._plotter_from_ini(Path("/nonexistent-dir-xyz/config.ini"))
         self.assertEqual(kind, "web")
         self.assertIsNone(plotter.output_dir)
-        self.assertEqual(plotter.clear_dir, "clear")
-        self.assertEqual(plotter.incognito_dir, "incognito")
 
     def test_invalid_type_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,9 +205,6 @@ class TestFromIni(unittest.TestCase):
         self.assertEqual(config.log_level, "WARNING")
         self.assertEqual(config.plotter, "web")
         self.assertEqual(config.plotter_config.output_dir, Path(tmp) / "out")
-        self.assertEqual(
-            config.plotter_config.clear_dir, "clear"
-        )
 
 
 class TestFromCliIniMerge(unittest.TestCase):
@@ -225,7 +213,7 @@ class TestFromCliIniMerge(unittest.TestCase):
         path.write_text(
             "[server]\nport = 8765\n"
             "[update]\nfetch_geosplit = True\nfetch_prices = True\n"
-            "plot_clear = True\nlog_level = DEBUG\n"
+            "log_level = DEBUG\n"
             "assets_file = a.json\ncache_file = c.json\n"
             "[plotter]\ntype = pie-chart\n",
             encoding="utf-8",
@@ -243,8 +231,6 @@ class TestFromCliIniMerge(unittest.TestCase):
                 fetch_tr=None,
                 assets_file=None,
                 cache_file=None,
-                plot_clear=None,
-                plot_incognito=None,
                 plot=None,
                 log_level=None,
             )
@@ -252,8 +238,6 @@ class TestFromCliIniMerge(unittest.TestCase):
         self.assertTrue(config.fetch_prices)
         self.assertTrue(config.fetch_geosplit)
         self.assertFalse(config.fetch_sectorsplit)
-        self.assertTrue(config.plot_clear)
-        self.assertFalse(config.plot_incognito)
         self.assertEqual(config.plotter, "pie-chart")
         self.assertEqual(config.log_level, "DEBUG")
         self.assertEqual(config.assets_file, Path(tmp) / "a.json")
@@ -262,11 +246,10 @@ class TestFromCliIniMerge(unittest.TestCase):
     def test_explicit_false_beats_ini_true(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ns = _update_ns(
-                fetch_geosplit=False, plot_clear=False, fetch_prices=None
+                fetch_geosplit=False, fetch_prices=None
             )
             config = AppConfig.from_cli(ns, ini_path=self._ini(Path(tmp)))
         self.assertFalse(config.fetch_geosplit)
-        self.assertFalse(config.plot_clear)
         # Unset flags still fall back.
         self.assertTrue(config.fetch_prices)
 
@@ -388,7 +371,7 @@ class TestPlotterSelection(unittest.TestCase):
         self.assertFalse(b.config.fetch_prices)
 
 
-class TestIncognitoOutputDir(unittest.TestCase):
+class TestOutputDataDir(unittest.TestCase):
     def setUp(self) -> None:
         from visual.plot.web_chart import WebChart
 
@@ -404,52 +387,12 @@ class TestIncognitoOutputDir(unittest.TestCase):
         WebChart._slug_counts = self._orig_counts
         WebChart._plot_seq = self._orig_seq
 
-    def test_plain_run_writes_to_data_clear(self) -> None:
+    def test_defaults_to_server_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(config=AppConfig(server=_server(server)))
-            self.assertEqual(
-                ctx.output_data_dir(incognito=False), server / "data" / "clear"
-            )
-            ctx.configure_web_output(incognito=False)
-            from visual.plot.web_chart import WebChart
+            self.assertEqual(ctx.output_data_dir(), server / "data")
 
-            self.assertEqual(WebChart.data_dir, server / "data" / "clear")
-            WebChart(data={"A": 1.0}, title="Clear check").plot()
-            self.assertTrue((server / "data" / "clear" / "01-clear-check.raw").is_file())
-
-    def test_incognito_run_writes_to_data_incognito(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            server = Path(tmp) / "visualizer"
-            ctx = RuntimeContext(
-                config=AppConfig(plot_incognito=True, server=_server(server))
-            )
-            self.assertEqual(
-                ctx.output_data_dir(incognito=True), server / "data" / "incognito"
-            )
-            ctx.configure_web_output(incognito=True)
-            from visual.plot.web_chart import WebChart
-
-            self.assertEqual(WebChart.data_dir, server / "data" / "incognito")
-
-    def test_incognito_plot_creates_subdir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            server = Path(tmp) / "visualizer"
-            ctx = RuntimeContext(
-                config=AppConfig(plot_incognito=True, server=_server(server))
-            )
-            ctx.configure_web_output(incognito=True)
-            from visual.plot.web_chart import WebChart
-
-            WebChart(data={"A": 1.0}, title="Incognito check").plot()
-            raw = ctx.output_data_dir(incognito=True) / "01-incognito-check.raw"
-            self.assertTrue(raw.is_file())
-
-    def test_value_factor_defaults_to_one(self) -> None:
-        self.assertEqual(RuntimeContext().value_factor, 1.0)
-
-
-class TestPlotterOutputDir(unittest.TestCase):
     def test_output_dir_overrides_serve_tree(self) -> None:
         from cli.context import PlotterConfig
 
@@ -461,25 +404,7 @@ class TestPlotterOutputDir(unittest.TestCase):
                 plotter_config=PlotterConfig(output_dir=out),
             )
             ctx = RuntimeContext(config=config)
-            self.assertEqual(ctx.output_data_dir(incognito=False), out / "clear")
-            self.assertEqual(ctx.output_data_dir(incognito=True), out / "incognito")
-
-    def test_custom_subdir_names(self) -> None:
-        from cli.context import PlotterConfig
-
-        with tempfile.TemporaryDirectory() as tmp:
-            server = Path(tmp) / "visualizer"
-            config = AppConfig(
-                server=_server(server),
-                plotter_config=PlotterConfig(clear_dir="bright", incognito_dir="dark"),
-            )
-            ctx = RuntimeContext(config=config)
-            self.assertEqual(
-                ctx.output_data_dir(incognito=False), server / "data" / "bright"
-            )
-            self.assertEqual(
-                ctx.output_data_dir(incognito=True), server / "data" / "dark"
-            )
+            self.assertEqual(ctx.output_data_dir(), out)
 
     def test_server_data_dir_renames_legacy_tree(self) -> None:
         from cli.context import ServerConfig
@@ -493,9 +418,22 @@ class TestPlotterOutputDir(unittest.TestCase):
             )
             ctx = RuntimeContext(config=AppConfig(server=server))
             self.assertEqual(
-                ctx.output_data_dir(incognito=False),
-                Path(tmp) / "visualizer" / "d" / "clear",
+                ctx.output_data_dir(),
+                Path(tmp) / "visualizer" / "d",
             )
+
+    def test_webchart_writes_to_server_data(self) -> None:
+        from visual.plot.web_chart import WebChart
+
+        with tempfile.TemporaryDirectory() as tmp:
+            server = Path(tmp) / "visualizer"
+            ctx = RuntimeContext(config=AppConfig(server=_server(server)))
+            WebChart.data_dir = ctx.output_data_dir()
+            WebChart._slug_counts = {}
+            WebChart._plot_seq = 0
+            self.assertEqual(WebChart.data_dir, server / "data")
+            WebChart(data={"A": 1.0}, title="Clear check").plot()
+            self.assertTrue((server / "data" / "01-clear-check.raw").is_file())
 
 
 def _server(directory: Path):

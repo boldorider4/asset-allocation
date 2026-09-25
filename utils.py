@@ -112,55 +112,6 @@ def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
     logger.info("staged %d broker quote(s) in cache", count)
 
 
-def _incognito_cached_price(ctx: Any, isin: str | None) -> float | None:
-    """
-    ``price`` from the in-memory cache for incognito totals only.
-
-    Returns ``None`` when there is no cache row or the row has no ``price``;
-    otherwise ``float(cached)``.
-    """
-    if not isin:
-        return None
-    ctx.ensure_cache_loaded()
-    cached, _, _ = ctx.cache_repo.parsed(isin)
-    return None if cached is None else float(cached)
-
-
-def apply_incognito_scaling(ctx: Any) -> None:
-    """
-    Pick a random total in ``[10001, 54999]`` and store the resulting display
-    factor on ``ctx.value_factor`` (default ``1.0``). Does **not** mutate the
-    portfolio dict or any stored value; the factor is consumed explicitly by
-    the ``incognito=True`` plot path.
-
-    Totals use explicit JSON ``value`` when set. Otherwise uses **cache only**
-    (``shares`` × cached ``price``); missing cache entry or missing price → **0**
-    for that line (no network / no ``factory``).
-    """
-    import random
-
-    from portfolio.portfolio import ISIN, SHARES, VALUE
-
-    total = 0.0
-    for positions in ctx.portfolio.values():
-        for pos in positions:
-            raw = pos.get(VALUE)
-            # Explicit JSON ``value`` is authoritative; do not mix in shares × cache here.
-            if raw is not None:
-                total += float(raw)
-            else:
-                cached_price = _incognito_cached_price(ctx, pos.get(ISIN))
-                sh = pos.get(SHARES)
-                if cached_price is not None and sh is not None:
-                    total += float(sh) * float(cached_price)
-
-    if total <= 0:
-        return
-
-    target = float(random.randint(10001, 54999))
-    ctx.value_factor = target / total
-
-
 def load_portfolio(path: Path) -> dict[str, list[dict]]:
     """Load portfolio buckets from a JSON file."""
     with Path(path).open(encoding="utf-8") as f:

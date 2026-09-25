@@ -2,19 +2,10 @@
 """Dashboard endpoint for the web visualizer.
 
 Serves the visualizer directory like ``python -m http.server``, plus a
-``/dashboard`` route with two data roots:
-
-* ``GET /dashboard`` (or ``?incognito=false``) → ``index.html`` with ``data/*``
-  resolved from ``data/clear/``.
-* ``GET /dashboard?incognito=true`` → same ``index.html``, ``data/*`` resolved
-  from ``data/incognito/``.
-
-The gallery frontend is untouched: its ``data/`` fetches carry no query
-string, so the mode is taken from the ``Referer`` header (same-origin
-localhost dashboard loads always send it). Requests without a dashboard
-Referer are served literally, and unknown ``incognito`` values fall back to
-``clear``. Remapped paths stay jailed inside the served directory via the
-standard library translation.
+``/dashboard`` route serving ``index.html``. Chart payloads under ``data/``
+are served literally from the single plotter output dir (no per-mode
+roots): ``?incognito=true`` only toggles the dashboard button state and
+is carried through the constituents round trip, never the chart data.
 """
 
 from __future__ import annotations
@@ -26,6 +17,7 @@ import itertools
 import json
 import logging
 import multiprocessing
+import posixpath
 import subprocess
 import threading
 from pathlib import Path
@@ -60,39 +52,21 @@ KILL_GRACE_S = 5.0
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
-GALLERY_PATHS = ("/", "/index.html", "/index.htm", "/dashboard", "/dashboard/")
 DATA_PREFIX = "/data"
 # On-disk chart layout under the served directory. The URL prefix stays
-# /data (frontend contract); the disk names are overridable per handler
+# /data (frontend contract); the dir name is overridable per handler
 # so instances can serve renamed trees.
 DATA_DIRNAME = "data"
-CLEAR_DIR = "clear"
-INCOGNITO_DIR = "incognito"
 
 
 def incognito_flag(query_string: str) -> bool:
-    """True only for an explicit ``?incognito=true`` (case-insensitive)."""
+    """True only for an explicit ``?incognito=true`` (case-insensitive).
+
+    Used solely to keep the dashboard/constituents button state
+    consistent across the round trip; chart data ignores it.
+    """
     values = parse_qs(query_string).get("incognito", [])
     return bool(values) and values[0].strip().lower() == "true"
-
-
-def referer_incognito(headers) -> bool | None:
-    """
-    Mode for a ``data/*`` request from its ``Referer`` header: True for an
-    explicit ``?incognito=true`` gallery load, False for any other gallery
-    load (unknown values fall back to ``clear``), None when there is no
-    usable Referer (serve the path literally).
-    """
-    referer = headers.get("Referer") or ""
-    if not referer:
-        return None
-    try:
-        parts = urlsplit(referer)
-    except Exception:
-        return None
-    if (parts.path.rstrip("/") or "/") not in GALLERY_PATHS:
-        return None
-    return incognito_flag(parts.query)
 
 
 def _run_systemctl(*args: str) -> None:
@@ -211,7 +185,6 @@ def _update_worker(
         ini_cfg = None
     if ini_cfg is None:
         ini_fetch = (False, False, False)
-        ini_incognito = False
         ini_plotter = PlotterConfig()
     else:
         ini_fetch = (
@@ -219,7 +192,6 @@ def _update_worker(
             ini_cfg.fetch_geosplit,
             ini_cfg.fetch_sectorsplit,
         )
-        ini_incognito = ini_cfg.plot_incognito
         ini_plotter = ini_cfg.plotter_config
     fetch_prices, fetch_geosplit, fetch_sectorsplit = (
         (True, True, True) if fat else ini_fetch
@@ -230,8 +202,6 @@ def _update_worker(
         fetch_prices=fetch_prices,
         fetch_geosplit=fetch_geosplit,
         fetch_sectorsplit=fetch_sectorsplit,
-        plot_clear=True,
-        plot_incognito=True if fat else ini_incognito,
         server=ServerConfig(port=0, address="localhost", directory=Path(directory)),
         plotter_config=ini_plotter,
     )
@@ -296,7 +266,7 @@ def _job_terminated(job_id: int) -> bool:
 
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
-    """Static visualizer server with ``/dashboard`` + clear/incognito roots."""
+    """Static visualizer server with ``/dashboard`` + a single data root."""
 
     server_version = "asalloc-dashboard/1.0"
 
@@ -317,16 +287,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         assets_file=None,
         cache_file=None,
         data_dirname=None,
-        clear_dirname=None,
-        incognito_dirname=None,
         **kwargs,
     ):
         self._assets_file = assets_file
         self._cache_file = cache_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
-        self._clear_dirname = clear_dirname or CLEAR_DIR
-        self._incognito_dirname = incognito_dirname or INCOGNITO_DIR
         super().__init__(*args, **kwargs)
 
     def _serve_update_status(self) -> bool:
@@ -826,16 +792,19 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if url_path in DASHBOARD_PATHS:
             return super().translate_path("/index.html")
         if url_path == DATA_PREFIX or url_path.startswith(DATA_PREFIX + "/"):
-            mode = referer_incognito(self.headers)
-            if mode is not None:
-                rest = url_path[len(DATA_PREFIX):].lstrip("/")
-                subdir = self._incognito_dirname if mode else self._clear_dirname
-                disk_path = (
-                    f"/{self._data_dirname}/{subdir}/{rest}"
-                    if rest
-                    else f"/{self._data_dirname}/{subdir}/"
-                )
-                return super().translate_path(disk_path)
+            rest = url_path[len(DATA_PREFIX):].lstrip("/")
+            disk_path = (
+                f"/{self._data_dirname}/{rest}" if rest else f"/{self._data_dirname}/"
+            )
+            # Jail the remap under the data dir: normpath collapses
+            # "/data/../index.html" to "/index.html", which would leak the
+            # dashboard through /data. Force such escapes to a missing path
+            # so they stay 404.
+            norm = posixpath.normpath(disk_path)
+            base = f"/{self._data_dirname}"
+            if norm != base and not norm.startswith(base + "/"):
+                return super().translate_path("/__not_found__")
+            return super().translate_path(disk_path)
         return super().translate_path(path)
 
 
@@ -847,8 +816,6 @@ def serve_forever(
     assets_file: str | None = None,
     cache_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
-    clear_dirname: str = CLEAR_DIR,
-    incognito_dirname: str = INCOGNITO_DIR,
 ) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
     handler = functools.partial(
@@ -857,8 +824,6 @@ def serve_forever(
         assets_file=assets_file,
         cache_file=cache_file,
         data_dirname=data_dirname,
-        clear_dirname=clear_dirname,
-        incognito_dirname=incognito_dirname,
     )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
@@ -873,8 +838,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
     parser.add_argument("--plotter-data-dir", default=DATA_DIRNAME, help="On-disk data dir name under --directory (default: data).")
-    parser.add_argument("--plotter-clear-dir", default=CLEAR_DIR, help="On-disk clear charts subdir name (default: clear).")
-    parser.add_argument("--plotter-incognito-dir", default=INCOGNITO_DIR, help="On-disk incognito charts subdir name (default: incognito).")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     serve_forever(
@@ -884,8 +847,6 @@ def main(argv: list[str] | None = None) -> None:
         assets_file=args.assets_file,
         cache_file=args.cache_file,
         data_dirname=args.plotter_data_dir,
-        clear_dirname=args.plotter_clear_dir,
-        incognito_dirname=args.plotter_incognito_dir,
     )
 
 

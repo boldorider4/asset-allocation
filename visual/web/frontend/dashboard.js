@@ -10,9 +10,13 @@
  * so refreshes mid-run keep showing it. A run observed finishing reloads
  * the page on success or reports the failure.
  *
- * The incognito button toggles the ?incognito=true gallery mode and shows
- * its pressed state while active; it also carries the mode onto the Edit
- * link so the round trip through Constituents holds the state.
+ * The incognito button blurs Euro figures via a body.incognito CSS
+ * class (app.js wraps figures in span.euro; labels and percentages stay
+ * sharp). The toggle is instant with no reload: history.replaceState
+ * carries ?incognito=true as the state carrier (bookmarkable, shared
+ * with Constituents), the pressed look follows aria-pressed, and the
+ * Edit link href is synced so the round trip holds the state. Chart
+ * data never changes.
  */
 (function () {
   "use strict";
@@ -82,22 +86,55 @@
     }
   }
 
+  function applyIncognitoState(active, syncUrl) {
+    if (syncUrl === undefined) {
+      syncUrl = true;
+    }
+    document.body.classList.toggle("incognito", active);
+    const toggle = document.getElementById("incognito-link");
+    if (toggle) {
+      if (active) {
+        toggle.setAttribute("aria-pressed", "true");
+        toggle.setAttribute("href", "/dashboard");
+        toggle.setAttribute("title", "Exit incognito mode");
+        toggle.setAttribute("aria-label", "Exit incognito mode");
+      } else {
+        toggle.removeAttribute("aria-pressed");
+        toggle.setAttribute("href", "/dashboard?incognito=true");
+        toggle.setAttribute("title", "Incognito mode");
+        toggle.setAttribute("aria-label", "Incognito mode");
+      }
+    }
+    const edit = document.getElementById("edit-link");
+    if (edit) {
+      edit.setAttribute(
+        "href",
+        active ? "/constituents?incognito=true" : "/constituents"
+      );
+    }
+    if (syncUrl) {
+      try {
+        const url = active ? "/dashboard?incognito=true" : "/dashboard";
+        window.history.replaceState(null, "", url);
+      } catch {
+        // Non-pushState contexts (tests, file://): visuals already applied.
+      }
+    }
+  }
+
   function wireIncognitoToggle() {
     const toggle = document.getElementById("incognito-link");
+    // Paint the initial state from the URL (deep links, round trip);
+    // the URL already carries the state, so don't rewrite it.
+    applyIncognitoState(isIncognitoMode(), false);
     if (!toggle) {
       return;
     }
-    if (!isIncognitoMode()) {
-      return;
-    }
-    toggle.setAttribute("aria-pressed", "true");
-    toggle.setAttribute("href", "/dashboard");
-    toggle.setAttribute("title", "Exit incognito mode");
-    toggle.setAttribute("aria-label", "Exit incognito mode");
-    const edit = document.getElementById("edit-link");
-    if (edit) {
-      edit.setAttribute("href", "/constituents?incognito=true");
-    }
+    // Instant toggle: no reload, no refetch — pure CSS blur flip.
+    toggle.addEventListener("click", function (event) {
+      event.preventDefault();
+      applyIncognitoState(!document.body.classList.contains("incognito"));
+    });
   }
 
   async function fetchUpdateStatus() {
