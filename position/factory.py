@@ -143,18 +143,12 @@ def factory(
             isin,
         )
 
-    scrape_geosplit = fetch_geosplit and not (
-        position_source == YFINANCE and not use_broker_quote
-    )
-    if scrape_geosplit:
+    if fetch_geosplit:
         countries_arg: dict[str, float] | None = None
     else:
         countries_arg = cached_countries if cached_countries is not None else {}
 
-    scrape_sectorsplit = fetch_sectorsplit and not (
-        position_source == YFINANCE and not use_broker_quote
-    )
-    if scrape_sectorsplit:
+    if fetch_sectorsplit:
         sectors_arg: dict[str, float] | None = None
     else:
         sectors_arg = cached_sectors if cached_sectors is not None else {}
@@ -257,12 +251,12 @@ def factory(
         and position.price is not None
     )
     update_countries = (
-        scrape_geosplit
+        fetch_geosplit
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
     update_sectors = (
-        scrape_sectorsplit
+        fetch_sectorsplit
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
