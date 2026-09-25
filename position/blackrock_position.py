@@ -73,7 +73,7 @@ def ishares_product_url_exists(isin: str, product_id: str | None = None) -> bool
         with urllib.request.urlopen(req, timeout=_ISHARES_EXISTS_TIMEOUT_S) as resp:
             status_ok = 200 <= getattr(resp, "status", 200) < 400
             content_type = resp.headers.get("Content-Type") if resp.headers else None
-            _content_type_is_csv(content_type) and exists = status_ok
+            exists = status_ok and _content_type_is_csv(content_type)
     except urllib.error.HTTPError as e:
         logger.info("iShares holdings URL %s returned HTTP %s", url, e.code)
     except urllib.error.URLError as e:

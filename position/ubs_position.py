@@ -216,10 +216,8 @@ def ubs_product_url_exists(isin: str) -> bool:
         inst_id = _http_inst_id(isin, token, _UBS_EXISTS_TIMEOUT_S, session=session)
         exists = bool(inst_id)
     except _Ha4HttpError as e:
-        exists = False
         logger.info("UBS HA4 lookup for %s returned HTTP %s", isin, e.status)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError, OSError) as e:
-        exists = False
         logger.warning("UBS HA4 lookup failed for %s (%s)", isin, e)
     _UBS_PRODUCT_EXISTS[isin] = exists
     return exists

@@ -159,17 +159,13 @@ def invesco_product_url_exists(isin: str) -> bool:
                         InvescoPosition._countries_from_constituents_json(payload)
                     )
     except urllib.error.HTTPError as e:
-        exists = False
         logger.info("Invesco dng-api for %s returned HTTP %s", isin, e.code)
     except urllib.error.URLError as e:
-        exists = False
         logger.warning("Invesco dng-api check failed for %s (%s)", isin, e)
     except OSError as e:
         # Read timeouts, resets, DNS/SSL failures: bail to cached data.
-        exists = False
         logger.warning("Invesco dng-api check connection failed for %s (%s)", isin, e)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
-        exists = False
         logger.warning("Invesco dng-api check parse failed for %s (%s)", isin, e)
     _INVESCO_PRODUCT_EXISTS[isin] = exists
     return exists
