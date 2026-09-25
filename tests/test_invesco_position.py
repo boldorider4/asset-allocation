@@ -222,6 +222,7 @@ class TestInvescoCountryFetch(unittest.TestCase):
                 fetch_sectorsplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -307,6 +308,7 @@ class TestInvescoFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -342,23 +344,28 @@ class TestInvescoFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, InvescoPosition)
 
     def test_invesco_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.invesco_product_url_exists", return_value=False) as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="LU0290358497",
-                    name="Invesco MSCI World UCITS ETF",
-                )
-        exists.assert_called_once_with("LU0290358497")
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.invesco_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="LU0290358497",
+                        name="Invesco MSCI World UCITS ETF",
+                    )
+        exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, InvescoPosition)
 
     def test_dng_api_invesco_name_uses_invesco_without_allowlist(self) -> None:
-        with patch("position.factory.invesco_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="IE000XXXXXXX1",
-                    name="Invesco Some Other UCITS ETF",
-                )
+        with patch("position.factory.dws_product_url_exists", return_value=False):
+            with patch("position.factory.amundi_product_url_exists", return_value=False):
+                with patch("position.factory.ubs_product_url_exists", return_value=False):
+                    with patch("position.factory.landg_product_url_exists", return_value=False):
+                        with patch("position.factory.invesco_product_url_exists", return_value=True):
+                            with self._no_country_scrape():
+                                pos = self._factory(
+                                    isin="IE000XXXXXXX1",
+                                    name="Invesco Some Other UCITS ETF",
+                                )
         self.assertIsInstance(pos, InvescoPosition)
 
     def test_allowlisted_holdings_fallback_isin_uses_invesco(self) -> None:
@@ -371,9 +378,11 @@ class TestInvescoFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, InvescoPosition)
 
     def test_missing_product_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.invesco_product_url_exists", return_value=False):
+        # Seeded rows take the DB path, so an unknown issuer can only be
+        # exercised with an unseeded ISIN and hermetic probes.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040404")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, InvescoPosition)
 

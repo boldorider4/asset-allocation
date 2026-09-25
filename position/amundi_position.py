@@ -108,16 +108,12 @@ def amundi_product_url_exists(isin: str) -> bool:
             if isinstance(payload, dict):
                 exists = AmundiPosition._select_product(payload, isin) is not None
     except urllib.error.HTTPError as e:
-        exists = False
         logger.info("Amundi ProductAPI for %s returned HTTP %s", isin, e.code)
     except urllib.error.URLError as e:
-        exists = False
         logger.warning("Amundi ProductAPI check failed for %s (%s)", isin, e)
     except OSError as e:
-        exists = False
         logger.warning("Amundi ProductAPI check connection failed for %s (%s)", isin, e)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
-        exists = False
         logger.warning("Amundi ProductAPI check parse failed for %s (%s)", isin, e)
     _AMUNDI_PRODUCT_EXISTS[isin] = exists
     return exists
@@ -125,14 +121,6 @@ def amundi_product_url_exists(isin: str) -> bool:
 
 class AmundiPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from the Amundi ProductAPI."""
-
-    ISINS: frozenset[str] = frozenset(
-        {
-            "IE000BI8OT95",
-            "LU2233156582",
-            "LU2300294316",
-        }
-    )
 
     def __init__(
         self,

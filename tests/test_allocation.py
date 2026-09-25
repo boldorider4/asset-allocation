@@ -89,6 +89,7 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
     from cli.update import main as run_update
 
     assets, cache, viz = _seed_files(tmp)
+    isin = tmp / "isin.json"
     config = AppConfig(
         fetch_scalable=True,
         fetch_geosplit=geosplit,
@@ -96,6 +97,7 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
         plot_clear=True,
         assets_file=assets,
         cache_file=cache,
+        isin_file=isin,
         server=ServerConfig(port=0, address="localhost", directory=viz),
     )
     ctx = RuntimeContext(config=config)
@@ -113,6 +115,9 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
             "position.justetf_position.JustETFPosition._fetch_sectors_with_retries",
             sectors_mock,
         ),
+        # Unseeded ISIN: keep vendor probing hermetic; the JustETF fetch
+        # mocks above drive the generic fallback path.
+        patch("position.factory._probe_issuer_for_isin", return_value=None),
     ):
         run_update(ctx)
     stored = json.loads(cache.read_text(encoding="utf-8"))

@@ -73,6 +73,7 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
     from cli.update import main as run_update
 
     assets, cache, viz = _seed_files(tmp, broker=broker, shares=shares)
+    isin = tmp / "isin.json"
     flags = {
         "fetch_prices": False,
         "fetch_geosplit": False,
@@ -83,6 +84,7 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
         plot_clear=True,
         assets_file=assets,
         cache_file=cache,
+        isin_file=isin,
         server=ServerConfig(port=0, address="localhost", directory=viz),
         **flags,
     )

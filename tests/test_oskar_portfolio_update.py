@@ -20,6 +20,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )

@@ -146,24 +146,24 @@ class TestIsharesProductUrl(unittest.TestCase):
 
     def test_holdings_url_for_known_isin(self) -> None:
         self.assertEqual(
-            _ishares_holdings_url(_ISIN),
+            _ishares_holdings_url("264659"),
             "https://www.ishares.com/ch/individual/en/products/264659"
             "/fund/1495092304805.ajax?fileType=csv",
         )
 
     def test_unknown_isin_has_no_url(self) -> None:
-        self.assertIsNone(_ishares_holdings_url("XX0000000000"))
+        self.assertIsNone(_ishares_holdings_url(None))
 
     def test_exists_on_200_csv(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()) as opener:
-            self.assertTrue(ishares_product_url_exists(_ISIN))
+            self.assertTrue(ishares_product_url_exists(_ISIN, "264659"))
         opener.assert_called_once()
 
     def test_html_200_is_not_csv(self) -> None:
         resp = _csv_response()
         resp.headers = {"Content-Type": "text/html; charset=utf-8"}
         with patch("urllib.request.urlopen", return_value=resp):
-            self.assertFalse(ishares_product_url_exists(_ISIN))
+            self.assertFalse(ishares_product_url_exists(_ISIN, "264659"))
 
     def test_missing_product_is_404(self) -> None:
         with patch(
@@ -174,11 +174,11 @@ class TestIsharesProductUrl(unittest.TestCase):
                 404,
             ),
         ):
-            self.assertFalse(ishares_product_url_exists(_ISIN))
+            self.assertFalse(ishares_product_url_exists(_ISIN, "999"))
 
     def test_unknown_isin_skips_network(self) -> None:
         with patch("urllib.request.urlopen") as opener:
-            self.assertFalse(ishares_product_url_exists("XX0000000000"))
+            self.assertFalse(ishares_product_url_exists("XX0000000000", None))
         opener.assert_not_called()
 
     def test_network_error_is_false(self) -> None:
@@ -186,19 +186,19 @@ class TestIsharesProductUrl(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=urllib.error.URLError("timeout"),
         ):
-            self.assertFalse(ishares_product_url_exists(_ISIN))
+            self.assertFalse(ishares_product_url_exists(_ISIN, "264659"))
 
     def test_timeout_error_is_false(self) -> None:
         with patch(
             "urllib.request.urlopen",
             side_effect=TimeoutError("The read operation timed out"),
         ):
-            self.assertFalse(ishares_product_url_exists(_ISIN))
+            self.assertFalse(ishares_product_url_exists(_ISIN, "264659"))
 
     def test_result_is_memoized(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()) as opener:
-            self.assertTrue(ishares_product_url_exists(_ISIN))
-            self.assertTrue(ishares_product_url_exists(_ISIN))
+            self.assertTrue(ishares_product_url_exists(_ISIN, "264659"))
+            self.assertTrue(ishares_product_url_exists(_ISIN, "264659"))
         opener.assert_called_once()
 
 
@@ -212,11 +212,18 @@ class TestBlackRockCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        self.ctx.isin_registry.register_isin(
+            _ISIN,
+            issuer="ishares",
+            bucket="equity_portfolio",
+            product_ref="264659",
+        )
 
     def test_aggregates_holdings_csv(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()):
@@ -246,6 +253,7 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -281,24 +289,33 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, BlackRockPosition)
 
     def test_ishares_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.ishares_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="IE00BDFK1573",
-                    name="iShares $ Treasury Bond 1-3yr UCITS ETF",
-                )
+        # Unseeded ISIN with no probe hit: generic fallback, and the
+        # ishares probe is never consulted.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.ishares_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="IE00BDFK1573",
+                        name="iShares $ Treasury Bond 1-3yr UCITS ETF",
+                    )
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_404_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.ishares_product_url_exists", return_value=False):
+        # Unknown issuer with hermetic probes: generic fallback.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040401")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_amundi_does_not_use_blackrock(self) -> None:
+        # Registered amundi row takes the DB path; the ishares probe is
+        # never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE000BI8OT95", issuer="amundi", bucket="equity_portfolio"
+        )
         with patch("position.factory.ishares_product_url_exists") as exists:
             with patch("position.factory.amundi_product_url_exists", return_value=True):
                 with self._no_country_scrape():

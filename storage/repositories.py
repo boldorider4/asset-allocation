@@ -18,8 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from storage.memory_storage import MemoryStorage
-from storage.records import DEFAULT_ISIN_RECORDS, AssetBucket, CacheEntry, IsinRecord
+from storage.records import AssetBucket, CacheEntry, IsinRecord
 from storage.storage import Storage
 
 __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
@@ -180,9 +179,49 @@ class AssetRepository:
     def remove_bucket(self, bucket: str) -> None:
         self._backend.remove(bucket)
 
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> AssetRepository:
+        """Prepare the backend for use (idempotent)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{bucket: positions}`` (bulk-only, not hot-path)."""
+        return self._backend.snapshot()
+
+    def restore(self, rows: dict[str, Any]) -> int:
+        """Bulk-load plain buckets with validation; skip bad ones with a warning.
+
+        Returns the number of buckets restored. Used to push an externally
+        seeded plain dict (e.g. ``ctx.portfolio``) into the backend.
+        """
+        count = 0
+        for key, raw in rows.items():
+            try:
+                self._backend.put(AssetBucket.from_dict(str(key), raw))
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.warning("skipping bad asset bucket %r (%s)", key, exc)
+                continue
+            count += 1
+        return count
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()
+
 
 class IsinRegistry:
-    """Issuer allow-list registry over any backend (in-memory by default)."""
+    """ISIN registry over any backend (in-memory by default).
+
+    Each row maps an ISIN to its issuer handler, portfolio bucket and an
+    optional vendor product ref. ``None`` issuer means "unknown, probe on
+    the next geosplit run"; ``justetf``/``yfinance`` mean "decided generic,
+    never re-probe".
+    """
 
     def __init__(self, backend: Storage[IsinRecord]) -> None:
         self._backend = backend
@@ -191,36 +230,88 @@ class IsinRegistry:
     def backend(self) -> Storage[IsinRecord]:
         return self._backend
 
-    @classmethod
-    def seeded(cls, backend: Storage[IsinRecord] | None = None) -> IsinRegistry:
-        """Registry pre-populated from :data:`DEFAULT_ISIN_RECORDS`."""
-        store = backend if backend is not None else MemoryStorage(IsinRecord)
-        for isin, spec in DEFAULT_ISIN_RECORDS.items():
-            store.put(IsinRecord(isin, dict(spec)))
-        return cls(store)
-
     def get(self, isin: str) -> IsinRecord | None:
         return self._backend.get(isin)
 
     def __contains__(self, isin: object) -> bool:
         return isin in self._backend
 
-    def register(
-        self, isin: str, issuer: str, product_ref: str | None = None
-    ) -> IsinRecord:
-        """Add or replace one allow-list entry."""
-        record = IsinRecord(str(isin), {"issuer": issuer, "product_ref": product_ref})
-        self._backend.put(record)
-        return record
+    def get_issuer_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.issuer
 
-    def belongs_to(self, isin: str, issuer: str) -> bool:
-        record = self._backend.get(isin)
-        return record is not None and record.issuer == issuer
+    def get_bucket_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.bucket
 
-    def issuers_for(self, isin: str) -> frozenset[str]:
-        record = self._backend.get(isin)
-        return frozenset({record.issuer}) if record is not None else frozenset()
+    def get_product_ref_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.product_ref
 
     def product_ref_for(self, isin: str) -> str | None:
-        record = self._backend.get(isin)
-        return None if record is None else record.product_ref
+        """Alias of :meth:`get_product_ref_for_isin` (kept for callers)."""
+        return self.get_product_ref_for_isin(isin)
+
+    def register_isin(
+        self,
+        isin: str,
+        *,
+        issuer: str | None = None,
+        bucket: str | None = None,
+        product_ref: str | None = None,
+    ) -> IsinRecord:
+        """Ensure a row exists, filling only fields that are still null.
+
+        Never overwrites decided fields — use :meth:`set_issuer_for_isin`
+        for explicit (e.g. probe-inferred) corrections.
+        """
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(
+                key, {"issuer": issuer, "bucket": bucket, "product_ref": product_ref}
+            )
+            self._backend.put(record)
+            return record
+        patch: dict[str, Any] = {}
+        if existing.issuer is None and issuer is not None:
+            patch[IsinRecord.ISSUER] = issuer
+        if existing.bucket is None and bucket is not None:
+            patch[IsinRecord.BUCKET] = bucket
+        if existing.product_ref is None and product_ref is not None:
+            patch[IsinRecord.PRODUCT_REF] = product_ref
+        if patch:
+            existing.merge(patch)
+            self._backend.put(existing)
+        return existing
+
+    def set_issuer_for_isin(self, isin: str, issuer: str) -> IsinRecord:
+        """Overwrite the issuer for ``isin`` (probe-inferred corrections)."""
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(key, {"issuer": issuer})
+            self._backend.put(record)
+            return record
+        if existing.issuer != issuer:
+            existing.merge({IsinRecord.ISSUER: issuer})
+            self._backend.put(existing)
+        return existing
+
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> IsinRegistry:
+        """Open the underlying ``isin.json`` backend (read-only use)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{isin: row}`` (bulk-only, not hot-path)."""
+        return self._backend.snapshot()
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()

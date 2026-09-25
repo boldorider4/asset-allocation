@@ -25,19 +25,6 @@ _ISHARES_HOLDINGS_URL = (
 _ISHARES_EXISTS_TIMEOUT_S = 10
 _ISHARES_FETCH_TIMEOUT_S = 30
 
-# ISIN -> iShares product id. Keys are the BlackRock geosplit allow-list.
-_ISHARES_PRODUCT_IDS: dict[str, str] = {
-    "IE00BKM4GZ66": "264659",
-    "IE00BD1F4M44": "285207",
-    "IE00BHZPJ239": "307659",
-    "IE00BF4RFH31": "296576",
-    "IE00BFNM3D14": "305363",
-    "IE00BL6K8C82": "318925",
-    "IE00BFNM3L97": "305412",
-    "IE00BFNM3P36": "305397",
-    "IE000APK27S2": "320169",
-    "IE00BKPT2S34": "313317",
-}
 
 # iShares Location labels -> names used in Position DMEM/USAVN lists.
 _ISHARES_COUNTRY_ALIASES: dict[str, str] = {
@@ -51,8 +38,7 @@ _ISHARES_COUNTRY_ALIASES: dict[str, str] = {
 _ISHARES_PRODUCT_EXISTS: dict[str, bool] = {}
 
 
-def _ishares_holdings_url(isin: str) -> str | None:
-    product_id = _ISHARES_PRODUCT_IDS.get(isin)
+def _ishares_holdings_url(product_id: str | None) -> str | None:
     if not product_id:
         return None
     return _ISHARES_HOLDINGS_URL.format(product_id=product_id)
@@ -64,12 +50,16 @@ def _content_type_is_csv(content_type: str | None) -> bool:
     return "csv" in content_type.lower()
 
 
-def ishares_product_url_exists(isin: str) -> bool:
-    """True when the iShares CH holdings CSV for ``isin`` is reachable."""
+def ishares_product_url_exists(isin: str, product_id: str | None = None) -> bool:
+    """True when the iShares CH holdings CSV for ``isin`` is reachable.
+
+    ``product_id`` comes from the ISIN registry; ``None`` (unknown ISIN)
+    means unreachable without any network traffic.
+    """
     cached = _ISHARES_PRODUCT_EXISTS.get(isin)
     if cached is not None:
         return cached
-    url = _ishares_holdings_url(isin)
+    url = _ishares_holdings_url(product_id)
     if not url:
         _ISHARES_PRODUCT_EXISTS[isin] = False
         return False
@@ -85,14 +75,11 @@ def ishares_product_url_exists(isin: str) -> bool:
             content_type = resp.headers.get("Content-Type") if resp.headers else None
             exists = status_ok and _content_type_is_csv(content_type)
     except urllib.error.HTTPError as e:
-        exists = False
         logger.info("iShares holdings URL %s returned HTTP %s", url, e.code)
     except urllib.error.URLError as e:
-        exists = False
         logger.warning("iShares holdings URL check failed for %s (%s)", isin, e)
     except OSError as e:
         # Read timeouts, resets, DNS/SSL failures: bail to cached data.
-        exists = False
         logger.warning("iShares holdings URL check connection failed for %s (%s)", isin, e)
     _ISHARES_PRODUCT_EXISTS[isin] = exists
     return exists
@@ -272,7 +259,9 @@ class BlackRockPosition(JustETFPosition):
         ]
 
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
-        url = _ishares_holdings_url(self._isin)
+        url = _ishares_holdings_url(
+            self._ctx.isin_registry.get_product_ref_for_isin(self._isin)
+        )
         if not url:
             raise RuntimeError(
                 f"iShares product id is unknown for {self._isin}"

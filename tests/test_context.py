@@ -315,14 +315,56 @@ class TestRuntimeContextCache(unittest.TestCase):
             ctx.flush_cache()
         self.assertFalse((Path(tmp) / "cache.json").exists())
 
-    def test_portfolio_flush_round_trips(self) -> None:
+    def test_portfolio_persist_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp))
             ctx.portfolio["equity_portfolio"] = [{"ISIN": "X", "value": 1.0}]
-            ctx.flush_portfolio()
+            ctx.persist_portfolio()
             ctx.portfolio.clear()
             ctx.load_portfolio()
         self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
+
+    def test_persist_portfolio_drops_removed_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(Path(tmp))
+            ctx.portfolio["a"] = [{"ISIN": "X"}]
+            ctx.portfolio["b"] = [{"ISIN": "Y"}]
+            ctx.persist_portfolio()
+            del ctx.portfolio["b"]
+            ctx.persist_portfolio()
+            ctx.portfolio.clear()
+            ctx.load_portfolio()
+        self.assertEqual(set(ctx.portfolio), {"a"})
+
+    def test_persist_portfolio_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(Path(tmp))
+            ctx.portfolio["equity_portfolio"] = [{"ISIN": "X", "value": 1.0}]
+            out = Path(tmp) / "other.json"
+            ctx.persist_portfolio(out)
+            self.assertTrue(out.is_file())
+            self.assertFalse((Path(tmp) / "assets.json").exists())
+            ctx.portfolio.clear()
+            ctx.load_portfolio(out)
+        self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
+
+    def test_load_portfolio_rejects_malformed_file(self) -> None:
+        import json as _json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(Path(tmp))
+            bad = Path(tmp) / "assets.json"
+            bad.write_text(_json.dumps({"equity_portfolio": [{"ISIN": "X"}]}), encoding="utf-8")
+            ctx.load_portfolio()
+            self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
+            bad.write_text(_json.dumps({"equity_portfolio": "nope"}), encoding="utf-8")
+            ctx2 = self._ctx(Path(tmp))
+            with self.assertRaises(ValueError):
+                ctx2.load_portfolio()
+            bad.write_text(_json.dumps(["not", "a", "dict"]), encoding="utf-8")
+            ctx3 = self._ctx(Path(tmp))
+            with self.assertRaises(ValueError):
+                ctx3.load_portfolio()
 
 
 class TestPlotterSelection(unittest.TestCase):

@@ -47,6 +47,7 @@ class TestSectorTableParsing(unittest.TestCase):
                 fetch_geosplit=False,
                 fetch_sectorsplit=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -170,6 +171,7 @@ class TestJustETFSectorScrapeFailure(unittest.TestCase):
             config=AppConfig(
                 fetch_sectorsplit=True,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -236,6 +238,7 @@ class TestSectorCacheUtils(unittest.TestCase):
         ctx = RuntimeContext(
             config=AppConfig(
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -259,6 +262,7 @@ class TestFactorySectorFlags(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )

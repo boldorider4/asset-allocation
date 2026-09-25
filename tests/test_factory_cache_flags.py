@@ -28,6 +28,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -138,7 +139,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "scalable",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="scalable", value=140.0, shares=4, price=40.315
@@ -164,7 +165,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "scalable",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(broker="scalable", value=140.0, shares=4, price=40.315)
             persist_fetched_values_in_portfolio(self.ctx)
@@ -198,7 +199,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
@@ -245,7 +246,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             },
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 self._factory(broker="oskar", value=199.0, shares=None, price=None)
                 self._factory(
@@ -280,7 +281,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(
                 JustETFPosition,
                 "_fast_info_price",
@@ -307,7 +308,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(broker="oskar", value=199.0, shares=5.0, price=None)
             persist_oskar_shares_in_portfolio(self.ctx)
@@ -328,7 +329,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=199.0 / 99.5, price=None
@@ -341,7 +342,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.ctx.config.fetch_oskar = True
         self.ctx.config.fetch_prices = True
         self.ctx.cache = {}
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
@@ -354,7 +355,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
     def test_oskar_does_not_estimate_shares_without_live_scrape(self) -> None:
         self.ctx.config.fetch_oskar = False
         self.ctx.config.fetch_prices = True
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=199.0, shares=None, price=None
@@ -378,7 +379,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
                 pos = self._factory(
                     broker="oskar", value=140.0, shares=2, price=None
@@ -402,7 +403,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "oskar",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 pos = self._factory(
                     broker="oskar", value=140.0, shares=2, price=None
@@ -428,7 +429,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "usavn": 0.5,
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
                 port = Portfolio(
                     "equity",
@@ -489,17 +490,17 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.countries(), [])
 
     def test_yfinance_geosplit_does_not_become_justetf(self) -> None:
+        # Seeded rows take the DB path, so the yfinance fallback needs an
+        # unseeded ISIN; hermetic probes keep the run offline-clean.
         self.ctx.config.position_source = "yfinance"
         self.ctx.config.fetch_geosplit = True
         self.ctx.config.fetch_scalable = False
         with patch.object(YFinancePosition, "_fast_info_price", return_value=12.0):
-            with patch(
-                "position.factory.ssga_product_url_exists", return_value=False
-            ):
+            with patch("position.factory._probe_issuer_for_isin", return_value=None):
                 pos = self._factory(
                     price=None,
                     broker="other",
-                    isin="IE00B4YBJ215",
+                    isin="XX000YF01",
                     name="iShares Core MSCI World UCITS ETF",
                 )
         self.assertIsInstance(pos, YFinancePosition)
@@ -539,7 +540,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 "broker": "scalable",
             }
         ]
-        with patch("utils.write_portfolio") as write:
+        with patch.object(RuntimeContext, "persist_portfolio") as write:
             with patch.object(
                 JustETFPosition,
                 "_fast_info_price",

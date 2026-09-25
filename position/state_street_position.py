@@ -56,16 +56,11 @@ _NON_COUNTRY_LABELS: frozenset[str] = frozenset(
     {"cash", "other", "n/a", "-", "--", "unclassified", "unassigned"}
 )
 
-# ISIN -> SSGA product slug on the DE intermediary ETF site.
-_SSGA_PRODUCT_SLUGS: dict[str, str] = {
-    "IE00B4YBJ215": "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
-}
 
 _SSGA_PRODUCT_EXISTS: dict[str, bool] = {}
 
 
-def _ssga_product_url(isin: str) -> str | None:
-    slug = _SSGA_PRODUCT_SLUGS.get(isin)
+def _ssga_product_url(slug: str | None) -> str | None:
     if not slug:
         return None
     return _SSGA_PRODUCT_URL.format(slug=slug)
@@ -88,12 +83,16 @@ def _http_product_html(url: str, timeout_s: float) -> tuple[int, str | None, byt
     return status, content_type, payload
 
 
-def ssga_product_url_exists(isin: str) -> bool:
-    """True when the SSGA product page embeds geographical weights for ``isin``."""
+def ssga_product_url_exists(isin: str, slug: str | None = None) -> bool:
+    """True when the SSGA product page embeds geographical weights for ``isin``.
+
+    ``slug`` comes from the ISIN registry; ``None`` (unknown ISIN) means
+    unreachable without any network traffic.
+    """
     cached = _SSGA_PRODUCT_EXISTS.get(isin)
     if cached is not None:
         return cached
-    url = _ssga_product_url(isin)
+    url = _ssga_product_url(slug)
     if not url:
         _SSGA_PRODUCT_EXISTS[isin] = False
         return False
@@ -108,17 +107,13 @@ def ssga_product_url_exists(isin: str) -> bool:
                 and StateStreetPosition._countries_from_geo_json(payload)
             )
     except urllib.error.HTTPError as e:
-        exists = False
         logger.info("SSGA product page for %s returned HTTP %s", isin, e.code)
     except urllib.error.URLError as e:
-        exists = False
         logger.warning("SSGA product page check failed for %s (%s)", isin, e)
     except OSError as e:
         # Read timeouts, resets, DNS/SSL failures: bail to cached data.
-        exists = False
         logger.warning("SSGA product page check connection failed for %s (%s)", isin, e)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
-        exists = False
         logger.warning("SSGA product page parse failed for %s (%s)", isin, e)
     _SSGA_PRODUCT_EXISTS[isin] = exists
     return exists
@@ -126,8 +121,6 @@ def ssga_product_url_exists(isin: str) -> bool:
 
 class StateStreetPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from the SSGA page."""
-
-    ISINS: frozenset[str] = frozenset(_SSGA_PRODUCT_SLUGS)
 
     def __init__(
         self,
@@ -287,7 +280,9 @@ class StateStreetPosition(JustETFPosition):
         ]
 
     def _http_country_dist_json(self) -> list[dict[str, float | str]]:
-        url = _ssga_product_url(self._isin)
+        url = _ssga_product_url(
+            self._ctx.isin_registry.get_product_ref_for_isin(self._isin)
+        )
         if not url:
             raise RuntimeError(f"SSGA product URL is unknown for {self._isin}")
         logger.info("SSGA: fetching geographical weights from %s", url)
@@ -335,7 +330,9 @@ class StateStreetPosition(JustETFPosition):
             if self._html_payload is not None:
                 payload = StateStreetPosition._sector_payload_from_html(self._html_payload)
             else:
-                url = _ssga_product_url(self._isin)
+                url = _ssga_product_url(
+                    self._ctx.isin_registry.get_product_ref_for_isin(self._isin)
+                )
                 if not url:
                     raise RuntimeError(f"SSGA product URL is unknown for {self._isin}")
                 status, _content_type, raw = _http_product_html(

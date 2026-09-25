@@ -205,6 +205,7 @@ class TestXtrackersCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -246,6 +247,7 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -281,35 +283,43 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, XtrackersPosition)
 
     def test_xtrackers_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.dws_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="LU0290358497",
-                    name="Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc)",
-                )
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.dws_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="LU0290358497",
+                        name="Xtrackers II EUR Overnight Rate Swap UCITS ETF (Acc)",
+                    )
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_scalable_ac_world_stays_justetf(self) -> None:
-        with patch("position.factory.dws_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="LU2903252349",
-                    name="Scalable AC World Xtrackers UCITS ETF (Acc)",
-                )
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.dws_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="LU2903252349",
+                        name="Scalable AC World Xtrackers UCITS ETF (Acc)",
+                    )
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_404_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.dws_product_url_exists", return_value=False):
+        # Unknown issuer with hermetic probes: generic fallback.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040403")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_amundi_does_not_use_xtrackers(self) -> None:
+        # Registered amundi row takes the DB path; the dws probe is
+        # never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE000BI8OT95", issuer="amundi", bucket="equity_portfolio"
+        )
         with patch("position.factory.dws_product_url_exists") as exists:
             with patch("position.factory.amundi_product_url_exists", return_value=True):
                 with self._no_country_scrape():

@@ -176,12 +176,14 @@ class TestSsgaProductExists(unittest.TestCase):
     def tearDown(self) -> None:
         _SSGA_PRODUCT_EXISTS.clear()
 
+    _SLUG = "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy"
+
     def test_exists_on_geo_html(self) -> None:
         with patch(
             "urllib.request.urlopen",
             return_value=_html_response(_html_page(_GEO)),
         ) as opener:
-            self.assertTrue(ssga_product_url_exists(_ISIN))
+            self.assertTrue(ssga_product_url_exists(_ISIN, self._SLUG))
         self.assertEqual(opener.call_count, 1)
 
     def test_missing_geo_is_false(self) -> None:
@@ -189,16 +191,16 @@ class TestSsgaProductExists(unittest.TestCase):
             "urllib.request.urlopen",
             return_value=_html_response(b"<html></html>"),
         ):
-            self.assertFalse(ssga_product_url_exists(_ISIN))
+            self.assertFalse(ssga_product_url_exists(_ISIN, self._SLUG))
 
     def test_unknown_isin_skips_network(self) -> None:
         with patch("urllib.request.urlopen") as opener:
-            self.assertFalse(ssga_product_url_exists("IE00XXXXXXX1"))
+            self.assertFalse(ssga_product_url_exists("IE00XXXXXXX1", None))
         opener.assert_not_called()
 
     def test_empty_isin_skips_network(self) -> None:
         with patch("urllib.request.urlopen") as opener:
-            self.assertFalse(ssga_product_url_exists(""))
+            self.assertFalse(ssga_product_url_exists("", None))
         opener.assert_not_called()
 
     def test_http_error_is_false(self) -> None:
@@ -206,22 +208,22 @@ class TestSsgaProductExists(unittest.TestCase):
             "urllib.request.urlopen",
             side_effect=_http_error("https://www.ssga.com/", 404),
         ):
-            self.assertFalse(ssga_product_url_exists(_ISIN))
+            self.assertFalse(ssga_product_url_exists(_ISIN, self._SLUG))
 
     def test_timeout_error_is_false(self) -> None:
         with patch(
             "urllib.request.urlopen",
             side_effect=TimeoutError("The read operation timed out"),
         ):
-            self.assertFalse(ssga_product_url_exists(_ISIN))
+            self.assertFalse(ssga_product_url_exists(_ISIN, self._SLUG))
 
     def test_result_is_memoized(self) -> None:
         with patch(
             "urllib.request.urlopen",
             return_value=_html_response(_html_page(_GEO)),
         ) as opener:
-            self.assertTrue(ssga_product_url_exists(_ISIN))
-            self.assertTrue(ssga_product_url_exists(_ISIN))
+            self.assertTrue(ssga_product_url_exists(_ISIN, self._SLUG))
+            self.assertTrue(ssga_product_url_exists(_ISIN, self._SLUG))
         self.assertEqual(opener.call_count, 1)
 
 
@@ -236,11 +238,18 @@ class TestSsgaCountryFetch(unittest.TestCase):
                 fetch_sectorsplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        self.ctx.isin_registry.register_isin(
+            _ISIN,
+            issuer="ssga",
+            bucket="equity_portfolio",
+            product_ref="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        )
 
     def test_parses_geo_html(self) -> None:
         with patch(
@@ -306,6 +315,7 @@ class TestSsgaFactoryRouting(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_prices=False,
                 cache_file=tmp / "cache.json",
+                isin_file=tmp / "isin.json",
                 assets_file=tmp / "assets.json",
             )
         )
@@ -352,9 +362,11 @@ class TestSsgaFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, StateStreetPosition)
 
     def test_missing_product_falls_back_to_justetf(self) -> None:
-        with patch("position.factory.ssga_product_url_exists", return_value=False):
+        # Seeded rows take the DB path, so a probe miss can only be
+        # exercised with an unseeded ISIN and a hermetic probe helper.
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
-                pos = self._factory()
+                pos = self._factory(isin="XX00040402")
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, StateStreetPosition)
 

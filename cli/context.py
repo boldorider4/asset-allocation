@@ -35,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.ini"
 DEFAULT_ASSETS_PATH = REPO_ROOT / "assets.json"
 DEFAULT_CACHE_PATH = REPO_ROOT / "cache.json"
+DEFAULT_ISIN_PATH = REPO_ROOT / "isin.json"
 
 PositionSource = Literal["justetf", "yfinance"]
 PlotterKind = Literal["web", "pie-chart"]
@@ -80,6 +81,7 @@ class AppConfig:
     plotter: PlotterKind = "web"
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
     cache_file: Path = field(default_factory=lambda: DEFAULT_CACHE_PATH)
+    isin_file: Path = field(default_factory=lambda: DEFAULT_ISIN_PATH)
     server: ServerConfig = field(
         default_factory=lambda: ServerConfig(
             port=8765,
@@ -154,6 +156,7 @@ class AppConfig:
             "log_level": "INFO",
             "assets_file": DEFAULT_ASSETS_PATH,
             "cache_file": DEFAULT_CACHE_PATH,
+            "isin_file": DEFAULT_ISIN_PATH,
         }
         try:
             cfg_path, parser = cls._ini_parser(path)
@@ -183,6 +186,11 @@ class AppConfig:
             cfg_path,
             parser.get("update", "cache_file", fallback=None),
             DEFAULT_CACHE_PATH,
+        )
+        values["isin_file"] = cls._resolve_ini_path(
+            cfg_path,
+            parser.get("update", "isin_file", fallback=None),
+            DEFAULT_ISIN_PATH,
         )
         return values
 
@@ -254,6 +262,7 @@ class AppConfig:
             raise ValueError(f"unknown log level {log_level!r}")
         assets = getattr(args, "assets_file", None)
         cache = getattr(args, "cache_file", None)
+        isin = getattr(args, "isin_file", None)
         return cls(
             fetch_prices=bool(pick(getattr(args, "fetch_prices", None), ini_update["fetch_prices"])),
             fetch_geosplit=bool(pick(getattr(args, "fetch_geosplit", None), ini_update["fetch_geosplit"])),
@@ -267,6 +276,7 @@ class AppConfig:
             plotter=plotter,  # type: ignore[arg-type]
             assets_file=Path(assets) if assets else ini_update["assets_file"],
             cache_file=Path(cache) if cache else ini_update["cache_file"],
+            isin_file=Path(isin) if isin else ini_update["isin_file"],
             server=server,
             plotter_config=ini_plotter,
             log_level=log_level,
@@ -303,18 +313,115 @@ class RuntimeContext:
     # Built once: ``cache_file`` is only ever set at config construction,
     # never mutated afterwards.
     _cache_repo: Any = field(default=None, init=False, repr=False)
+    # Lazily built ``AssetRepository`` over a ``JsonStorage`` backend for
+    # ``config.assets_file``. The plain ``portfolio`` dict stays the
+    # in-memory model mutated by scrapers and persist helpers; the
+    # repository owns file persistence only.
+    _asset_repo: Any = field(default=None, init=False, repr=False)
+    # Lazily built ``IsinRegistry`` over a ``JsonStorage`` backend for
+    # ``config.isin_file``. Opened eagerly at build so the shipped seed
+    # rows exist before the first factory lookup.
+    _isin_repo: Any = field(default=None, init=False, repr=False)
 
     # -- portfolio --
+    @property
+    def asset_repo(self):  # type: ignore[no-untyped-def]
+        """Validated assets access: ``AssetRepository`` over ``JsonStorage``.
+
+        Lazily built against ``config.assets_file``.
+        """
+        from storage.json_storage import JsonStorage
+        from storage.records import AssetBucket
+        from storage.repositories import AssetRepository
+
+        if self._asset_repo is None:
+            self._asset_repo = AssetRepository(
+                JsonStorage(self.config.assets_file, AssetBucket)
+            )
+        return self._asset_repo
+
+    @property
+    def isin_registry(self):  # type: ignore[no-untyped-def]
+        """ISIN registry: ``IsinRegistry`` over ``JsonStorage``.
+
+        Lazily built against ``config.isin_file`` and opened eagerly.
+        Factory probe hits and broker bucket mappings stage writes here;
+        they become durable only via :meth:`flush_isin_registry` (callers
+        own durability — no backend nouns leak past ``persist()``).
+        """
+        from storage.json_storage import JsonStorage
+        from storage.records import IsinRecord
+        from storage.repositories import IsinRegistry
+
+        if self._isin_repo is None:
+            repo = IsinRegistry(JsonStorage(self.config.isin_file, IsinRecord))
+            repo.open()
+            self._isin_repo = repo
+        return self._isin_repo
+
+    @staticmethod
+    def _validate_portfolio_shape(data: Any) -> None:
+        """Reject malformed assets payloads exactly like ``utils.load_portfolio``.
+
+        Raises ``ValueError`` on a non-dict root, non-list buckets, or
+        non-dict rows — strictness the pipeline has always relied on
+        (unlike the lenient cache loader, a corrupt assets file must fail
+        loudly instead of silently loading partial data).
+        """
+        if not isinstance(data, dict):
+            raise ValueError("assets root must be a JSON object")
+        for key, positions in data.items():
+            if not isinstance(positions, list):
+                raise ValueError(f"{key!r} must be a JSON array")
+            for i, pos in enumerate(positions):
+                if not isinstance(pos, dict):
+                    raise ValueError(f"{key}[{i}] must be a JSON object")
+
     def load_portfolio(self, path: Path | None = None) -> None:
-        from utils import load_portfolio as _load
+        import json as _json
 
+        target = path or self.config.assets_file
+        # Strict gate first: missing file / invalid JSON / malformed shape
+        # propagate exactly as ``utils.load_portfolio`` always did.
+        with open(target, encoding="utf-8") as f:
+            raw = _json.load(f)
+        self._validate_portfolio_shape(raw)
+        repo = (
+            self._asset_repo_for(path)
+            if path is not None and Path(path) != self.config.assets_file
+            else self.asset_repo
+        )
+        # Evict backend rows absent from the file so a reused backend can't
+        # leak stale buckets into the dict (all repo verbs; no backend nouns).
+        for key in list(repo.snapshot()):
+            if key not in raw:
+                repo.remove_bucket(key)
+        repo.restore(raw)
+        data = repo.snapshot()
         self.portfolio.clear()
-        self.portfolio.update(_load(path or self.config.assets_file))
+        self.portfolio.update(data)
 
-    def flush_portfolio(self, path: Path | None = None) -> None:
-        from utils import write_portfolio as _write
+    def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
+        """Short-lived repository bound to an explicit path (not the config file)."""
+        from storage.json_storage import JsonStorage
+        from storage.records import AssetBucket
+        from storage.repositories import AssetRepository
 
-        _write(path or self.config.assets_file, self.portfolio)
+        return AssetRepository(JsonStorage(Path(path), AssetBucket))
+
+    def persist_portfolio(self, path: Path | None = None) -> None:
+        if path is not None and Path(path) != self.config.assets_file:
+            repo = self._asset_repo_for(path)
+            repo.open()
+        else:
+            repo = self.asset_repo
+        # Drop backend rows absent from the dict so the file ends up
+        # exactly equal to it (same as the old overwrite semantics).
+        for key in list(repo.snapshot()):
+            if key not in self.portfolio:
+                repo.remove_bucket(key)
+        repo.restore(self.portfolio)
+        repo.persist()
 
     # -- cache (in-memory + flush) --
     @property
@@ -356,6 +463,19 @@ class RuntimeContext:
         self.cache_loaded = True
         self.cache_dirty = False
         return self.cache
+
+    def flush_isin_registry(self) -> None:
+        """Persist staged registry writes (probe hits, bucket mappings).
+
+        No-op when the registry was never touched: without a built repo
+        there is nothing staged, so no file is created. A built-but-clean
+        repo is also a no-op — the backend's ``persist()`` skips clean
+        state, keeping this safe for every backend (save / commit /
+        no-op).
+        """
+        if self._isin_repo is None:
+            return
+        self._isin_repo.persist()
 
     def mark_cache_dirty(self) -> None:
         self.cache_dirty = True

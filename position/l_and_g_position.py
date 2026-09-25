@@ -192,17 +192,13 @@ def landg_product_url_exists(isin: str) -> bool:
                 html_text = raw.decode("utf-8", errors="replace")
                 exists = bool(LAndGPosition._countries_from_portfolio_html(html_text))
     except urllib.error.HTTPError as e:
-        exists = False
         logger.info("L&G product check for %s returned HTTP %s", isin, e.code)
     except urllib.error.URLError as e:
-        exists = False
         logger.warning("L&G product check failed for %s (%s)", isin, e)
     except OSError as e:
         # Read timeouts, resets, DNS/SSL failures: bail to cached data.
-        exists = False
         logger.warning("L&G product check connection failed for %s (%s)", isin, e)
     except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
-        exists = False
         logger.warning("L&G product parse failed for %s (%s)", isin, e)
     _LANDG_PRODUCT_EXISTS[isin] = exists
     return exists
@@ -210,8 +206,6 @@ def landg_product_url_exists(isin: str) -> bool:
 
 class LAndGPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from the L&G fund-centre."""
-
-    ISINS: frozenset[str] = frozenset({"IE000Z9UVQ99", "IE00BFXR5W90"})
 
     def __init__(
         self,
