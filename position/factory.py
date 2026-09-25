@@ -171,64 +171,68 @@ def factory(
     position: JustETFPosition | YFinancePosition
 
     if (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in XtrackersPosition.ISINS
         and dws_product_url_exists(isin)
     ):
         logger.info("Factory: using XtrackersPosition for %s", isin)
         position = XtrackersPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in _ISHARES_PRODUCT_IDS
         and ishares_product_url_exists(isin)
     ):
         logger.info("Factory: using BlackRockPosition for %s", isin)
         position = BlackRockPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in AmundiPosition.ISINS
         and amundi_product_url_exists(isin)
     ):
         logger.info("Factory: using AmundiPosition for %s", isin)
         position = AmundiPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in StateStreetPosition.ISINS
         and ssga_product_url_exists(isin)
     ):
         logger.info("Factory: using StateStreetPosition for %s", isin)
         position = StateStreetPosition(isin, **ctor_kwargs)
-    elif fetch_geosplit and isin in UBSPosition.ISINS:
+    elif (fetch_geosplit or fetch_sectorsplit) and isin in UBSPosition.ISINS:
         logger.info("Factory: using UBSPosition for %s", isin)
         position = UBSPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in InvescoPosition.ISINS
         and invesco_product_url_exists(isin)
     ):
         logger.info("Factory: using InvescoPosition for %s", isin)
         position = InvescoPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and isin in LAndGPosition.ISINS
         and landg_product_url_exists(isin)
     ):
         logger.info("Factory: using LAndGPosition for %s", isin)
         position = LAndGPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and _name_looks_like_invesco(name)
         and invesco_product_url_exists(isin)
     ):
         logger.info("Factory: using InvescoPosition for %s (dng-api)", isin)
         position = InvescoPosition(isin, **ctor_kwargs)
-    elif fetch_geosplit and _name_looks_like_ubs(name) and ubs_product_url_exists(isin):
+    elif (
+        (fetch_geosplit or fetch_sectorsplit)
+        and _name_looks_like_ubs(name)
+        and ubs_product_url_exists(isin)
+    ):
         # Allowlist is the no-probe path. Other UBS-named ETFs still have HA4
         # constituents when etfinstidfromisin returns an instId.
         logger.info("Factory: using UBSPosition for %s (HA4 instId)", isin)
         position = UBSPosition(isin, **ctor_kwargs)
     elif (
-        fetch_geosplit
+        (fetch_geosplit or fetch_sectorsplit)
         and _name_looks_like_landg(name)
         and landg_product_url_exists(isin)
     ):
