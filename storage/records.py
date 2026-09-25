@@ -14,8 +14,9 @@ in-memory) can persist them without knowing their fields:
   dicts. Note ``to_dict()`` returns a *list*, not a dict — backends
   must accept any JSON-encodable payload (JSON object values, JSONB
   columns, ...).
-* :class:`IsinRecord` — one issuer allow-list entry consolidating the
-  ``ISINS`` frozensets / product-id maps in ``position/*_position.py``.
+* :class:`IsinRecord` — one registry row: which issuer handler owns an
+  ISIN, which portfolio bucket it lives in, plus an optional vendor
+  product ref (iShares product id / SSGA slug).
 
 Nothing here touches I/O; loading leniency (skip bad rows) is a
 backend concern, while these classes are strict (bad keys/values raise).
@@ -33,7 +34,6 @@ __all__ = [
     "CacheEntry",
     "AssetBucket",
     "IsinRecord",
-    "DEFAULT_ISIN_RECORDS",
 ]
 
 
@@ -290,15 +290,34 @@ class AssetBucket(DictRow):
 
 
 class IsinRecord(DictRow):
-    """One allow-list entry: which issuer handler owns an ISIN (+ vendor ref)."""
+    """One registry row: issuer handler, portfolio bucket, vendor ref.
+
+    The key is the ISIN itself (non-negotiable: future primary key).
+    ``issuer`` is a slug from :attr:`ISSUERS` (``justetf``/``yfinance``
+    mark decided-generic rows); ``bucket`` is a portfolio bucket key;
+    ``product_ref`` is the iShares product id / SSGA slug where one
+    exists. All three fields are nullable.
+    """
 
     ISSUER = "issuer"
+    BUCKET = "bucket"
     PRODUCT_REF = "product_ref"
-    ALLOWED_KEYS: frozenset[str] = frozenset({ISSUER, PRODUCT_REF})
+    ALLOWED_KEYS: frozenset[str] = frozenset({ISSUER, BUCKET, PRODUCT_REF})
 
-    #: Canonical issuer slugs (module of origin in ``position/``).
+    #: Canonical issuer slugs (module of origin in ``position/``),
+    #: plus the generic fallbacks.
     ISSUERS: frozenset[str] = frozenset(
-        {"amundi", "ishares", "ssga", "dws", "ubs", "invesco", "landg"}
+        {
+            "amundi",
+            "ishares",
+            "ssga",
+            "dws",
+            "ubs",
+            "invesco",
+            "landg",
+            "justetf",
+            "yfinance",
+        }
     )
 
     def __init__(
@@ -307,74 +326,50 @@ class IsinRecord(DictRow):
         data: dict[str, Any] | None = None,
         *,
         issuer: str | None = None,
+        bucket: str | None = None,
         product_ref: str | None = None,
     ) -> None:
         payload: dict[str, Any] = dict(data) if data else {}
         if issuer is not None:
             payload[self.ISSUER] = issuer
+        if bucket is not None:
+            payload[self.BUCKET] = bucket
         if product_ref is not None:
             payload[self.PRODUCT_REF] = product_ref
         super().__init__(key, payload)
 
     def validate(self) -> None:
         super().validate()
+        if not str(self._key).strip():
+            raise ValueError("registry row key (ISIN) must be a non-empty string")
         issuer = self._data.get(self.ISSUER)
-        if not isinstance(issuer, str) or issuer not in self.ISSUERS:
+        if issuer is not None and (
+            not isinstance(issuer, str) or issuer not in self.ISSUERS
+        ):
             raise ValueError(
                 f"row {self._key!r} field 'issuer' must be one of "
-                f"{sorted(self.ISSUERS)}, got {issuer!r}"
+                f"{sorted(self.ISSUERS)} or null, got {issuer!r}"
+            )
+        bucket = self._data.get(self.BUCKET)
+        if bucket is not None and not isinstance(bucket, str):
+            raise TypeError(
+                f"row {self._key!r} field 'bucket' must be a string or null"
             )
         ref = self._data.get(self.PRODUCT_REF)
         if ref is not None and not isinstance(ref, str):
             raise TypeError(f"row {self._key!r} field 'product_ref' must be a string or null")
 
     @property
-    def issuer(self) -> str:
-        return str(self._data[self.ISSUER])
+    def issuer(self) -> str | None:
+        issuer = self._data.get(self.ISSUER)
+        return None if issuer is None else str(issuer)
+
+    @property
+    def bucket(self) -> str | None:
+        bucket = self._data.get(self.BUCKET)
+        return None if bucket is None else str(bucket)
 
     @property
     def product_ref(self) -> str | None:
         ref = self._data.get(self.PRODUCT_REF)
         return None if ref is None else str(ref)
-
-
-#: Snapshot of the ``position/*_position.py`` allow-lists, as
-#: ``{ISIN: {"issuer": ..., "product_ref": ...}}`` kwargs for
-#: :class:`IsinRecord`. ``product_ref`` is the iShares product id / SSGA
-#: slug where one exists, else ``None``. Kept in sync manually until the
-#: factory is wired to the registry (pinned follow-up).
-DEFAULT_ISIN_RECORDS: dict[str, dict[str, Any]] = {
-    # AmundiPosition.ISINS
-    "IE000BI8OT95": {"issuer": "amundi", "product_ref": None},
-    "LU2233156582": {"issuer": "amundi", "product_ref": None},
-    "LU2300294316": {"issuer": "amundi", "product_ref": None},
-    # _ISHARES_PRODUCT_IDS (BlackRock allow-list)
-    "IE00BKM4GZ66": {"issuer": "ishares", "product_ref": "264659"},
-    "IE00BD1F4M44": {"issuer": "ishares", "product_ref": "285207"},
-    "IE00BHZPJ239": {"issuer": "ishares", "product_ref": "307659"},
-    "IE00BF4RFH31": {"issuer": "ishares", "product_ref": "296576"},
-    "IE00BFNM3D14": {"issuer": "ishares", "product_ref": "305363"},
-    "IE00BL6K8C82": {"issuer": "ishares", "product_ref": "318925"},
-    "IE00BFNM3L97": {"issuer": "ishares", "product_ref": "305412"},
-    "IE00BFNM3P36": {"issuer": "ishares", "product_ref": "305397"},
-    "IE000APK27S2": {"issuer": "ishares", "product_ref": "320169"},
-    "IE00BKPT2S34": {"issuer": "ishares", "product_ref": "313317"},
-    # _SSGA_PRODUCT_SLUGS (StateStreet allow-list)
-    "IE00B4YBJ215": {
-        "issuer": "ssga",
-        "product_ref": "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
-    },
-    # XtrackersPosition.ISINS
-    "IE00BTJRMP35": {"issuer": "dws", "product_ref": None},
-    "IE0006WW1TQ4": {"issuer": "dws", "product_ref": None},
-    "IE00BLNMYC90": {"issuer": "dws", "product_ref": None},
-    # UBSPosition.ISINS
-    "IE00BD4TXV59": {"issuer": "ubs", "product_ref": None},
-    "IE00BKSCBX74": {"issuer": "ubs", "product_ref": None},
-    # InvescoPosition.ISINS
-    "IE00BKS7L097": {"issuer": "invesco", "product_ref": None},
-    "IE000PJL7R74": {"issuer": "invesco", "product_ref": None},
-    # LAndGPosition.ISINS
-    "IE000Z9UVQ99": {"issuer": "landg", "product_ref": None},
-    "IE00BFXR5W90": {"issuer": "landg", "product_ref": None},
-}

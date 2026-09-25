@@ -228,13 +228,6 @@ def ubs_product_url_exists(isin: str) -> bool:
 class UBSPosition(JustETFPosition):
     """JustETF quotes with country weights from UBS HA4 constituents JSON."""
 
-    ISINS: frozenset[str] = frozenset(
-        {
-            "IE00BD4TXV59",
-            "IE00BKSCBX74",
-        }
-    )
-
     @staticmethod
     def _ccy_name_candidates(record: object) -> list[str]:
         names: list[str] = []

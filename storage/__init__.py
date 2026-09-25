@@ -14,7 +14,6 @@ from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
 from storage.postgres_storage import PostgresStorage
 from storage.records import (
-    DEFAULT_ISIN_RECORDS,
     AssetBucket,
     CacheEntry,
     DictRow,
@@ -30,7 +29,6 @@ __all__ = [
     "CacheEntry",
     "AssetBucket",
     "IsinRecord",
-    "DEFAULT_ISIN_RECORDS",
     "JsonStorage",
     "MemoryStorage",
     "PostgresStorage",

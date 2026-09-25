@@ -19,12 +19,30 @@ import logging
 from typing import Any
 
 from storage.memory_storage import MemoryStorage
-from storage.records import DEFAULT_ISIN_RECORDS, AssetBucket, CacheEntry, IsinRecord
+from storage.records import AssetBucket, CacheEntry, IsinRecord
 from storage.storage import Storage
 
 __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
 
 logger = logging.getLogger(__name__)
+
+
+def _load_seed_records() -> dict[str, dict[str, Any]]:
+    """Seed rows shipped with the package (one-time migration of the old maps).
+
+    Raises if the seed file is missing — failing fast beats silently
+    running with an empty registry (iShares/SSGA refs are undiscoverable
+    by probing, so they would be lost for good).
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "seed_isin.json"
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        raise ValueError(f"registry seed {path} root must be a JSON object")
+    return {str(k): dict(v) for k, v in raw.items()}
 
 
 class CacheRepository:
@@ -216,7 +234,13 @@ class AssetRepository:
 
 
 class IsinRegistry:
-    """Issuer allow-list registry over any backend (in-memory by default)."""
+    """ISIN registry over any backend (in-memory by default).
+
+    Each row maps an ISIN to its issuer handler, portfolio bucket and an
+    optional vendor product ref. ``None`` issuer means "unknown, probe on
+    the next geosplit run"; ``justetf``/``yfinance`` mean "decided generic,
+    never re-probe".
+    """
 
     def __init__(self, backend: Storage[IsinRecord]) -> None:
         self._backend = backend
@@ -227,11 +251,10 @@ class IsinRegistry:
 
     @classmethod
     def seeded(cls, backend: Storage[IsinRecord] | None = None) -> IsinRegistry:
-        """Registry pre-populated from :data:`DEFAULT_ISIN_RECORDS`."""
-        store = backend if backend is not None else MemoryStorage(IsinRecord)
-        for isin, spec in DEFAULT_ISIN_RECORDS.items():
-            store.put(IsinRecord(isin, dict(spec)))
-        return cls(store)
+        """Registry pre-populated from the shipped seed file."""
+        registry = cls(backend if backend is not None else MemoryStorage(IsinRecord))
+        registry.open()
+        return registry
 
     def get(self, isin: str) -> IsinRecord | None:
         return self._backend.get(isin)
@@ -239,22 +262,91 @@ class IsinRegistry:
     def __contains__(self, isin: object) -> bool:
         return isin in self._backend
 
-    def register(
-        self, isin: str, issuer: str, product_ref: str | None = None
-    ) -> IsinRecord:
-        """Add or replace one allow-list entry."""
-        record = IsinRecord(str(isin), {"issuer": issuer, "product_ref": product_ref})
-        self._backend.put(record)
-        return record
+    def get_issuer_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.issuer
 
-    def belongs_to(self, isin: str, issuer: str) -> bool:
-        record = self._backend.get(isin)
-        return record is not None and record.issuer == issuer
+    def get_bucket_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.bucket
 
-    def issuers_for(self, isin: str) -> frozenset[str]:
-        record = self._backend.get(isin)
-        return frozenset({record.issuer}) if record is not None else frozenset()
+    def get_product_ref_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        return None if record is None else record.product_ref
 
     def product_ref_for(self, isin: str) -> str | None:
-        record = self._backend.get(isin)
-        return None if record is None else record.product_ref
+        """Alias of :meth:`get_product_ref_for_isin` (kept for callers)."""
+        return self.get_product_ref_for_isin(isin)
+
+    def register_isin(
+        self,
+        isin: str,
+        *,
+        issuer: str | None = None,
+        bucket: str | None = None,
+    ) -> IsinRecord:
+        """Ensure a row exists, filling only fields that are still null.
+
+        Never overwrites a decided issuer — use :meth:`set_issuer_for_isin`
+        for explicit (e.g. probe-inferred) corrections.
+        """
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(key, {"issuer": issuer, "bucket": bucket})
+            self._backend.put(record)
+            return record
+        patch: dict[str, Any] = {}
+        if existing.issuer is None and issuer is not None:
+            patch[IsinRecord.ISSUER] = issuer
+        if existing.bucket is None and bucket is not None:
+            patch[IsinRecord.BUCKET] = bucket
+        if patch:
+            existing.merge(patch)
+            self._backend.put(existing)
+        return existing
+
+    def set_issuer_for_isin(self, isin: str, issuer: str) -> IsinRecord:
+        """Overwrite the issuer for ``isin`` (probe-inferred corrections)."""
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(key, {"issuer": issuer})
+            self._backend.put(record)
+            return record
+        if existing.issuer != issuer:
+            existing.merge({IsinRecord.ISSUER: issuer})
+            self._backend.put(existing)
+        return existing
+
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> IsinRegistry:
+        """Prepare the backend, seeding shipped rows wherever missing."""
+        self._backend.open()
+        for isin, spec in _load_seed_records().items():
+            key = str(isin)
+            existing = self._backend.get(key)
+            if existing is None:
+                self._backend.put(IsinRecord(key, dict(spec)))
+                continue
+            fill = {
+                k: v
+                for k, v in spec.items()
+                if v is not None and existing.to_dict().get(k) is None
+            }
+            if fill:
+                existing.merge(fill)
+                self._backend.put(existing)
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{isin: row}`` (bulk-only, not hot-path)."""
+        return self._backend.snapshot()
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()

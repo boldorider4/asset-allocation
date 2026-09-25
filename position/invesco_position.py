@@ -178,13 +178,6 @@ def invesco_product_url_exists(isin: str) -> bool:
 class InvescoPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from Invesco index or holdings JSON."""
 
-    ISINS: frozenset[str] = frozenset(
-        {
-            "IE00BKS7L097",
-            "IE000PJL7R74",
-        }
-    )
-
     def __init__(
         self,
         isin: str,

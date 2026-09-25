@@ -72,14 +72,6 @@ def dws_product_url_exists(isin: str) -> bool:
 class XtrackersPosition(JustETFPosition):
     """JustETF quotes with country and sector weights from the DWS Xtrackers holdings API."""
 
-    ISINS: frozenset[str] = frozenset(
-        {
-            "IE00BTJRMP35",
-            "IE0006WW1TQ4",
-            "IE00BLNMYC90",
-        }
-    )
-
     _DWS_API_HEADERS = {
         **JustETFPosition._HEADERS,
         "Accept": "application/json",

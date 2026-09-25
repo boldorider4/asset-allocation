@@ -35,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.ini"
 DEFAULT_ASSETS_PATH = REPO_ROOT / "assets.json"
 DEFAULT_CACHE_PATH = REPO_ROOT / "cache.json"
+DEFAULT_ISIN_PATH = REPO_ROOT / "isin.json"
 
 PositionSource = Literal["justetf", "yfinance"]
 PlotterKind = Literal["web", "pie-chart"]
@@ -80,6 +81,7 @@ class AppConfig:
     plotter: PlotterKind = "web"
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
     cache_file: Path = field(default_factory=lambda: DEFAULT_CACHE_PATH)
+    isin_file: Path = field(default_factory=lambda: DEFAULT_ISIN_PATH)
     server: ServerConfig = field(
         default_factory=lambda: ServerConfig(
             port=8765,
@@ -154,6 +156,7 @@ class AppConfig:
             "log_level": "INFO",
             "assets_file": DEFAULT_ASSETS_PATH,
             "cache_file": DEFAULT_CACHE_PATH,
+            "isin_file": DEFAULT_ISIN_PATH,
         }
         try:
             cfg_path, parser = cls._ini_parser(path)
@@ -183,6 +186,11 @@ class AppConfig:
             cfg_path,
             parser.get("update", "cache_file", fallback=None),
             DEFAULT_CACHE_PATH,
+        )
+        values["isin_file"] = cls._resolve_ini_path(
+            cfg_path,
+            parser.get("update", "isin_file", fallback=None),
+            DEFAULT_ISIN_PATH,
         )
         return values
 
@@ -267,6 +275,7 @@ class AppConfig:
             plotter=plotter,  # type: ignore[arg-type]
             assets_file=Path(assets) if assets else ini_update["assets_file"],
             cache_file=Path(cache) if cache else ini_update["cache_file"],
+            isin_file=ini_update["isin_file"],
             server=server,
             plotter_config=ini_plotter,
             log_level=log_level,
@@ -308,6 +317,10 @@ class RuntimeContext:
     # in-memory model mutated by scrapers and persist helpers; the
     # repository owns file persistence only.
     _asset_repo: Any = field(default=None, init=False, repr=False)
+    # Lazily built ``IsinRegistry`` over a ``JsonStorage`` backend for
+    # ``config.isin_file``. Opened eagerly at build so the shipped seed
+    # rows exist before the first factory lookup.
+    _isin_repo: Any = field(default=None, init=False, repr=False)
 
     # -- portfolio --
     @property
@@ -325,6 +338,25 @@ class RuntimeContext:
                 JsonStorage(self.config.assets_file, AssetBucket)
             )
         return self._asset_repo
+
+    @property
+    def isin_registry(self):  # type: ignore[no-untyped-def]
+        """ISIN registry: ``IsinRegistry`` over ``JsonStorage``.
+
+        Lazily built against ``config.isin_file`` and opened eagerly so
+        seeded rows exist before the first lookup. The factory consults
+        this on every ``Position`` build; ``update.main`` persists it at
+        end of run.
+        """
+        from storage.json_storage import JsonStorage
+        from storage.records import IsinRecord
+        from storage.repositories import IsinRegistry
+
+        if self._isin_repo is None:
+            repo = IsinRegistry(JsonStorage(self.config.isin_file, IsinRecord))
+            repo.open()
+            self._isin_repo = repo
+        return self._isin_repo
 
     @staticmethod
     def _validate_portfolio_shape(data: Any) -> None:
