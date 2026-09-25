@@ -54,6 +54,9 @@ def _no_fetch(cls=JustETFPosition):
 class TestRegistryDbHit(unittest.TestCase):
     def test_db_hit_constructs_without_probes(self) -> None:
         ctx = _ctx()
+        ctx.isin_registry.register_isin(
+            "IE00BTJRMP35", issuer="dws", bucket="equity_portfolio"
+        )
         with (
             patch("position.factory.dws_product_url_exists") as dws,
             patch("position.factory.ishares_product_url_exists") as ishares,
@@ -125,6 +128,9 @@ class TestProbePhase(unittest.TestCase):
         # vendor failures must not downgrade decided rows.
         ctx = _ctx()
         ctx.config.fetch_sectorsplit = True
+        ctx.isin_registry.register_isin(
+            "IE00BKM4GZ66", issuer="ishares", bucket="equity_portfolio"
+        )
         with (
             patch("position.factory._probe_issuer_for_isin", return_value=None),
             patch.object(JustETFPosition, "_fetch_countries_with_retries", return_value=[]),
@@ -145,6 +151,9 @@ class TestProbePhase(unittest.TestCase):
                 raise RuntimeError("boom")
 
         ctx = _ctx()
+        ctx.isin_registry.register_isin(
+            "IE00BKM4GZ66", issuer="ishares", bucket="equity_portfolio"
+        )
         with (
             patch("position.factory._probe_issuer_for_isin", return_value=None),
             patch.dict(factory_mod._ISSUER_POSITION, {"ishares": Boom}),

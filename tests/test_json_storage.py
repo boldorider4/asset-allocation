@@ -411,28 +411,48 @@ class TestAssetRepositoryComposition(unittest.TestCase):
             )
 
 
+def _empty_registry() -> IsinRegistry:
+    return IsinRegistry(MemoryStorage(IsinRecord))
+
+
 class TestIsinRegistryComposition(unittest.TestCase):
-    def test_seeded_registry_known_rows(self) -> None:
-        registry = IsinRegistry.seeded()
+    def test_explicit_rows_round_trip(self) -> None:
+        registry = _empty_registry()
+        registry.backend.put(
+            IsinRecord(
+                "IE00BKM4GZ66",
+                {
+                    "issuer": "ishares",
+                    "bucket": "equity_portfolio",
+                    "product_ref": "264659",
+                },
+            )
+        )
         self.assertEqual(registry.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
         self.assertEqual(registry.get_product_ref_for_isin("IE00BKM4GZ66"), "264659")
-        self.assertEqual(registry.get_issuer_for_isin("IE000BI8OT95"), "amundi")
         self.assertEqual(
-            registry.get_bucket_for_isin("DE000EWG2LD7"), "commodity_portfolio"
-        )
-        self.assertEqual(
-            registry.get_bucket_for_isin("LU2233156582"),
-            "fixed_maturity_bond_portfolio",
+            registry.get_bucket_for_isin("IE00BKM4GZ66"), "equity_portfolio"
         )
         self.assertIsNone(registry.get_issuer_for_isin("unknown"))
         self.assertIsNone(registry.get_bucket_for_isin("unknown"))
         self.assertIsNone(registry.get_product_ref_for_isin("unknown"))
         self.assertIn("IE00BKM4GZ66", registry)
 
-    def test_seeded_registry_over_json_backend(self) -> None:
+    def test_registry_over_json_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "registry.json"
-            registry = IsinRegistry.seeded(JsonStorage(path, IsinRecord))
+            registry = IsinRegistry(JsonStorage(path, IsinRecord))
+            registry.open()
+            registry.backend.put(
+                IsinRecord(
+                    "IE00BKM4GZ66",
+                    {
+                        "issuer": "ishares",
+                        "bucket": "equity_portfolio",
+                        "product_ref": "264659",
+                    },
+                )
+            )
             self.assertEqual(registry.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
             self.assertEqual(registry.get_product_ref_for_isin("IE00BKM4GZ66"), "264659")
             registry.persist()
@@ -440,11 +460,11 @@ class TestIsinRegistryComposition(unittest.TestCase):
             fresh.open()
             self.assertEqual(fresh.get_issuer_for_isin("IE00BKM4GZ66"), "ishares")
             self.assertEqual(
-                fresh.get_bucket_for_isin("DE000EWG2LD7"), "commodity_portfolio"
+                fresh.get_product_ref_for_isin("IE00BKM4GZ66"), "264659"
             )
 
     def test_register_isin_fills_only_missing(self) -> None:
-        registry = IsinRegistry.seeded()
+        registry = _empty_registry()
         record = registry.register_isin("IE00NEWX01", issuer="dws", bucket="equity_portfolio")
         self.assertEqual(record.issuer, "dws")
         # Existing decided values are never overwritten...
@@ -460,7 +480,7 @@ class TestIsinRegistryComposition(unittest.TestCase):
             registry.register_isin("IE00BADX01", issuer="nope")
 
     def test_set_issuer_overwrites(self) -> None:
-        registry = IsinRegistry.seeded()
+        registry = _empty_registry()
         registry.set_issuer_for_isin("IE00NEWX03", "dws")
         self.assertEqual(registry.get_issuer_for_isin("IE00NEWX03"), "dws")
         registry.set_issuer_for_isin("IE00NEWX03", "ubs")

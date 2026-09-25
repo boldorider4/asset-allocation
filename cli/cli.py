@@ -270,6 +270,13 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         help="Path to the cache JSON file (default: cache.json next to the package).",
     )
     update.add_argument(
+        "--isin-registry-file",
+        type=Path,
+        dest="isin_file",
+        default=None,
+        help="Path to the ISIN registry JSON file (default: from config.ini).",
+    )
+    update.add_argument(
         "--position-source",
         choices=("justetf", "yfinance"),
         default="justetf",

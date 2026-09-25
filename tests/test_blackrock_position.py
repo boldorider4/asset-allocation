@@ -218,6 +218,12 @@ class TestBlackRockCountryFetch(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        self.ctx.isin_registry.register_isin(
+            _ISIN,
+            issuer="ishares",
+            bucket="equity_portfolio",
+            product_ref="264659",
+        )
 
     def test_aggregates_holdings_csv(self) -> None:
         with patch("urllib.request.urlopen", return_value=_csv_response()):
@@ -297,8 +303,7 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_404_falls_back_to_justetf(self) -> None:
-        # Seeded rows take the DB path, so an unknown issuer can only be
-        # exercised with an unseeded ISIN and hermetic probes.
+        # Unknown issuer with hermetic probes: generic fallback.
         with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
                 pos = self._factory(isin="XX00040401")
@@ -306,6 +311,11 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, BlackRockPosition)
 
     def test_amundi_does_not_use_blackrock(self) -> None:
+        # Registered amundi row takes the DB path; the ishares probe is
+        # never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE000BI8OT95", issuer="amundi", bucket="equity_portfolio"
+        )
         with patch("position.factory.ishares_product_url_exists") as exists:
             with patch("position.factory.amundi_product_url_exists", return_value=True):
                 with self._no_country_scrape():

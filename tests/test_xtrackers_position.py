@@ -307,8 +307,7 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_404_falls_back_to_justetf(self) -> None:
-        # Seeded rows take the DB path, so an unknown issuer can only be
-        # exercised with an unseeded ISIN and hermetic probes.
+        # Unknown issuer with hermetic probes: generic fallback.
         with patch("position.factory._probe_issuer_for_isin", return_value=None):
             with self._no_country_scrape():
                 pos = self._factory(isin="XX00040403")
@@ -316,6 +315,11 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, XtrackersPosition)
 
     def test_amundi_does_not_use_xtrackers(self) -> None:
+        # Registered amundi row takes the DB path; the dws probe is
+        # never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE000BI8OT95", issuer="amundi", bucket="equity_portfolio"
+        )
         with patch("position.factory.dws_product_url_exists") as exists:
             with patch("position.factory.amundi_product_url_exists", return_value=True):
                 with self._no_country_scrape():

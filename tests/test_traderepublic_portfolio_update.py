@@ -38,6 +38,12 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        self.ctx.isin_registry.register_isin(
+            "DE000EWG2LD7", bucket=COMMODITY_PORTFOLIO
+        )
+        self.ctx.isin_registry.register_isin(
+            "LU2233156582", issuer="amundi", bucket=FIXED_MATURITY_BOND_PORTFOLIO
+        )
         self.ctx.portfolio.update(
             {
                 EQUITY_PORTFOLIO: [

@@ -312,6 +312,10 @@ class TestUbsFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, UBSPosition)
 
     def test_allowlisted_small_cap_isin_uses_ubs(self) -> None:
+        # Registered ubs row takes the DB path; the probe is never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE00BKSCBX74", issuer="ubs", bucket="equity_portfolio"
+        )
         with patch("position.factory.ubs_product_url_exists") as exists:
             with self._no_country_scrape():
                 pos = self._factory(
@@ -363,6 +367,11 @@ class TestUbsFactoryRouting(unittest.TestCase):
         self.assertNotIsInstance(pos, UBSPosition)
 
     def test_invesco_allowlist_skips_ubs_ha4_probe(self) -> None:
+        # Registered invesco row takes the DB path; the ubs probe is
+        # never consulted.
+        self.ctx.isin_registry.register_isin(
+            "IE00BKS7L097", issuer="invesco", bucket="equity_portfolio"
+        )
         with patch("position.factory.ubs_product_url_exists") as exists:
             with patch("position.factory.invesco_product_url_exists", return_value=True):
                 with self._no_country_scrape():

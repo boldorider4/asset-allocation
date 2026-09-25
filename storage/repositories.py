@@ -18,31 +18,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from storage.memory_storage import MemoryStorage
 from storage.records import AssetBucket, CacheEntry, IsinRecord
 from storage.storage import Storage
 
 __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
 
 logger = logging.getLogger(__name__)
-
-
-def _load_seed_records() -> dict[str, dict[str, Any]]:
-    """Seed rows shipped with the package (one-time migration of the old maps).
-
-    Raises if the seed file is missing — failing fast beats silently
-    running with an empty registry (iShares/SSGA refs are undiscoverable
-    by probing, so they would be lost for good).
-    """
-    import json
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parent / "seed_isin.json"
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
-    if not isinstance(raw, dict):
-        raise ValueError(f"registry seed {path} root must be a JSON object")
-    return {str(k): dict(v) for k, v in raw.items()}
 
 
 class CacheRepository:
@@ -249,13 +230,6 @@ class IsinRegistry:
     def backend(self) -> Storage[IsinRecord]:
         return self._backend
 
-    @classmethod
-    def seeded(cls, backend: Storage[IsinRecord] | None = None) -> IsinRegistry:
-        """Registry pre-populated from the shipped seed file."""
-        registry = cls(backend if backend is not None else MemoryStorage(IsinRecord))
-        registry.open()
-        return registry
-
     def get(self, isin: str) -> IsinRecord | None:
         return self._backend.get(isin)
 
@@ -284,16 +258,19 @@ class IsinRegistry:
         *,
         issuer: str | None = None,
         bucket: str | None = None,
+        product_ref: str | None = None,
     ) -> IsinRecord:
         """Ensure a row exists, filling only fields that are still null.
 
-        Never overwrites a decided issuer — use :meth:`set_issuer_for_isin`
+        Never overwrites decided fields — use :meth:`set_issuer_for_isin`
         for explicit (e.g. probe-inferred) corrections.
         """
         key = str(isin)
         existing = self._backend.get(key)
         if existing is None:
-            record = IsinRecord(key, {"issuer": issuer, "bucket": bucket})
+            record = IsinRecord(
+                key, {"issuer": issuer, "bucket": bucket, "product_ref": product_ref}
+            )
             self._backend.put(record)
             return record
         patch: dict[str, Any] = {}
@@ -301,6 +278,8 @@ class IsinRegistry:
             patch[IsinRecord.ISSUER] = issuer
         if existing.bucket is None and bucket is not None:
             patch[IsinRecord.BUCKET] = bucket
+        if existing.product_ref is None and product_ref is not None:
+            patch[IsinRecord.PRODUCT_REF] = product_ref
         if patch:
             existing.merge(patch)
             self._backend.put(existing)
@@ -321,22 +300,8 @@ class IsinRegistry:
 
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> IsinRegistry:
-        """Prepare the backend, seeding shipped rows wherever missing."""
+        """Open the underlying ``isin.json`` backend (read-only use)."""
         self._backend.open()
-        for isin, spec in _load_seed_records().items():
-            key = str(isin)
-            existing = self._backend.get(key)
-            if existing is None:
-                self._backend.put(IsinRecord(key, dict(spec)))
-                continue
-            fill = {
-                k: v
-                for k, v in spec.items()
-                if v is not None and existing.to_dict().get(k) is None
-            }
-            if fill:
-                existing.merge(fill)
-                self._backend.put(existing)
         return self
 
     def snapshot(self) -> dict[str, Any]:

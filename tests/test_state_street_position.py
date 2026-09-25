@@ -244,6 +244,12 @@ class TestSsgaCountryFetch(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        self.ctx.isin_registry.register_isin(
+            _ISIN,
+            issuer="ssga",
+            bucket="equity_portfolio",
+            product_ref="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        )
 
     def test_parses_geo_html(self) -> None:
         with patch(

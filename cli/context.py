@@ -262,6 +262,7 @@ class AppConfig:
             raise ValueError(f"unknown log level {log_level!r}")
         assets = getattr(args, "assets_file", None)
         cache = getattr(args, "cache_file", None)
+        isin = getattr(args, "isin_file", None)
         return cls(
             fetch_prices=bool(pick(getattr(args, "fetch_prices", None), ini_update["fetch_prices"])),
             fetch_geosplit=bool(pick(getattr(args, "fetch_geosplit", None), ini_update["fetch_geosplit"])),
@@ -275,7 +276,7 @@ class AppConfig:
             plotter=plotter,  # type: ignore[arg-type]
             assets_file=Path(assets) if assets else ini_update["assets_file"],
             cache_file=Path(cache) if cache else ini_update["cache_file"],
-            isin_file=ini_update["isin_file"],
+            isin_file=Path(isin) if isin else ini_update["isin_file"],
             server=server,
             plotter_config=ini_plotter,
             log_level=log_level,
@@ -343,10 +344,8 @@ class RuntimeContext:
     def isin_registry(self):  # type: ignore[no-untyped-def]
         """ISIN registry: ``IsinRegistry`` over ``JsonStorage``.
 
-        Lazily built against ``config.isin_file`` and opened eagerly so
-        seeded rows exist before the first lookup. The factory consults
-        this on every ``Position`` build; ``update.main`` persists it at
-        end of run.
+        Lazily built against ``config.isin_file`` and opened eagerly.
+        Read-only use: the registry file is never written by the app.
         """
         from storage.json_storage import JsonStorage
         from storage.records import IsinRecord
