@@ -94,7 +94,6 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
         fetch_scalable=True,
         fetch_geosplit=geosplit,
         fetch_sectorsplit=sectorsplit,
-        plot_clear=True,
         assets_file=assets,
         cache_file=cache,
         isin_file=isin,

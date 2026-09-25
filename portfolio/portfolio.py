@@ -190,11 +190,6 @@ class Portfolio:
                 consolidated[label] = consolidated.get(label, 0.0) + share
         return _normalize_sector_fractions(consolidated)
 
-    def _live_total(self, *, incognito: bool) -> float:
-        """Display total: stored clear value, scaled for incognito passes."""
-        scale = self._ctx.value_factor if incognito else 1.0
-        return self._value * scale
-
     @staticmethod
     def _render_closing_title(template: str | None, total: float) -> str | None:
         """Format a ``{tot_value}`` template (two decimals), passing other strings through."""
@@ -212,14 +207,13 @@ class Portfolio:
         title: str | None = None,
         closing_title: str | None = None,
         *,
-        incognito: bool = False,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
         if self._geosplit_visualizer is None:
             logger.warning("No geosplit visualizer set for portfolio %r; skipping plot", self._name)
             return
-        total = self._live_total(incognito=incognito)
+        total = self._value
         if title is not None:
             self._geosplit_visualizer.title = title
         if closing_title is not None:
@@ -247,7 +241,6 @@ class Portfolio:
         title: str | None = None,
         closing_title: str | None = None,
         *,
-        incognito: bool = False,
         label_fontsize: float | None = None,
         autopct_fontsize: float | None = None,
     ) -> None:
@@ -257,7 +250,7 @@ class Portfolio:
                 self._name,
             )
             return
-        total = self._live_total(incognito=incognito)
+        total = self._value
         if title is not None:
             self._sector_visualizer.title = title
         if closing_title is not None:

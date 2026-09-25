@@ -61,8 +61,6 @@ class PlotterConfig:
     """Chart output layout (the write side, independent of the serve side)."""
 
     output_dir: Path | None = None
-    clear_dir: str = "clear"
-    incognito_dir: str = "incognito"
 
 
 @dataclass
@@ -75,8 +73,6 @@ class AppConfig:
     fetch_oskar: bool = False
     fetch_scalable: bool = False
     fetch_traderepublic: bool = False
-    plot_clear: bool = False
-    plot_incognito: bool = False
     position_source: PositionSource = "justetf"
     plotter: PlotterKind = "web"
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
@@ -151,8 +147,6 @@ class AppConfig:
             "fetch_prices": False,
             "fetch_geosplit": False,
             "fetch_sectorsplit": False,
-            "plot_clear": False,
-            "plot_incognito": False,
             "log_level": "INFO",
             "assets_file": DEFAULT_ASSETS_PATH,
             "cache_file": DEFAULT_CACHE_PATH,
@@ -169,8 +163,6 @@ class AppConfig:
             "fetch_prices",
             "fetch_geosplit",
             "fetch_sectorsplit",
-            "plot_clear",
-            "plot_incognito",
         ):
             values[flag] = parser.getboolean("update", flag, fallback=defaults[flag])
         log_level = parser.get("update", "log_level", fallback="INFO").strip() or "INFO"
@@ -206,16 +198,7 @@ class AppConfig:
             raise ValueError(f"unknown plotter {kind!r}")
         output_raw = parser.get("plotter", "output_dir", fallback=None)
         output_dir = cls._resolve_ini_path(cfg_path, output_raw, fallback=None)
-        clear_dir = (
-            parser.get("plotter", "clear_directory", fallback="clear").strip() or "clear"
-        )
-        incognito_dir = (
-            parser.get("plotter", "incognito_directory", fallback="incognito").strip()
-            or "incognito"
-        )
-        return kind, PlotterConfig(  # type: ignore[return-value]
-            output_dir=output_dir, clear_dir=clear_dir, incognito_dir=incognito_dir
-        )
+        return kind, PlotterConfig(output_dir=output_dir)  # type: ignore[return-value]
 
     @classmethod
     def from_ini(cls, path: Path | None = None) -> AppConfig:
@@ -270,8 +253,6 @@ class AppConfig:
             fetch_oskar=bool(getattr(args, "fetch_oskar", False)),
             fetch_scalable=bool(getattr(args, "fetch_scalable", False)),
             fetch_traderepublic=bool(getattr(args, "fetch_tr", False)),
-            plot_clear=bool(pick(getattr(args, "plot_clear", None), ini_update["plot_clear"])),
-            plot_incognito=bool(pick(getattr(args, "plot_incognito", None), ini_update["plot_incognito"])),
             position_source=source,  # type: ignore[arg-type]
             plotter=plotter,  # type: ignore[arg-type]
             assets_file=Path(assets) if assets else ini_update["assets_file"],
@@ -299,9 +280,6 @@ class RuntimeContext:
     oskar_etfs: dict[str, Any] = field(default_factory=dict)
     scalable_holdings: dict[str, Any] = field(default_factory=dict)
     traderepublic_holdings: dict[str, Any] = field(default_factory=dict)
-    # Display-only value scaler for incognito plots (computed once per run;
-    # stored clear values are never mutated).
-    value_factor: float = 1.0
     # Cooperative cancellation for endpoint-triggered runs. Checked per
     # position in ``position.factory``; ``None`` means non-cancellable.
     # Either a threading or a multiprocessing event (child-process runs).
@@ -501,25 +479,12 @@ class RuntimeContext:
         except KeyError as exc:
             raise ValueError(f"unknown plotter {self.config.plotter!r}") from exc
 
-    def output_data_dir(self, *, incognito: bool = False) -> Path:
+    def output_data_dir(self) -> Path:
         """Chart output dir: the configured plotter output dir (or the
-        legacy ``server.directory/data`` tree) plus the clear/incognito
-        subdir. The write side is independent of the serve side on
-        purpose: one instance may serve what another one wrote."""
+        legacy ``server.directory/data`` tree). The write side is
+        independent of the serve side on purpose: one instance may serve
+        what another one wrote."""
         base = self.config.plotter_config.output_dir
         if base is None:
             base = self.config.server.directory / self.config.server.data_dir
-        subdir = (
-            self.config.plotter_config.incognito_dir
-            if incognito
-            else self.config.plotter_config.clear_dir
-        )
-        return base / subdir
-
-    def configure_web_output(self, *, incognito: bool = False):  # type: ignore[no-untyped-def]
-        """Point WebChart file output at the pass's dir; reset seq."""
-        from visual.plot.web_chart import WebChart
-
-        WebChart.data_dir = self.output_data_dir(incognito=incognito)
-        WebChart._slug_counts = {}
-        WebChart._plot_seq = 0
+        return base

@@ -8,4 +8,4 @@ Type=oneshot
 Environment=ASALLOC_CONFIG=%h/.local/asalloc/config.ini
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/.local/asalloc
-ExecStart=%h/.local/bin/asalloc update --log-level ERROR --assets-file %h/.local/asalloc/assets.json --cache-file %h/.local/asalloc/cache.json --plot web --plot-clear --plot-incognito
+ExecStart=%h/.local/bin/asalloc update --log-level ERROR --assets-file %h/.local/asalloc/assets.json --cache-file %h/.local/asalloc/cache.json --plot web

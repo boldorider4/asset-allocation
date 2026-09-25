@@ -10,9 +10,10 @@
  * so refreshes mid-run keep showing it. A run observed finishing reloads
  * the page on success or reports the failure.
  *
- * The incognito button toggles the ?incognito=true gallery mode and shows
- * its pressed state while active; it also carries the mode onto the Edit
- * link so the round trip through Constituents holds the state.
+ * The incognito button is visual-only: it toggles ?incognito=true and
+ * shows its pressed state while active, and carries the mode onto the
+ * Edit link so the round trip through Constituents holds the state —
+ * but it never changes the charts rendered here.
  */
 (function () {
   "use strict";

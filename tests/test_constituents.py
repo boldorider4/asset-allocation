@@ -1667,8 +1667,8 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(config.fetch_oskar)
         self.assertFalse(config.fetch_scalable)
         self.assertFalse(config.fetch_traderepublic)
-        self.assertTrue(config.plot_clear)
-        self.assertFalse(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(seen["level"], logging.ERROR)
         self.assertEqual(logging.getLogger().level, before)
         self.assertEqual(str(config.assets_file), str(self.assets))
@@ -1695,7 +1695,7 @@ class TestConstituentsRoute(unittest.TestCase):
         ini.write_text(
             "[server]\nport = 1\n"
             "[update]\nfetch_geosplit = True\n"
-            "plot_incognito = True\n"
+            "fetch_sectorsplit = True\n"
             "[plotter]\noutput_dir = plots\n",
             encoding="utf-8",
         )
@@ -1714,16 +1714,17 @@ class TestConstituentsRoute(unittest.TestCase):
         config = seen["config"]
         # Lite POST carries no flags: ini values apply.
         self.assertTrue(config.fetch_geosplit)
+        self.assertTrue(config.fetch_sectorsplit)
         self.assertFalse(config.fetch_prices)
-        self.assertTrue(config.plot_clear)
-        self.assertTrue(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(
             config.plotter_config.output_dir, ini.parent / "plots"
         )
         # Explicit handler arguments still win over ini.
         self.assertEqual(str(config.assets_file), str(self.assets))
 
-    def test_post_update_fat_mode_sets_fetch_and_both_plots(self) -> None:
+    def test_post_update_fat_mode_sets_fetch(self) -> None:
         import logging
         from unittest.mock import patch
 
@@ -1749,8 +1750,8 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(config.fetch_oskar)
         self.assertFalse(config.fetch_scalable)
         self.assertFalse(config.fetch_traderepublic)
-        self.assertTrue(config.plot_clear)
-        self.assertTrue(config.plot_incognito)
+        self.assertFalse(hasattr(config, "plot_clear"))
+        self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(seen["level"], logging.ERROR)
         self.assertEqual(logging.getLogger().level, before)
 
@@ -1777,8 +1778,10 @@ class TestConstituentsRoute(unittest.TestCase):
                 status = resp.status
         self.assertEqual(status, 200)
         self.assertFalse(seen["config"].fetch_prices)
-        self.assertTrue(seen["config"].plot_clear)
-        self.assertFalse(seen["config"].plot_incognito)
+        self.assertFalse(seen["config"].fetch_geosplit)
+        self.assertFalse(seen["config"].fetch_sectorsplit)
+        self.assertFalse(hasattr(seen["config"], "plot_clear"))
+        self.assertFalse(hasattr(seen["config"], "plot_incognito"))
 
     def test_update_status_idle(self) -> None:
         status, body = self._get("/api/update")

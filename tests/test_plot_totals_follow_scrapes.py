@@ -81,7 +81,6 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
         **fetch,
     }
     config = AppConfig(
-        plot_clear=True,
         assets_file=assets,
         cache_file=cache,
         isin_file=isin,
@@ -91,7 +90,7 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
     ctx = RuntimeContext(config=config)
     run_update(ctx)
     raw_text = "".join(
-        p.read_text(encoding="utf-8") for p in sorted((viz / "data" / "clear").glob("*.raw"))
+        p.read_text(encoding="utf-8") for p in sorted((viz / "data").glob("*.raw"))
     )
     stored_assets = json.loads(assets.read_text(encoding="utf-8"))
     return raw_text, stored_assets

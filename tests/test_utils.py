@@ -24,11 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from unittest.mock import patch  # noqa: E402
-
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
 from utils import (  # noqa: E402
-    apply_incognito_scaling,
     load_portfolio,
     write_portfolio,
 )
@@ -118,36 +115,6 @@ class TestWritePortfolioToFile(unittest.TestCase):
         self.assertEqual(untouched["ISIN"], "IE00B4YBJ215")
         self.assertEqual(untouched["value"], 9469.5)
         self.assertEqual(untouched["shares"], 45)
-
-
-class TestIncognitoScaling(unittest.TestCase):
-    def test_sets_factor_from_explicit_values_without_mutating_dict(self) -> None:
-        holder = tempfile.TemporaryDirectory()
-        self.addCleanup(holder.cleanup)
-        tmp = Path(holder.name)
-        ctx = RuntimeContext(
-            config=AppConfig(
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
-            )
-        )
-        ctx.portfolio.update(
-            {
-                "a": [{"value": 40.0}],
-                "b": [{"value": 60.0}],
-            }
-        )
-        with patch("random.randint", return_value=25000):
-            apply_incognito_scaling(ctx)
-        self.assertEqual(ctx.value_factor, 250.0)
-        self.assertAlmostEqual(ctx.portfolio["a"][0]["value"], 40.0)
-        self.assertAlmostEqual(ctx.portfolio["b"][0]["value"], 60.0)
-        raw_total = sum(
-            float(p["value"])
-            for positions in ctx.portfolio.values()
-            for p in positions
-        )
-        self.assertEqual(raw_total, 100.0)
 
 
 if __name__ == "__main__":

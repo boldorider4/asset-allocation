@@ -49,8 +49,6 @@ class TestCliPlotFlags(unittest.TestCase):
                     assets_file=Path(tmp) / "assets.json",
                     cache_file=Path(tmp) / "cache.json",
                     position_source="yfinance",
-                    plot_clear=True,
-                    plot_incognito=True,
                     plot="pie-chart",
                     log_level="INFO",
                 )
@@ -67,8 +65,6 @@ class TestCliPlotFlags(unittest.TestCase):
         self.assertTrue(config.fetch_prices)
         self.assertEqual(config.position_source, "yfinance")
         self.assertEqual(config.plotter, "pie-chart")
-        self.assertTrue(config.plot_clear)
-        self.assertTrue(config.plot_incognito)
         self.assertTrue(str(config.cache_file).endswith("cache.json"))
 
 
@@ -93,8 +89,6 @@ class TestConfigFlag(unittest.TestCase):
             assets_file=tmp / "assets.json",
             cache_file=tmp / "cache.json",
             position_source="justetf",
-            plot_clear=None,
-            plot_incognito=None,
             plot=None,
             log_level=None,
             config=config,
@@ -167,7 +161,7 @@ class TestConfigFlag(unittest.TestCase):
                     os.environ["ASALLOC_CONFIG"] = prev
             self.assertEqual(calls["env"], str(ini))
             self.assertEqual(calls["cmd"][calls["cmd"].index("--plotter-data-dir") + 1], "data")
-            self.assertIn("--plotter-clear-dir", calls["cmd"])
+            self.assertNotIn("--plotter-clear-dir", calls["cmd"])
 
     def test_config_flag_parses_before_and_after_subcommand(self) -> None:
         seen: list = []

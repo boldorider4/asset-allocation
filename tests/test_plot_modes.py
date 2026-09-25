@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Clear/incognito plot passes: template titles, per-pass factors and dirs."""
+"""Single-pass plot modes: template titles, factor sync and flat output dir."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _stub(*, value, sectors=None, dmem=1.0, usavn=0.5, short_name=None):
 
 
 class _RecordingPlotter:
-    """Stand-in chart class with factor support; records plot() calls."""
+    """Stand-in chart class; records plot() calls."""
 
     def __init__(self, data, title=None, closing_title=None, factor=None):
         self._data = data
@@ -74,69 +74,55 @@ def _rec_portfolio(ctx, stubs, cls=Portfolio, name="P"):
         return cls(name, [{} for _ in stubs], ctx=ctx)
 
 
-class TestPlotIncognitoKwarg(unittest.TestCase):
-    def test_closing_template_uses_clear_then_scaled_totals(self) -> None:
+class TestPlotClosingTitle(unittest.TestCase):
+    def test_closing_template_uses_plain_total(self) -> None:
         ctx = RuntimeContext(config=AppConfig())
-        ctx.value_factor = 2.5
         port = _rec_portfolio(
             ctx, [_stub(value=100.0, sectors=None)], cls=RegionalPortfolio
         )
-        port.plot_geosplit(closing_title="Total Value: {tot_value}", incognito=False)
+        port.plot_geosplit(closing_title="Total Value: {tot_value}")
         self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 100.00")
         self.assertEqual(
             port._geosplit_visualizer.factor, {"value": 100.0, "unit": "Euro"}
         )
-        port.plot_geosplit(closing_title="Total Value: {tot_value}", incognito=True)
-        self.assertEqual(port._geosplit_visualizer.closing_title, "Total Value: 250.00")
-        self.assertEqual(
-            port._geosplit_visualizer.factor, {"value": 250.0, "unit": "Euro"}
-        )
 
     def test_plain_titles_pass_through_unchanged(self) -> None:
         ctx = RuntimeContext(config=AppConfig())
-        ctx.value_factor = 2.5
         port = _rec_portfolio(ctx, [_stub(value=100.0, sectors=None)])
-        port.plot_sectors(closing_title="Net Worth: 123", incognito=True)
-        self.assertEqual(port._sector_visualizer.closing_title, "Net Worth: 123")
-        port.plot_sectors(closing_title="Net Worth: 123", incognito=False)
+        port.plot_sectors(closing_title="Net Worth: 123")
         self.assertEqual(port._sector_visualizer.closing_title, "Net Worth: 123")
 
-    def test_factor_sync_is_idempotent_across_passes(self) -> None:
+    def test_factor_sync_is_plain_total(self) -> None:
         ctx = RuntimeContext(config=AppConfig())
-        ctx.value_factor = 3.0
         port = _rec_portfolio(
             ctx, [_stub(value=40.0, sectors=None)], cls=RegionalPortfolio
         )
-        port.plot_geosplit(incognito=True)
-        self.assertEqual(port._geosplit_visualizer.factor["value"], 120.0)
-        port.plot_geosplit(incognito=False)
+        port.plot_geosplit()
         self.assertEqual(port._geosplit_visualizer.factor["value"], 40.0)
 
-    def test_stored_values_stay_clear(self) -> None:
+    def test_stored_values_unchanged(self) -> None:
         ctx = RuntimeContext(config=AppConfig())
-        ctx.value_factor = 2.5
-        port = _rec_portfolio(ctx, [_stub(value=100.0, sectors=None)])
-        port.plot_geosplit(closing_title="Total Value: {tot_value}", incognito=True)
+        port = _rec_portfolio(
+            ctx, [_stub(value=100.0, sectors=None)], cls=RegionalPortfolio
+        )
+        port.plot_geosplit(closing_title="Total Value: {tot_value}")
         self.assertEqual(port.value, 100.0)
         self.assertEqual(port.total_value, 100.0)
 
 
-class TestBothPassesWriteBothDirs(unittest.TestCase):
-    def test_clear_and_incognito_raw_payloads(self) -> None:
+class TestSinglePassWritesFlatDir(unittest.TestCase):
+    def test_raw_payload(self) -> None:
         holder = tempfile.TemporaryDirectory()
         self.addCleanup(holder.cleanup)
         tmp = Path(holder.name)
         server = tmp / "visualizer"
         ctx = RuntimeContext(
             config=AppConfig(
-                plot_clear=True,
-                plot_incognito=True,
                 cache_file=tmp / "cache.json",
                 assets_file=tmp / "assets.json",
                 server=ServerConfig(port=8765, address="localhost", directory=server),
             )
         )
-        ctx.value_factor = 2.0
         from visual.plot.web_chart import WebChart
 
         orig = (WebChart.data_dir, dict(WebChart._slug_counts), WebChart._plot_seq)
@@ -147,31 +133,21 @@ class TestBothPassesWriteBothDirs(unittest.TestCase):
                 setattr(WebChart, "_plot_seq", orig[2]),
             )
         )
+        WebChart.data_dir = ctx.output_data_dir()
+        WebChart._slug_counts = {}
+        WebChart._plot_seq = 0
         stubs = [_stub(value=100.0, sectors=[{"name": "Technology", "weight_pct": 100.0}])]
         with patch("portfolio.portfolio._factory", side_effect=list(stubs)):
             port = RegionalPortfolio("R", [{}], ctx=ctx)
-        for incognito in (False, True):
-            ctx.configure_web_output(incognito=incognito)
-            port.plot_geosplit(
-                title="Complete Portfolio",
-                closing_title="Net Worth: {tot_value}",
-                incognito=incognito,
-            )
-        clear_raw = server / "data" / "clear" / "01-complete-portfolio.raw"
-        incognito_raw = server / "data" / "incognito" / "01-complete-portfolio.raw"
-        self.assertTrue(clear_raw.is_file())
-        self.assertTrue(incognito_raw.is_file())
-        clear_payload = json.loads(clear_raw.read_text(encoding="utf-8"))
-        incognito_payload = json.loads(incognito_raw.read_text(encoding="utf-8"))
-        self.assertEqual(clear_payload["closing_title"], "Net Worth: 100.00")
-        self.assertEqual(incognito_payload["closing_title"], "Net Worth: 200.00")
-        self.assertEqual(clear_payload["factor"], {"value": 100.0, "unit": "Euro"})
-        self.assertEqual(incognito_payload["factor"], {"value": 200.0, "unit": "Euro"})
-        # Wedge fractions are scale-invariant.
-        self.assertEqual(
-            [w["weight"] for w in clear_payload["wedges"]],
-            [w["weight"] for w in incognito_payload["wedges"]],
+        port.plot_geosplit(
+            title="Complete Portfolio",
+            closing_title="Net Worth: {tot_value}",
         )
+        raw = server / "data" / "01-complete-portfolio.raw"
+        self.assertTrue(raw.is_file())
+        payload = json.loads(raw.read_text(encoding="utf-8"))
+        self.assertEqual(payload["closing_title"], "Net Worth: 100.00")
+        self.assertEqual(payload["factor"], {"value": 100.0, "unit": "Euro"})
 
 
 if __name__ == "__main__":
