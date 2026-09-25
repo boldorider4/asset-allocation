@@ -377,6 +377,30 @@ code {
   background-color: var(--gold);
 }
 
+/* Incognito blur: Euro figures only. Labels, percentages, and card
+ * titles never carry the .euro class (or the value/shares data-field),
+ * so they stay sharp. Blurred inputs remain focusable and editable. */
+body.incognito .euro {
+  filter: blur(6px);
+  user-select: none;
+}
+
+body.incognito input[data-field="value"],
+body.incognito input[data-field="shares"],
+body.incognito input.draft-value,
+body.incognito input.draft-shares,
+body.incognito span.cell-box.locked[data-field="value"],
+body.incognito span.cell-box.locked[data-field="shares"] {
+  filter: blur(6px);
+}
+
+body.incognito input[data-field="value"],
+body.incognito input[data-field="shares"],
+body.incognito input.draft-value,
+body.incognito input.draft-shares {
+  caret-color: transparent;
+}
+
 .nav-button.icon-button[aria-disabled="true"] {
   background: #2a2521;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55);

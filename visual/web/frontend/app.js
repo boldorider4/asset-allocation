@@ -158,15 +158,6 @@ function formatPct(weight, total) {
   return `${((weight / total) * 100).toFixed(1)}%`;
 }
 
-function formatSegmentValue(wedge) {
-  if (wedge.value == null || Number.isNaN(Number(wedge.value))) {
-    return "";
-  }
-  const formatted = formatGrouped(wedge.value, 2);
-  const unit = wedge.unit ? ` ${wedge.unit}` : "";
-  return `${formatted}${unit}`;
-}
-
 const _measureCtx = document.createElement("canvas").getContext("2d");
 
 function measureLabel(text, fontSize) {
@@ -544,10 +535,39 @@ function renderLegendRow(wedge, total) {
 
   const val = document.createElement("td");
   val.className = "val";
-  val.textContent = formatSegmentValue(wedge);
+  if (wedge.value == null || Number.isNaN(Number(wedge.value))) {
+    val.textContent = "";
+  } else {
+    const figure = document.createElement("span");
+    figure.className = "euro";
+    figure.textContent = formatGrouped(wedge.value, 2);
+    val.appendChild(figure);
+    if (wedge.unit) {
+      val.appendChild(document.createTextNode(` ${wedge.unit}`));
+    }
+  }
 
   row.append(nameCell, pct, val);
   return row;
+}
+
+// Numeric runs (e.g. 123'456.78) wrapped in blur-able spans; surrounding
+// label text stays a plain text node so only figures blur in incognito mode.
+function appendFigureSpans(element, text) {
+  const parts = String(text).split(/(-?\d[\d']*\.\d+)/g);
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    if (/^-?\d[\d']*\.\d+$/.test(part)) {
+      const figure = document.createElement("span");
+      figure.className = "euro";
+      figure.textContent = groupThousandsInText(part);
+      element.appendChild(figure);
+    } else {
+      element.appendChild(document.createTextNode(part));
+    }
+  }
 }
 
 function renderCard(chart) {
@@ -575,7 +595,7 @@ function renderCard(chart) {
   if (chart.closing_title) {
     const closing = document.createElement("p");
     closing.className = "closing-title";
-    closing.textContent = groupThousandsInText(chart.closing_title);
+    appendFigureSpans(closing, chart.closing_title);
     card.appendChild(closing);
   }
   return card;

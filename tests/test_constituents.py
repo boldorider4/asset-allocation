@@ -505,6 +505,47 @@ class TestRenderConstituentsPage(unittest.TestCase):
             render_constituents_page(sections, incognito=True),
         )
 
+    def test_constituents_has_incognito_button_left_of_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        plain = render_constituents_page(sections)
+        veiled = render_constituents_page(sections, incognito=True)
+        for page in (plain, veiled):
+            incognito_pos = page.index('id="incognito-link"')
+            overview_pos = page.index('id="overview-link"')
+            self.assertLess(incognito_pos, overview_pos)
+            self.assertIn('class="incognito-glyph"', page)
+        self.assertIn('href="/constituents?incognito=true"', plain)
+        self.assertIn('aria-pressed="true"', veiled)
+        self.assertIn('href="/constituents"', veiled)
+
+    def test_incognito_blur_is_frontend_only(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        # Euro figures are wrapped in blur-able spans; labels, pcts, and
+        # card titles never get the class.
+        self.assertIn('"euro"', app_js)
+        self.assertIn("appendFigureSpans", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # Instant toggle: no reload, state via replaceState + body class.
+        self.assertIn("replaceState", dashboard_js)
+        self.assertIn('classList.toggle("incognito"', dashboard_js)
+        self.assertIn("applyIncognitoState", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("replaceState", constituents_js)
+        self.assertIn('classList.toggle("incognito"', constituents_js)
+        self.assertIn("wireIncognitoToggle", constituents_js)
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("body.incognito .euro", css)
+        self.assertIn("blur(", css)
+        self.assertIn('input[data-field="value"]', css)
+        self.assertIn('input[data-field="shares"]', css)
+        self.assertIn('span.cell-box.locked[data-field="value"]', css)
+        self.assertIn('span.cell-box.locked[data-field="shares"]', css)
+        # Price figures are never blurred.
+        self.assertNotIn('data-field="price"', css)
+
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
         self.assertIn('id="update-overlay" class="overlay" hidden', page)
