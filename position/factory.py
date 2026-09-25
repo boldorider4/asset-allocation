@@ -129,9 +129,8 @@ def factory(
     prefer_scrape_value = _scrape_holdings_value_prevails(broker, value, ctx)
     logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
 
-    # ``ctor_price``/``countries_arg`` are the only cache-vs-network switches: a value
+    # ``ctor_price``/``countries_arg``/``sectors_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
-    # Scalable / Trade Republic quotes live in cache.json (never the assets file).
     if use_broker_quote:
         ctor_price = price if price is not None else cached_price
     else:
@@ -176,8 +175,7 @@ def factory(
         "ctx": ctx,
     }
     position: JustETFPosition | YFinancePosition
-    # DWS reachability GET and holdings scrape are only needed when refreshing
-    # country weights. Cached geosplit uses JustETF/YFinance like any other ETF.
+
     if (
         fetch_geosplit
         and isin in XtrackersPosition.ISINS
