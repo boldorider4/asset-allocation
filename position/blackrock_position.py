@@ -103,6 +103,7 @@ class BlackRockPosition(JustETFPosition):
         "Utilities": "Utilities",
         "Sovereign": "Government",
         "Government Related": "Government",
+        "Treasury": "Government",
         "Cash and/or Derivatives": "Other",
         "Cash & Derivatives": "Other",
     }
