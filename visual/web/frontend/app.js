@@ -12,7 +12,14 @@ function versionLabelEl() {
 }
 function versionText() {
   const label = versionLabelEl();
-  return label ? label.textContent.trim() : "";
+  if (!label) {
+    return "";
+  }
+  // The footer stamp is written back into this same label on every poll,
+  // so strip a previous " - Last updated: ..." suffix: otherwise each
+  // poll would treat the last stamp as the new base and append again
+  // (which also mutated the snapshot key and broke snapshot restore).
+  return label.textContent.replace(/\s*-\s*Last updated:.*$/, "").trim();
 }
 const POLL_MS = 2000;
 const EQUITY_GROUP_COLOR = "#d4a574";

@@ -853,11 +853,17 @@
     }
   }
 
+  // Identity-based bind guard: dataset flags are out of the question
+  // because the view cache stores HTML strings — attributes (including
+  // any marker) survive the round trip, so restored nodes would arrive
+  // pre-marked and never get bound. A WeakSet lives outside the DOM.
+  var wiredNodes = new WeakSet();
+
   function markWired(el) {
-    if (!el || el.dataset.wired === "1") {
+    if (!el || wiredNodes.has(el)) {
       return false;
     }
-    el.dataset.wired = "1";
+    wiredNodes.add(el);
     return true;
   }
 
@@ -965,7 +971,7 @@
   // swaps bodies in place), but only the constituents page has
   // #overview-link. Document-level delegation above is bound once per
   // document lifetime and survives swaps; per-node bindings below happen
-  // exactly once via dataset.wired.
+  // exactly once via wiredNodes.
   function initConstituents() {
     if (!document.getElementById("overview-link")) {
       return;

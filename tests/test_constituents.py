@@ -602,6 +602,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("__dashboardShow", app_js)
         self.assertIn("galleryEl()", app_js)
         self.assertNotIn("const GALLERY =", app_js)
+        # Footer stamp is idempotent: versionText strips a previous
+        # "Last updated" suffix instead of stacking it every poll.
+        self.assertIn("Last updated:", app_js)
+        self.assertNotIn("dataset.wired", app_js)
         dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("__dashboardInit", dashboard_js)
         self.assertIn("__switchView", dashboard_js)
@@ -610,6 +614,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("__constituentsInit", constituents_js)
         self.assertIn("__switchView", constituents_js)
         self.assertIn("overview-link", constituents_js)
+        # Bind guards are identity-based: dataset markers would serialize
+        # into the cached view HTML and leave restored nodes unbound
+        # (clicks falling through to full reloads after one round trip).
+        for js in (dashboard_js, constituents_js):
+            self.assertIn("WeakSet", js)
+            self.assertNotIn("dataset.wired", js)
 
     def test_instant_switch_prefetch_and_snapshot(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"

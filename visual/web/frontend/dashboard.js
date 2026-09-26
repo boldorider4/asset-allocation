@@ -135,11 +135,17 @@
     }
   }
 
+  // Identity-based bind guard: dataset flags are out of the question
+  // because the view cache stores HTML strings — attributes (including
+  // any marker) survive the round trip, so restored nodes would arrive
+  // pre-marked and never get bound. A WeakSet lives outside the DOM.
+  var wiredNodes = new WeakSet();
+
   function markWired(el) {
-    if (!el || el.dataset.wired === "1") {
+    if (!el || wiredNodes.has(el)) {
       return false;
     }
-    el.dataset.wired = "1";
+    wiredNodes.add(el);
     return true;
   }
 
@@ -238,7 +244,7 @@
 
   // Idempotent boot: this script loads on both pages (the view switcher
   // swaps bodies in place), but only the dashboard has #sync-link. Fresh
-  // nodes after a swap get painted + bound exactly once via dataset.wired;
+  // nodes after a swap get painted + bound exactly once via wiredNodes;
   // the poll chain referencing detached nodes simply ends.
   function initDashboard() {
     if (!document.getElementById("sync-link")) {
