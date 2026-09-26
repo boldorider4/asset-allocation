@@ -959,6 +959,11 @@
         throw new Error(await response.text());
       }
       dirty = false;
+      // Restore the pristine state before the view is stashed: the
+      // switcher caches live HTML, so a still-visible overlay (or a
+      // stuck busy flag) would linger after the round trip.
+      link.dataset.busy = "";
+      setOverlay(false);
       switchViewOrNavigate(target);
     } catch (err) {
       setOverlay(false);
@@ -976,6 +981,10 @@
     if (!document.getElementById("overview-link")) {
       return;
     }
+    // Invariant: the overlay is never visible on show. No update can be
+    // in flight here (refreshAndGo swaps only after its POST settles),
+    // so a visible overlay means a stale stash — clear it.
+    setOverlay(false);
     wireIncognitoToggle();
     scheduleDashboardPrefetch();
     const overview = document.getElementById("overview-link");

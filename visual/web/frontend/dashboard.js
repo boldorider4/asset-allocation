@@ -239,6 +239,16 @@
     } catch {
       // Ignore: synchronous failures (e.g. no fetch) navigate anyway.
     }
+    // Reset sync visuals before the view is stashed: the cancel above
+    // ends any run, and re-init re-polls the true state on return, so a
+    // stuck "Syncing prices…" must not survive the round trip.
+    startedHere = false;
+    const sync = document.getElementById("sync-link");
+    if (sync) {
+      sync.dataset.busy = "";
+      setSyncPressed(sync, false);
+    }
+    setStatus("");
     switchViewOrNavigate(target);
   }
 

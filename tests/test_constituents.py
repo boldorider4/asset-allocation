@@ -578,6 +578,20 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("window.location.hash", dashboard_js)
         constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
         self.assertIn("window.location.hash", constituents_js)
+        # Transient UI state is reset before a view is stashed: a visible
+        # overlay or busy flag would otherwise linger after the round trip.
+        const_fn = constituents_js.split("async function refreshAndGo")[1].split(
+            "function initConstituents"
+        )[0]
+        success = const_fn.split("dirty = false;")[1].split("} catch")[0]
+        self.assertIn("setOverlay(false)", success)
+        self.assertIn('link.dataset.busy = ""', success)
+        self.assertIn("setOverlay(false)", constituents_js.split("function initConstituents")[1])
+        cancel_fn = dashboard_js.split("async function cancelAndEdit")[1].split(
+            "function initDashboard"
+        )[0]
+        self.assertIn("startedHere = false", cancel_fn)
+        self.assertIn('setStatus("")', cancel_fn)
         # Both pages load all scripts; each boots behind its own marker.
         index = (root / "index.html").read_text(encoding="utf-8")
         for tag in (
