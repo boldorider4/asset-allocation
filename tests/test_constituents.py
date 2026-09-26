@@ -546,6 +546,71 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Price figures are never blurred.
         self.assertNotIn('data-field="price"', css)
 
+    def test_view_switcher_swaps_without_reload(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        self.assertTrue((root / "switcher.js").is_file())
+        switcher = (root / "switcher.js").read_text(encoding="utf-8")
+        # Single-document hash routing: view state in #constituents, no
+        # document reload on the hot path, classic navigation fallback.
+        self.assertIn("__switchView", switcher)
+        self.assertIn("body.innerHTML", switcher)
+        self.assertIn("hashchange", switcher)
+        self.assertIn("#constituents", switcher)
+        self.assertIn("window.location.href", switcher)
+        # Fresh loads boot the dashboard and strip any hash; the
+        # incognito query (backend-tracked) is never touched by this.
+        self.assertIn("replaceState", switcher)
+        self.assertIn("location.hash", switcher)
+        # Freshness: dashboard verifies on show, constituents revalidates
+        # in background without clobbering drafts or focused inputs.
+        self.assertIn("__dashboardShow", switcher)
+        self.assertIn("__constituentsRevalidate", switcher)
+        self.assertIn("tr.draft", switcher)
+        self.assertIn("activeElement", switcher)
+        # Rapid clicks can't apply views out of order.
+        self.assertIn("navSeq", switcher)
+        # Stash is keyed explicitly (hash already names the new view when
+        # hashchange fires), never by "current view".
+        self.assertIn("stashLeaving", switcher)
+        self.assertIn("otherView", switcher)
+        # Toggles preserve the view hash when rewriting the query.
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("window.location.hash", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("window.location.hash", constituents_js)
+        # Both pages load all scripts; each boots behind its own marker.
+        index = (root / "index.html").read_text(encoding="utf-8")
+        for tag in (
+            '<script src="app.js"></script>',
+            '<script src="dashboard.js"></script>',
+            '<script src="constituents.js"></script>',
+            '<script src="switcher.js"></script>',
+        ):
+            self.assertIn(tag, index)
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        page = render_constituents_page(sections)
+        for tag in (
+            '<script src="app.js"></script>',
+            '<script src="dashboard.js"></script>',
+            '<script src="constituents.js"></script>',
+            '<script src="switcher.js"></script>',
+        ):
+            self.assertIn(tag, page)
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        self.assertIn("__dashboardShow", app_js)
+        self.assertIn("galleryEl()", app_js)
+        self.assertNotIn("const GALLERY =", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("__dashboardInit", dashboard_js)
+        self.assertIn("__switchView", dashboard_js)
+        self.assertIn("sync-link", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("__constituentsInit", constituents_js)
+        self.assertIn("__switchView", constituents_js)
+        self.assertIn("overview-link", constituents_js)
+
     def test_instant_switch_prefetch_and_snapshot(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
         app_js = (root / "app.js").read_text(encoding="utf-8")

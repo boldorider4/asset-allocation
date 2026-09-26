@@ -839,7 +839,13 @@
     }
     if (syncUrl) {
       try {
-        const url = active ? "/constituents?incognito=true" : "/constituents";
+        // The query is backend-tracked incognito state; the view lives
+        // in the hash and must survive the rewrite (single document).
+        // Pathname stays wherever this document was served from
+        // (/dashboard in-app, /constituents on direct loads).
+        const path = window.location.pathname;
+        const url =
+          path + (active ? "?incognito=true" : "") + window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts: visuals already applied.
@@ -847,12 +853,20 @@
     }
   }
 
+  function markWired(el) {
+    if (!el || el.dataset.wired === "1") {
+      return false;
+    }
+    el.dataset.wired = "1";
+    return true;
+  }
+
   function wireIncognitoToggle() {
-    // Paint the initial state from the URL (deep links, round trip);
-    // the URL already carries the state, so don't rewrite it.
+    // Paint the state from the URL (deep links, round trip, fresh nodes
+    // after a view swap); the URL already carries it, so don't rewrite.
     applyIncognitoState(isIncognitoMode(), false);
     const toggle = document.getElementById("incognito-link");
-    if (!toggle) {
+    if (!markWired(toggle)) {
       return;
     }
     // Instant toggle: no reload — pure CSS blur flip.
@@ -903,6 +917,20 @@
     }
   }
 
+  function switchViewOrNavigate(target) {
+    try {
+      if (
+        typeof window.__switchView === "function" &&
+        window.__switchView(target)
+      ) {
+        return;
+      }
+    } catch {
+      // Fall through to classic navigation below.
+    }
+    window.location.href = target;
+  }
+
   async function refreshAndGo(event) {
     event.preventDefault();
     const link = event.currentTarget;
@@ -914,7 +942,7 @@
     // round trip through Constituents holds the state.
     const target = link.getAttribute("href") || "/dashboard";
     if (!dirty) {
-      window.location.href = target;
+      switchViewOrNavigate(target);
       return;
     }
     link.dataset.busy = "1";
@@ -924,7 +952,8 @@
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      window.location.href = target;
+      dirty = false;
+      switchViewOrNavigate(target);
     } catch (err) {
       setOverlay(false);
       setStatus("Update failed: " + (err && err.message ? err.message : err));
@@ -932,12 +961,36 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  // Idempotent boot: this script loads on both pages (the view switcher
+  // swaps bodies in place), but only the constituents page has
+  // #overview-link. Document-level delegation above is bound once per
+  // document lifetime and survives swaps; per-node bindings below happen
+  // exactly once via dataset.wired.
+  function initConstituents() {
+    if (!document.getElementById("overview-link")) {
+      return;
+    }
     wireIncognitoToggle();
     scheduleDashboardPrefetch();
     const overview = document.getElementById("overview-link");
-    if (overview) {
+    if (markWired(overview)) {
       overview.addEventListener("click", refreshAndGo);
     }
-  });
+  }
+
+  window.__constituentsInit = initConstituents;
+
+  // Background revalidation hook for the view switcher: refetch this
+  // page's HTML and hand it over; the switcher swaps it in only when the
+  // page is clean (no draft open, nothing focused).
+  window.__constituentsRevalidate = function (url) {
+    return fetch(url).then(function (response) {
+      if (!response.ok) {
+        throw new Error("revalidate failed: " + response.status);
+      }
+      return response.text();
+    });
+  };
+
+  document.addEventListener("DOMContentLoaded", initConstituents);
 })();

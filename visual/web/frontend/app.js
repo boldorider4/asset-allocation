@@ -1,25 +1,44 @@
-const GALLERY = document.getElementById("gallery");
-const STATUS = document.getElementById("status");
-const VERSION_LABEL = document.getElementById("version-label");
-const VERSION_TEXT = VERSION_LABEL ? VERSION_LABEL.textContent.trim() : "";
+// Element getters (not cached consts): the view switcher swaps body
+// content in place, so nodes are re-queried on every use. This script is
+// loaded on both pages but only boots the gallery when #gallery exists.
+function galleryEl() {
+  return document.getElementById("gallery");
+}
+function statusEl() {
+  return document.getElementById("status");
+}
+function versionLabelEl() {
+  return document.getElementById("version-label");
+}
+function versionText() {
+  const label = versionLabelEl();
+  return label ? label.textContent.trim() : "";
+}
 const POLL_MS = 2000;
 const EQUITY_GROUP_COLOR = "#d4a574";
 
 let lastSignature = "";
+let galleryBooted = false;
 
 // Gallery snapshot: last rendered cards + their signature, kept in
 // sessionStorage so a fresh dashboard load paints instantly and the
 // background refresh only refetches when the signature changed. The key
 // carries the stamped version, so deploys auto-invalidate. Snapshots are
 // incognito-agnostic (blur is a body class, not markup).
-const SNAPSHOT_KEY = `asalloc.gallery.${VERSION_TEXT}`;
+function snapshotKey() {
+  return `asalloc.gallery.${versionText()}`;
+}
 let prefetchScheduled = false;
 
 function saveSnapshot() {
+  const gallery = galleryEl();
+  if (!gallery) {
+    return;
+  }
   try {
     sessionStorage.setItem(
-      SNAPSHOT_KEY,
-      JSON.stringify({ html: GALLERY.innerHTML, sig: lastSignature })
+      snapshotKey(),
+      JSON.stringify({ html: gallery.innerHTML, sig: lastSignature })
     );
   } catch {
     // Private mode / quota: snapshot is best-effort only.
@@ -27,16 +46,20 @@ function saveSnapshot() {
 }
 
 function restoreSnapshot() {
+  const gallery = galleryEl();
+  if (!gallery) {
+    return;
+  }
   let snap = null;
   try {
-    snap = JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) || "null");
+    snap = JSON.parse(sessionStorage.getItem(snapshotKey()) || "null");
   } catch {
     return;
   }
   if (!snap || typeof snap.html !== "string" || typeof snap.sig !== "string") {
     return;
   }
-  GALLERY.innerHTML = snap.html;
+  gallery.innerHTML = snap.html;
   lastSignature = snap.sig;
 }
 
@@ -161,14 +184,16 @@ function formatLastUpdated(date) {
 }
 
 function renderFooterLastUpdated(date) {
-  if (!VERSION_LABEL) {
+  const label = versionLabelEl();
+  if (!label) {
     return;
   }
+  const base = versionText();
   if (!date) {
-    VERSION_LABEL.textContent = VERSION_TEXT;
+    label.textContent = base;
     return;
   }
-  VERSION_LABEL.textContent = `${VERSION_TEXT} - Last updated: ${formatLastUpdated(date)}`;
+  label.textContent = `${base} - Last updated: ${formatLastUpdated(date)}`;
 }
 
 async function loadChart(url) {
@@ -671,14 +696,23 @@ function renderCard(chart) {
 }
 
 function renderEmpty() {
+  const gallery = galleryEl();
+  if (!gallery) {
+    return;
+  }
   const empty = document.createElement("div");
   empty.className = "empty";
   empty.innerHTML =
     "<strong>No charts yet</strong>Drop <code>*.raw</code> files into <code>data/</code>, or run <code>asalloc</code> / <code>make web-example</code>.";
-  GALLERY.appendChild(empty);
+  gallery.appendChild(empty);
 }
 
 async function refresh() {
+  const gallery = galleryEl();
+  const status = statusEl();
+  if (!gallery) {
+    return;
+  }
   try {
     const files = await scanRawFiles();
     const lastUpdated = await readChartsLastModified(files);
@@ -688,7 +722,9 @@ async function refresh() {
       // Snapshot (if any) is confirmed fresh — still ensure the Edit
       // target is prefetched for an instant switch.
       scheduleConstituentsPrefetch();
-      STATUS.hidden = true;
+      if (status) {
+        status.hidden = true;
+      }
       return;
     }
     lastSignature = signature;
@@ -701,25 +737,46 @@ async function refresh() {
       )
     );
     const charts = loaded.filter((chart) => chart !== null);
-    GALLERY.replaceChildren();
+    gallery.replaceChildren();
     if (charts.length === 0) {
       renderEmpty();
     } else {
       for (const chart of charts) {
-        GALLERY.appendChild(renderCard(chart));
+        gallery.appendChild(renderCard(chart));
       }
     }
     saveSnapshot();
     scheduleConstituentsPrefetch();
-    STATUS.hidden = true;
+    if (status) {
+      status.hidden = true;
+    }
   } catch (err) {
-    STATUS.hidden = false;
-    STATUS.textContent =
-      "Could not scan data/*.raw. Serve the _visualizer folder over HTTP (for example: python -m http.server).";
+    if (status) {
+      status.hidden = false;
+      status.textContent =
+        "Could not scan data/*.raw. Serve the _visualizer folder over HTTP (for example: python -m http.server).";
+    }
     console.error(err);
   }
 }
 
-restoreSnapshot();
-refresh();
-setInterval(refresh, POLL_MS);
+// Gallery boot: runs once per document lifetime. The view switcher swaps
+// body content in place, so on return visits the same nodes (and this
+// interval) are still alive — __dashboardShow just triggers an immediate
+// verify. Safe to load on the constituents page: no #gallery, no boot.
+function ensureGalleryBoot() {
+  if (galleryBooted || !galleryEl()) {
+    return;
+  }
+  galleryBooted = true;
+  restoreSnapshot();
+  refresh();
+  setInterval(refresh, POLL_MS);
+}
+
+window.__dashboardShow = function () {
+  ensureGalleryBoot();
+  refresh();
+};
+
+ensureGalleryBoot();

@@ -122,7 +122,12 @@
     }
     if (syncUrl) {
       try {
-        const url = active ? "/dashboard?incognito=true" : "/dashboard";
+        // The query is backend-tracked incognito state; the view lives
+        // in the hash and must survive the rewrite (single document).
+        const url =
+          "/dashboard" +
+          (active ? "?incognito=true" : "") +
+          window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts (tests, file://): visuals already applied.
@@ -130,12 +135,20 @@
     }
   }
 
+  function markWired(el) {
+    if (!el || el.dataset.wired === "1") {
+      return false;
+    }
+    el.dataset.wired = "1";
+    return true;
+  }
+
   function wireIncognitoToggle() {
-    const toggle = document.getElementById("incognito-link");
-    // Paint the initial state from the URL (deep links, round trip);
-    // the URL already carries the state, so don't rewrite it.
+    // Paint the state from the URL (deep links, round trip, fresh nodes
+    // after a view swap); the URL already carries it, so don't rewrite.
     applyIncognitoState(isIncognitoMode(), false);
-    if (!toggle) {
+    const toggle = document.getElementById("incognito-link");
+    if (!markWired(toggle)) {
       return;
     }
     // Instant toggle: no reload, no refetch — pure CSS blur flip.
@@ -185,6 +198,20 @@
     );
   }
 
+  function switchViewOrNavigate(target) {
+    try {
+      if (
+        typeof window.__switchView === "function" &&
+        window.__switchView(target)
+      ) {
+        return;
+      }
+    } catch {
+      // Fall through to classic navigation below.
+    }
+    window.location.href = target;
+  }
+
   async function cancelAndEdit(event) {
     // Fire-and-forget: stop any endpoint-triggered update, then leave
     // immediately without awaiting the cancel — keepalive delivers it
@@ -206,19 +233,30 @@
     } catch {
       // Ignore: synchronous failures (e.g. no fetch) navigate anyway.
     }
-    window.location.href = target;
+    switchViewOrNavigate(target);
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  // Idempotent boot: this script loads on both pages (the view switcher
+  // swaps bodies in place), but only the dashboard has #sync-link. Fresh
+  // nodes after a swap get painted + bound exactly once via dataset.wired;
+  // the poll chain referencing detached nodes simply ends.
+  function initDashboard() {
+    if (!document.getElementById("sync-link")) {
+      return;
+    }
     wireIncognitoToggle();
     const sync = document.getElementById("sync-link");
-    if (sync) {
+    if (markWired(sync)) {
       sync.addEventListener("click", syncPrices);
       pollUpdateStatus(sync, false, 0);
     }
     const edit = document.getElementById("edit-link");
-    if (edit) {
+    if (markWired(edit)) {
       edit.addEventListener("click", cancelAndEdit);
     }
-  });
+  }
+
+  window.__dashboardInit = initDashboard;
+
+  document.addEventListener("DOMContentLoaded", initDashboard);
 })();
