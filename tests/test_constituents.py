@@ -546,6 +546,30 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Price figures are never blurred.
         self.assertNotIn('data-field="price"', css)
 
+    def test_instant_switch_prefetch_and_snapshot(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        # Raw chart payloads load in parallel, not one await per file.
+        self.assertIn("Promise.all", app_js)
+        self.assertNotIn("for (const file of files)", app_js)
+        # Gallery snapshot paints instantly, then verifies in background.
+        self.assertIn("sessionStorage", app_js)
+        self.assertIn("restoreSnapshot", app_js)
+        self.assertIn("saveSnapshot", app_js)
+        self.assertIn("lastSignature", app_js)
+        # Idle prefetch of the constituents document (default cache mode).
+        self.assertIn("prefetch-constituents", app_js)
+        self.assertIn("requestIdleCallback", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # Edit leaves without awaiting the cancel; keepalive delivers it.
+        self.assertIn("keepalive", dashboard_js)
+        self.assertNotIn('await fetch("/api/cancel"', dashboard_js)
+        # Toggle keeps the prefetched URL on the current state.
+        self.assertIn("prefetch-constituents", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("prefetch-dashboard", constituents_js)
+        self.assertIn("requestIdleCallback", constituents_js)
+
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
         self.assertIn('id="update-overlay" class="overlay" hidden', page)

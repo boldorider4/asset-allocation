@@ -829,6 +829,14 @@
         active ? "/dashboard?incognito=true" : "/dashboard"
       );
     }
+    // Keep the idle-prefetched dashboard URL on the current state.
+    const prefetch = document.getElementById("prefetch-dashboard");
+    if (prefetch) {
+      prefetch.setAttribute(
+        "href",
+        active ? "/dashboard?incognito=true" : "/dashboard"
+      );
+    }
     if (syncUrl) {
       try {
         const url = active ? "/constituents?incognito=true" : "/constituents";
@@ -852,6 +860,40 @@
       event.preventDefault();
       applyIncognitoState(!document.body.classList.contains("incognito"));
     });
+  }
+
+  // Warm the dashboard document while idle so the return trip lands
+  // on a warm HTTP cache. The gallery itself paints from its snapshot
+  // on arrival, so only the shell document is prefetched here.
+  var dashboardPrefetchScheduled = false;
+
+  function scheduleDashboardPrefetch() {
+    if (dashboardPrefetchScheduled) {
+      syncDashboardPrefetch();
+      return;
+    }
+    dashboardPrefetchScheduled = true;
+    const run = function () {
+      syncDashboardPrefetch();
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(run);
+    } else {
+      window.setTimeout(run, 1500);
+    }
+  }
+
+  function syncDashboardPrefetch() {
+    let link = document.getElementById("prefetch-dashboard");
+    if (!link) {
+      link = document.createElement("link");
+      link.id = "prefetch-dashboard";
+      link.rel = "prefetch";
+      document.head.appendChild(link);
+    }
+    link.href = document.body.classList.contains("incognito")
+      ? "/dashboard?incognito=true"
+      : "/dashboard";
   }
 
   function setOverlay(visible) {
@@ -892,6 +934,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     wireIncognitoToggle();
+    scheduleDashboardPrefetch();
     const overview = document.getElementById("overview-link");
     if (overview) {
       overview.addEventListener("click", refreshAndGo);

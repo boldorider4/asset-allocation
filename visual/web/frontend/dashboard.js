@@ -112,6 +112,14 @@
         active ? "/constituents?incognito=true" : "/constituents"
       );
     }
+    // Keep the idle-prefetched constituents URL on the current state.
+    const prefetch = document.getElementById("prefetch-constituents");
+    if (prefetch) {
+      prefetch.setAttribute(
+        "href",
+        active ? "/constituents?incognito=true" : "/constituents"
+      );
+    }
     if (syncUrl) {
       try {
         const url = active ? "/dashboard?incognito=true" : "/dashboard";
@@ -178,18 +186,25 @@
   }
 
   async function cancelAndEdit(event) {
-    // Fire-and-forget: stop any endpoint-triggered update, then leave.
-    // Navigation happens regardless so Edit always works, even if the
-    // server is unreachable. Timer/systemd runs live in other processes
-    // and are never affected. The link href carries the gallery mode
-    // (?incognito=true when active), so navigate via it to hold state.
+    // Fire-and-forget: stop any endpoint-triggered update, then leave
+    // immediately without awaiting the cancel — keepalive delivers it
+    // even mid-navigation. Navigation happens regardless so Edit always
+    // works, even if the server is unreachable. Timer/systemd runs live
+    // in other processes and are never affected. The link href carries
+    // the gallery mode (?incognito=true when active), so navigate via
+    // it to hold state. The constituents document was prefetched while
+    // idle, so this lands on a warm HTTP cache.
     event.preventDefault();
     const target =
       event.currentTarget.getAttribute("href") || "/constituents";
     try {
-      await fetch("/api/cancel", { method: "POST" });
+      window
+        .fetch("/api/cancel", { method: "POST", keepalive: true })
+        .then(null, function () {
+          // Ignore: the constituents page is useful with or without a cancel.
+        });
     } catch {
-      // Ignore: the constituents page is useful with or without a cancel.
+      // Ignore: synchronous failures (e.g. no fetch) navigate anyway.
     }
     window.location.href = target;
   }

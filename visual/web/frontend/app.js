@@ -7,6 +7,75 @@ const EQUITY_GROUP_COLOR = "#d4a574";
 
 let lastSignature = "";
 
+// Gallery snapshot: last rendered cards + their signature, kept in
+// sessionStorage so a fresh dashboard load paints instantly and the
+// background refresh only refetches when the signature changed. The key
+// carries the stamped version, so deploys auto-invalidate. Snapshots are
+// incognito-agnostic (blur is a body class, not markup).
+const SNAPSHOT_KEY = `asalloc.gallery.${VERSION_TEXT}`;
+let prefetchScheduled = false;
+
+function saveSnapshot() {
+  try {
+    sessionStorage.setItem(
+      SNAPSHOT_KEY,
+      JSON.stringify({ html: GALLERY.innerHTML, sig: lastSignature })
+    );
+  } catch {
+    // Private mode / quota: snapshot is best-effort only.
+  }
+}
+
+function restoreSnapshot() {
+  let snap = null;
+  try {
+    snap = JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) || "null");
+  } catch {
+    return;
+  }
+  if (!snap || typeof snap.html !== "string" || typeof snap.sig !== "string") {
+    return;
+  }
+  GALLERY.innerHTML = snap.html;
+  lastSignature = snap.sig;
+}
+
+// Warm the constituents document while idle so Edit navigates from HTTP
+// cache (parse + render only). Default cache mode: the page is tiny and
+// revalidates via Last-Modified like any normal navigation.
+function scheduleConstituentsPrefetch() {
+  if (prefetchScheduled) {
+    syncConstituentsPrefetch();
+    return;
+  }
+  prefetchScheduled = true;
+  const run = function () {
+    syncConstituentsPrefetch();
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run);
+  } else {
+    window.setTimeout(run, 1500);
+  }
+}
+
+function constituentsPrefetchHref() {
+  return document.body.classList.contains("incognito")
+    ? "/constituents?incognito=true"
+    : "/constituents";
+}
+
+function syncConstituentsPrefetch() {
+  let link = document.getElementById("prefetch-constituents");
+  if (!link) {
+    link = document.createElement("link");
+    link.id = "prefetch-constituents";
+    link.rel = "prefetch";
+    document.head.appendChild(link);
+  }
+  link.href = constituentsPrefetchHref();
+}
+
 function basename(href) {
   try {
     const url = new URL(href, window.location.href);
@@ -616,18 +685,22 @@ async function refresh() {
     renderFooterLastUpdated(lastUpdated);
     const signature = `${files.join("|")}@${lastUpdated ? lastUpdated.getTime() : ""}`;
     if (signature === lastSignature) {
+      // Snapshot (if any) is confirmed fresh — still ensure the Edit
+      // target is prefetched for an instant switch.
+      scheduleConstituentsPrefetch();
       STATUS.hidden = true;
       return;
     }
     lastSignature = signature;
-    const charts = [];
-    for (const file of files) {
-      try {
-        charts.push(await loadChart(file));
-      } catch (err) {
-        console.warn(err);
-      }
-    }
+    const loaded = await Promise.all(
+      files.map((file) =>
+        loadChart(file).catch((err) => {
+          console.warn(err);
+          return null;
+        })
+      )
+    );
+    const charts = loaded.filter((chart) => chart !== null);
     GALLERY.replaceChildren();
     if (charts.length === 0) {
       renderEmpty();
@@ -636,6 +709,8 @@ async function refresh() {
         GALLERY.appendChild(renderCard(chart));
       }
     }
+    saveSnapshot();
+    scheduleConstituentsPrefetch();
     STATUS.hidden = true;
   } catch (err) {
     STATUS.hidden = false;
@@ -645,5 +720,6 @@ async function refresh() {
   }
 }
 
+restoreSnapshot();
 refresh();
 setInterval(refresh, POLL_MS);

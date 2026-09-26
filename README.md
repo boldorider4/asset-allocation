@@ -96,7 +96,9 @@ Clicking Dashboard runs a lite refresh first — but only if a cell was edited s
 
 Editing shares immediately recomputes value as shares × cached price (and vice versa), so the file always holds a consistent pair; without a cached price the sibling is left untouched and the edited box gets a red flare. Empty means `0`, locked cells are rejected server-side, and a normal save flashes green then reverts on failure. A missing cached price is live-fetched once for that position and written back to the cache. For admin use, `make service` also copies `systemd/asalloc-lite-update.service` (same lite update) but leaves it disabled — start it yourself when needed.
 
-The dashboard's Sync Prices button posts `{"mode": "fat"}` to the same endpoint for a fat refresh (live prices, geosplits, and sectorsplits; broker scrapes never run there). It takes minutes and reloads the gallery when done. Leaving via Edit cancels a running endpoint update first (`POST /api/cancel`); only one endpoint update runs at a time, timer/systemd runs are unaffected.
+The dashboard's Sync Prices button posts `{"mode": "fat"}` to the same endpoint for a fat refresh (live prices, geosplits, and sectorsplits; broker scrapes never run there). It takes minutes and reloads the gallery when done. Leaving via Edit fires `POST /api/cancel` with `keepalive` and navigates immediately without waiting for it; only one endpoint update runs at a time, timer/systemd runs are unaffected.
+
+Switching between dashboard and constituents stays instant when nothing was edited: each side prefetches the other while idle, the dashboard paints its last gallery from a per-tab snapshot and only refetches chart data when the file signature changed, and chart payloads load in parallel. Editing a cell still runs the lite refresh before showing the dashboard — that part is unavoidable.
 
 The bind address, HTTP port, and directory come from `config.ini` (`[server] address`, `port`, and `directory`; defaults `localhost`, `8765`, and `~/.local/asalloc/visualizer`). The server runs in the background.
 
