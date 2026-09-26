@@ -270,6 +270,16 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     server_version = "asalloc-dashboard/1.0"
 
+    def end_headers(self) -> None:
+        # Revalidate everything, cache nothing blindly: documents,
+        # scripts, and chart payloads all change across deploys/updates,
+        # and a stale shell (or stale JS) is exactly the "works after
+        # clearing the cache" failure class. no-cache (not no-store)
+        # keeps back-forward cache eligibility while making staleness
+        # impossible: 304 when fresh, full 200 on change.
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def _redirect_root(self) -> bool:
         """302 ``/`` to ``/dashboard``, preserving any query string."""
         if urlsplit(self.path).path != "/":

@@ -49,6 +49,22 @@ class TestDashboardEndpoint(unittest.TestCase):
             self.assertEqual(status, 200, query)
             self.assertEqual(body, "DASHBOARD", query)
 
+    def test_responses_force_revalidation(self) -> None:
+        # No blind caching anywhere: documents, scripts, and chart
+        # payloads must revalidate, so deploys/updates take effect
+        # without ever clearing browser data. no-cache (not no-store)
+        # keeps back-forward cache eligibility.
+        import urllib.request
+
+        for path in ("/dashboard", "/index.html", "/data/01-a.raw"):
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.port}{path}"
+            ) as resp:
+                self.assertEqual(resp.status, 200, path)
+                self.assertEqual(
+                    resp.headers.get("Cache-Control"), "no-cache", path
+                )
+
     def test_root_redirects_to_dashboard(self) -> None:
         import http.client
 

@@ -1,12 +1,13 @@
 /* Single-document view routing for dashboard + constituents.
  *
- * The app lives at /dashboard chapters: the view is frontend state kept
- * in the hash (#constituents, or absent for the dashboard), exactly the
+ * The app lives at /dashboard: the view is frontend state kept in the
+ * hash (#constituents, or absent for the dashboard), exactly the
  * "<server>/dashboard?incognito=<true/false>#constituents" shape. A
- * fresh document load always boots the dashboard view and strips any
- * hash, so refresh defaults to dashboard. The ?incognito= query stays
- * backend-tracked (the server renders the initial toggle states from
- * it); the toggle code preserves the hash when rewriting the query.
+ * manual entry carrying #constituents is honored (fetched straight
+ * into it); a reload always defaults back to the dashboard view. The
+ * ?incognito= query stays backend-tracked (the server renders the
+ * initial toggle states from it); the toggle code preserves the hash
+ * when rewriting the query.
  *
  * The /constituents endpoint is kept as the HTML source for the
  * constituents view (and still full-renders for direct loads); in-app
@@ -141,17 +142,37 @@
     return view === "constituents" ? "dashboard" : "constituents";
   }
 
+  // A cached entry is only paintable when it actually holds that view's
+  // markup (each view has an element the other never renders). This makes
+  // displaying a poisoned entry impossible: a mismatch falls through to
+  // a fresh fetch instead of flashing the wrong view.
+  function entryMatchesView(view, entry) {
+    if (!entry || typeof entry.bodyHTML !== "string") {
+      return false;
+    }
+    return view === "constituents"
+      ? entry.bodyHTML.indexOf('id="overview-link"') !== -1
+      : entry.bodyHTML.indexOf('id="gallery"') !== -1;
+  }
+
   // Stash the live DOM of the view being left, so input values, gallery
   // markup, and scroll-era state survive the round trip. Keyed
   // explicitly: by the time hashchange fires, the hash already names the
   // new view, so "current view" would file the stash under the wrong key.
   // Revalidation on show covers external staleness.
   function stashLeaving(target) {
+    const leaving = otherView(target);
     try {
-      viewCache.set(otherView(target), {
+      const entry = {
         title: document.title || "",
         bodyHTML: document.body.innerHTML,
-      });
+      };
+      // Never stash a mismatched body: a mid-swap race must not poison
+      // the cache with the wrong view's markup.
+      if (!entryMatchesView(leaving, entry)) {
+        return;
+      }
+      viewCache.set(leaving, entry);
     } catch {
       // Ignore: the target view still works uncached.
     }
@@ -216,7 +237,7 @@
     }
     stashLeaving(view);
     const hit = viewCache.get(view);
-    if (hit) {
+    if (hit && entryMatchesView(view, hit)) {
       navSeq += 1;
       renderCached(view, hit);
       revalidate(view);
@@ -254,6 +275,23 @@
       return true;
     }
     window.location.hash = "constituents";
+    // Safety net: the hashchange event above normally drives the swap,
+    // but if it is ever swallowed (or the fetch path stalls before
+    // painting), force the view once things settle. The guard makes a
+    // duplicate delivery a no-op, and a newer navigation wins by failing
+    // the hash check — so this can never fight legitimate state.
+    window.setTimeout(function () {
+      try {
+        if (
+          window.location.hash === CONSTITUENTS_HASH &&
+          !document.getElementById("overview-link")
+        ) {
+          showView("constituents");
+        }
+      } catch {
+        // Ignore: the event path already handled it.
+      }
+    }, 120);
     return true;
   }
 
@@ -300,11 +338,36 @@
     showView(currentView());
   });
 
-  // Fresh document loads always boot the dashboard view: strip any
-  // incoming hash (refresh defaults to dashboard) without adding a
-  // history entry. The served markup already is the dashboard.
+  function wasReload() {
+    try {
+      if (typeof performance === "undefined") {
+        return false;
+      }
+      const entries = performance.getEntriesByType("navigation");
+      if (
+        entries &&
+        entries[0] &&
+        typeof entries[0].type === "string"
+      ) {
+        return entries[0].type === "reload";
+      }
+    } catch {
+      // Ignore: fall through to honoring the hash.
+    }
+    return false;
+  }
+
+  // Fresh document loads: honor an incoming #constituents (manual entry,
+  // deep link) by fetching into it — except on reload, which always
+  // defaults back to the dashboard view. Either way no history entry is
+  // added. The served markup already is the dashboard.
   try {
-    if (window.location.hash) {
+    if (
+      window.location.hash === CONSTITUENTS_HASH &&
+      !wasReload()
+    ) {
+      showView("constituents");
+    } else if (window.location.hash) {
       window.history.replaceState(
         null,
         "",

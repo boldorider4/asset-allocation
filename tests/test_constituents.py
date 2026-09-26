@@ -546,6 +546,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Price figures are never blurred.
         self.assertNotIn('data-field="price"', css)
 
+    def test_touch_devices_get_no_sticky_hover(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        # Touch browsers keep :hover stuck on the tapped element, so the
+        # hover contour must only exist where hovering exists. The
+        # pressed look (aria-pressed) is separate and untouched.
+        self.assertIn("-webkit-tap-highlight-color", css)
+        hover_block = css.split("@media (hover: hover)", 1)[1]
+        self.assertIn(".nav-button:hover", hover_block)
+        self.assertIn(".nav-button.icon-button:hover .sync-glyph", hover_block)
+        self.assertIn(
+            ".nav-button.icon-button:hover .incognito-glyph", hover_block
+        )
+        self.assertIn('[aria-pressed="true"]', css)
+
     def test_view_switcher_swaps_without_reload(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
         self.assertTrue((root / "switcher.js").is_file())
@@ -573,6 +593,18 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # hashchange fires), never by "current view".
         self.assertIn("stashLeaving", switcher)
         self.assertIn("otherView", switcher)
+        # Cached entries are validated before painting or stashing, so a
+        # poisoned entry can never flash the wrong view.
+        self.assertIn("entryMatchesView", switcher)
+        self.assertIn('id="overview-link"', switcher)
+        self.assertIn('id="gallery"', switcher)
+        # A swallowed hashchange still lands: setting the hash arms a
+        # one-shot forced show guarded by the live DOM.
+        self.assertIn("Safety net", switcher)
+        # Manual #constituents entries are honored, reloads default to
+        # the dashboard view (Navigation Timing API with safe fallback).
+        self.assertIn("getEntriesByType", switcher)
+        self.assertIn("wasReload", switcher)
         # Toggles preserve the view hash when rewriting the query.
         dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("window.location.hash", dashboard_js)
