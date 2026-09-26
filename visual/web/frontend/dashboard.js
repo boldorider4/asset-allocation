@@ -112,9 +112,22 @@
         active ? "/constituents?incognito=true" : "/constituents"
       );
     }
+    // Keep the idle-prefetched constituents URL on the current state.
+    const prefetch = document.getElementById("prefetch-constituents");
+    if (prefetch) {
+      prefetch.setAttribute(
+        "href",
+        active ? "/constituents?incognito=true" : "/constituents"
+      );
+    }
     if (syncUrl) {
       try {
-        const url = active ? "/dashboard?incognito=true" : "/dashboard";
+        // The query is backend-tracked incognito state; the view lives
+        // in the hash and must survive the rewrite (single document).
+        const url =
+          "/dashboard" +
+          (active ? "?incognito=true" : "") +
+          window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts (tests, file://): visuals already applied.
@@ -122,12 +135,26 @@
     }
   }
 
+  // Identity-based bind guard: dataset flags are out of the question
+  // because the view cache stores HTML strings — attributes (including
+  // any marker) survive the round trip, so restored nodes would arrive
+  // pre-marked and never get bound. A WeakSet lives outside the DOM.
+  var wiredNodes = new WeakSet();
+
+  function markWired(el) {
+    if (!el || wiredNodes.has(el)) {
+      return false;
+    }
+    wiredNodes.add(el);
+    return true;
+  }
+
   function wireIncognitoToggle() {
-    const toggle = document.getElementById("incognito-link");
-    // Paint the initial state from the URL (deep links, round trip);
-    // the URL already carries the state, so don't rewrite it.
+    // Paint the state from the URL (deep links, round trip, fresh nodes
+    // after a view swap); the URL already carries it, so don't rewrite.
     applyIncognitoState(isIncognitoMode(), false);
-    if (!toggle) {
+    const toggle = document.getElementById("incognito-link");
+    if (!markWired(toggle)) {
       return;
     }
     // Instant toggle: no reload, no refetch — pure CSS blur flip.
@@ -177,33 +204,75 @@
     );
   }
 
-  async function cancelAndEdit(event) {
-    // Fire-and-forget: stop any endpoint-triggered update, then leave.
-    // Navigation happens regardless so Edit always works, even if the
-    // server is unreachable. Timer/systemd runs live in other processes
-    // and are never affected. The link href carries the gallery mode
-    // (?incognito=true when active), so navigate via it to hold state.
-    event.preventDefault();
-    const target =
-      event.currentTarget.getAttribute("href") || "/constituents";
+  function switchViewOrNavigate(target) {
     try {
-      await fetch("/api/cancel", { method: "POST" });
+      if (
+        typeof window.__switchView === "function" &&
+        window.__switchView(target)
+      ) {
+        return;
+      }
     } catch {
-      // Ignore: the constituents page is useful with or without a cancel.
+      // Fall through to classic navigation below.
     }
     window.location.href = target;
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
-    wireIncognitoToggle();
+  async function cancelAndEdit(event) {
+    // Fire-and-forget: stop any endpoint-triggered update, then leave
+    // immediately without awaiting the cancel — keepalive delivers it
+    // even mid-navigation. Navigation happens regardless so Edit always
+    // works, even if the server is unreachable. Timer/systemd runs live
+    // in other processes and are never affected. The link href carries
+    // the gallery mode (?incognito=true when active), so navigate via
+    // it to hold state. The constituents document was prefetched while
+    // idle, so this lands on a warm HTTP cache.
+    event.preventDefault();
+    const target =
+      event.currentTarget.getAttribute("href") || "/constituents";
+    try {
+      window
+        .fetch("/api/cancel", { method: "POST", keepalive: true })
+        .then(null, function () {
+          // Ignore: the constituents page is useful with or without a cancel.
+        });
+    } catch {
+      // Ignore: synchronous failures (e.g. no fetch) navigate anyway.
+    }
+    // Reset sync visuals before the view is stashed: the cancel above
+    // ends any run, and re-init re-polls the true state on return, so a
+    // stuck "Syncing prices…" must not survive the round trip.
+    startedHere = false;
     const sync = document.getElementById("sync-link");
     if (sync) {
+      sync.dataset.busy = "";
+      setSyncPressed(sync, false);
+    }
+    setStatus("");
+    switchViewOrNavigate(target);
+  }
+
+  // Idempotent boot: this script loads on both pages (the view switcher
+  // swaps bodies in place), but only the dashboard has #sync-link. Fresh
+  // nodes after a swap get painted + bound exactly once via wiredNodes;
+  // the poll chain referencing detached nodes simply ends.
+  function initDashboard() {
+    if (!document.getElementById("sync-link")) {
+      return;
+    }
+    wireIncognitoToggle();
+    const sync = document.getElementById("sync-link");
+    if (markWired(sync)) {
       sync.addEventListener("click", syncPrices);
       pollUpdateStatus(sync, false, 0);
     }
     const edit = document.getElementById("edit-link");
-    if (edit) {
+    if (markWired(edit)) {
       edit.addEventListener("click", cancelAndEdit);
     }
-  });
+  }
+
+  window.__dashboardInit = initDashboard;
+
+  document.addEventListener("DOMContentLoaded", initDashboard);
 })();

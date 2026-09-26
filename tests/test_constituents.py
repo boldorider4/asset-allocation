@@ -546,6 +546,119 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Price figures are never blurred.
         self.assertNotIn('data-field="price"', css)
 
+    def test_view_switcher_swaps_without_reload(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        self.assertTrue((root / "switcher.js").is_file())
+        switcher = (root / "switcher.js").read_text(encoding="utf-8")
+        # Single-document hash routing: view state in #constituents, no
+        # document reload on the hot path, classic navigation fallback.
+        self.assertIn("__switchView", switcher)
+        self.assertIn("body.innerHTML", switcher)
+        self.assertIn("hashchange", switcher)
+        self.assertIn("#constituents", switcher)
+        self.assertIn("window.location.href", switcher)
+        # Fresh loads boot the dashboard and strip any hash; the
+        # incognito query (backend-tracked) is never touched by this.
+        self.assertIn("replaceState", switcher)
+        self.assertIn("location.hash", switcher)
+        # Freshness: dashboard verifies on show, constituents revalidates
+        # in background without clobbering drafts or focused inputs.
+        self.assertIn("__dashboardShow", switcher)
+        self.assertIn("__constituentsRevalidate", switcher)
+        self.assertIn("tr.draft", switcher)
+        self.assertIn("activeElement", switcher)
+        # Rapid clicks can't apply views out of order.
+        self.assertIn("navSeq", switcher)
+        # Stash is keyed explicitly (hash already names the new view when
+        # hashchange fires), never by "current view".
+        self.assertIn("stashLeaving", switcher)
+        self.assertIn("otherView", switcher)
+        # Toggles preserve the view hash when rewriting the query.
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("window.location.hash", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("window.location.hash", constituents_js)
+        # Transient UI state is reset before a view is stashed: a visible
+        # overlay or busy flag would otherwise linger after the round trip.
+        const_fn = constituents_js.split("async function refreshAndGo")[1].split(
+            "function initConstituents"
+        )[0]
+        success = const_fn.split("dirty = false;")[1].split("} catch")[0]
+        self.assertIn("setOverlay(false)", success)
+        self.assertIn('link.dataset.busy = ""', success)
+        self.assertIn("setOverlay(false)", constituents_js.split("function initConstituents")[1])
+        cancel_fn = dashboard_js.split("async function cancelAndEdit")[1].split(
+            "function initDashboard"
+        )[0]
+        self.assertIn("startedHere = false", cancel_fn)
+        self.assertIn('setStatus("")', cancel_fn)
+        # Both pages load all scripts; each boots behind its own marker.
+        index = (root / "index.html").read_text(encoding="utf-8")
+        for tag in (
+            '<script src="app.js"></script>',
+            '<script src="dashboard.js"></script>',
+            '<script src="constituents.js"></script>',
+            '<script src="switcher.js"></script>',
+        ):
+            self.assertIn(tag, index)
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        page = render_constituents_page(sections)
+        for tag in (
+            '<script src="app.js"></script>',
+            '<script src="dashboard.js"></script>',
+            '<script src="constituents.js"></script>',
+            '<script src="switcher.js"></script>',
+        ):
+            self.assertIn(tag, page)
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        self.assertIn("__dashboardShow", app_js)
+        self.assertIn("galleryEl()", app_js)
+        self.assertNotIn("const GALLERY =", app_js)
+        # Footer stamp is idempotent: versionText strips a previous
+        # "Last updated" suffix instead of stacking it every poll.
+        self.assertIn("Last updated:", app_js)
+        self.assertNotIn("dataset.wired", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("__dashboardInit", dashboard_js)
+        self.assertIn("__switchView", dashboard_js)
+        self.assertIn("sync-link", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("__constituentsInit", constituents_js)
+        self.assertIn("__switchView", constituents_js)
+        self.assertIn("overview-link", constituents_js)
+        # Bind guards are identity-based: dataset markers would serialize
+        # into the cached view HTML and leave restored nodes unbound
+        # (clicks falling through to full reloads after one round trip).
+        for js in (dashboard_js, constituents_js):
+            self.assertIn("WeakSet", js)
+            self.assertNotIn("dataset.wired", js)
+
+    def test_instant_switch_prefetch_and_snapshot(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        # Raw chart payloads load in parallel, not one await per file.
+        self.assertIn("Promise.all", app_js)
+        self.assertNotIn("for (const file of files)", app_js)
+        # Gallery snapshot paints instantly, then verifies in background.
+        self.assertIn("sessionStorage", app_js)
+        self.assertIn("restoreSnapshot", app_js)
+        self.assertIn("saveSnapshot", app_js)
+        self.assertIn("lastSignature", app_js)
+        # Idle prefetch of the constituents document (default cache mode).
+        self.assertIn("prefetch-constituents", app_js)
+        self.assertIn("requestIdleCallback", app_js)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # Edit leaves without awaiting the cancel; keepalive delivers it.
+        self.assertIn("keepalive", dashboard_js)
+        self.assertNotIn('await fetch("/api/cancel"', dashboard_js)
+        # Toggle keeps the prefetched URL on the current state.
+        self.assertIn("prefetch-constituents", dashboard_js)
+        constituents_js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("prefetch-dashboard", constituents_js)
+        self.assertIn("requestIdleCallback", constituents_js)
+
     def test_blocking_update_overlay(self) -> None:
         page = self._page()
         self.assertIn('id="update-overlay" class="overlay" hidden', page)

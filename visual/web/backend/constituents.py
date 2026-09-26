@@ -631,7 +631,10 @@ def render_constituents_page(
     <div id="update-overlay" class="overlay" hidden>
       <span>Updating charts…</span>
     </div>
+    <script src="app.js"></script>
+    <script src="dashboard.js"></script>
     <script src="constituents.js"></script>
+    <script src="switcher.js"></script>
   </body>
 </html>
 """

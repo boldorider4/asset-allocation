@@ -829,9 +829,23 @@
         active ? "/dashboard?incognito=true" : "/dashboard"
       );
     }
+    // Keep the idle-prefetched dashboard URL on the current state.
+    const prefetch = document.getElementById("prefetch-dashboard");
+    if (prefetch) {
+      prefetch.setAttribute(
+        "href",
+        active ? "/dashboard?incognito=true" : "/dashboard"
+      );
+    }
     if (syncUrl) {
       try {
-        const url = active ? "/constituents?incognito=true" : "/constituents";
+        // The query is backend-tracked incognito state; the view lives
+        // in the hash and must survive the rewrite (single document).
+        // Pathname stays wherever this document was served from
+        // (/dashboard in-app, /constituents on direct loads).
+        const path = window.location.pathname;
+        const url =
+          path + (active ? "?incognito=true" : "") + window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts: visuals already applied.
@@ -839,12 +853,26 @@
     }
   }
 
+  // Identity-based bind guard: dataset flags are out of the question
+  // because the view cache stores HTML strings — attributes (including
+  // any marker) survive the round trip, so restored nodes would arrive
+  // pre-marked and never get bound. A WeakSet lives outside the DOM.
+  var wiredNodes = new WeakSet();
+
+  function markWired(el) {
+    if (!el || wiredNodes.has(el)) {
+      return false;
+    }
+    wiredNodes.add(el);
+    return true;
+  }
+
   function wireIncognitoToggle() {
-    // Paint the initial state from the URL (deep links, round trip);
-    // the URL already carries the state, so don't rewrite it.
+    // Paint the state from the URL (deep links, round trip, fresh nodes
+    // after a view swap); the URL already carries it, so don't rewrite.
     applyIncognitoState(isIncognitoMode(), false);
     const toggle = document.getElementById("incognito-link");
-    if (!toggle) {
+    if (!markWired(toggle)) {
       return;
     }
     // Instant toggle: no reload — pure CSS blur flip.
@@ -854,11 +882,59 @@
     });
   }
 
+  // Warm the dashboard document while idle so the return trip lands
+  // on a warm HTTP cache. The gallery itself paints from its snapshot
+  // on arrival, so only the shell document is prefetched here.
+  var dashboardPrefetchScheduled = false;
+
+  function scheduleDashboardPrefetch() {
+    if (dashboardPrefetchScheduled) {
+      syncDashboardPrefetch();
+      return;
+    }
+    dashboardPrefetchScheduled = true;
+    const run = function () {
+      syncDashboardPrefetch();
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(run);
+    } else {
+      window.setTimeout(run, 1500);
+    }
+  }
+
+  function syncDashboardPrefetch() {
+    let link = document.getElementById("prefetch-dashboard");
+    if (!link) {
+      link = document.createElement("link");
+      link.id = "prefetch-dashboard";
+      link.rel = "prefetch";
+      document.head.appendChild(link);
+    }
+    link.href = document.body.classList.contains("incognito")
+      ? "/dashboard?incognito=true"
+      : "/dashboard";
+  }
+
   function setOverlay(visible) {
     const overlay = document.getElementById("update-overlay");
     if (overlay) {
       overlay.hidden = !visible;
     }
+  }
+
+  function switchViewOrNavigate(target) {
+    try {
+      if (
+        typeof window.__switchView === "function" &&
+        window.__switchView(target)
+      ) {
+        return;
+      }
+    } catch {
+      // Fall through to classic navigation below.
+    }
+    window.location.href = target;
   }
 
   async function refreshAndGo(event) {
@@ -872,7 +948,7 @@
     // round trip through Constituents holds the state.
     const target = link.getAttribute("href") || "/dashboard";
     if (!dirty) {
-      window.location.href = target;
+      switchViewOrNavigate(target);
       return;
     }
     link.dataset.busy = "1";
@@ -882,7 +958,13 @@
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      window.location.href = target;
+      dirty = false;
+      // Restore the pristine state before the view is stashed: the
+      // switcher caches live HTML, so a still-visible overlay (or a
+      // stuck busy flag) would linger after the round trip.
+      link.dataset.busy = "";
+      setOverlay(false);
+      switchViewOrNavigate(target);
     } catch (err) {
       setOverlay(false);
       setStatus("Update failed: " + (err && err.message ? err.message : err));
@@ -890,11 +972,40 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  // Idempotent boot: this script loads on both pages (the view switcher
+  // swaps bodies in place), but only the constituents page has
+  // #overview-link. Document-level delegation above is bound once per
+  // document lifetime and survives swaps; per-node bindings below happen
+  // exactly once via wiredNodes.
+  function initConstituents() {
+    if (!document.getElementById("overview-link")) {
+      return;
+    }
+    // Invariant: the overlay is never visible on show. No update can be
+    // in flight here (refreshAndGo swaps only after its POST settles),
+    // so a visible overlay means a stale stash — clear it.
+    setOverlay(false);
     wireIncognitoToggle();
+    scheduleDashboardPrefetch();
     const overview = document.getElementById("overview-link");
-    if (overview) {
+    if (markWired(overview)) {
       overview.addEventListener("click", refreshAndGo);
     }
-  });
+  }
+
+  window.__constituentsInit = initConstituents;
+
+  // Background revalidation hook for the view switcher: refetch this
+  // page's HTML and hand it over; the switcher swaps it in only when the
+  // page is clean (no draft open, nothing focused).
+  window.__constituentsRevalidate = function (url) {
+    return fetch(url).then(function (response) {
+      if (!response.ok) {
+        throw new Error("revalidate failed: " + response.status);
+      }
+      return response.text();
+    });
+  };
+
+  document.addEventListener("DOMContentLoaded", initConstituents);
 })();
