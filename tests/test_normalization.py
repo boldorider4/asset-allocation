@@ -110,6 +110,74 @@ class TestNormalizeSplitRows(unittest.TestCase):
         self.assertEqual(parsed["Switzerland"], 0.0)
 
 
+class TestOvershootTolerance(unittest.TestCase):
+    """Vendor overshoot (e.g. iShares reporting Japan at 101.47 with a
+    101.48 total for IE00BFNM3L97): rescale with a warning within
+    (101, 102], pass through beyond, never touch under-coverage."""
+
+    def test_overshoot_rescaled_with_warning(self) -> None:
+        rows = [
+            {"name": "Japan", "weight_pct": 101.47},
+            {"name": "United Kingdom", "weight_pct": 0.01},
+        ]
+        with self.assertLogs("position.position", level="WARNING") as logs:
+            out = normalize_split_rows(rows)
+        self.assertTrue(any("overshooting" in line for line in logs.output))
+        assert out is not None
+        by_name = {r["name"]: float(r["weight_pct"]) for r in out}  # type: ignore[arg-type]
+        self.assertAlmostEqual(sum(by_name.values()), 100.0)
+        self.assertLess(by_name["Japan"], 100.0)
+
+    def test_overshoot_boundary_102_rescales(self) -> None:
+        rows = [{"name": "Japan", "weight_pct": 102.0}]
+        with self.assertLogs("position.position", level="WARNING"):
+            out = normalize_split_rows(rows)
+        assert out is not None
+        self.assertAlmostEqual(float(out[0]["weight_pct"]), 100.0)  # type: ignore[arg-type]
+
+    def test_beyond_overshoot_untouched(self) -> None:
+        rows = [
+            {"name": "Japan", "weight_pct": 102.4},
+            {"name": "United Kingdom", "weight_pct": 0.1},
+        ]
+        self.assertEqual(normalize_split_rows(rows), rows)
+
+    def test_under_coverage_still_untouched(self) -> None:
+        # Overshoot-only widening: the lower side stays frozen at the
+        # quiet band so partial tables are never inflated to look whole.
+        rows = [{"name": "France", "weight_pct": 98.5}]
+        self.assertEqual(normalize_split_rows(rows), rows)
+
+    def test_quiet_band_stays_quiet(self) -> None:
+        rows = [
+            {"name": "Japan", "weight_pct": 100.4},
+            {"name": "United Kingdom", "weight_pct": 0.1},
+        ]
+        with self.assertNoLogs("position.position", level="WARNING"):
+            out = normalize_split_rows(rows)
+        assert out is not None
+        self.assertAlmostEqual(
+            sum(float(r["weight_pct"]) for r in out),  # type: ignore[arg-type]
+            100.0,
+        )
+
+    def test_overshoot_rows_stage_into_cache(self) -> None:
+        # End to end: the exact IE00BFNM3L97 failure shape must survive
+        # the rows_to_fractions -> CacheEntry validation boundary.
+        from storage.records import CacheEntry
+
+        rows = [
+            {"name": "Japan", "weight_pct": 101.47},
+            {"name": "United Kingdom", "weight_pct": 0.01},
+        ]
+        staged = normalize_split_rows(rows)
+        fractions = CacheEntry.rows_to_fractions(staged)
+        entry = CacheEntry("IE00BFNM3L97", {"countries": fractions})
+        parsed = entry.to_dict()["countries"]
+        self.assertLess(parsed["Japan"], 1.0)
+        self.assertAlmostEqual(sum(parsed.values()), 1.0)
+
+
 def _stub(*, value, sectors):
     return SimpleNamespace(
         value=value,

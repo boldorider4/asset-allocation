@@ -101,6 +101,12 @@ def fold_unknown_sector_label(name: str) -> str:
 # empty lists are left untouched.
 _SPLIT_TOTAL_TOLERANCE = 1.0
 
+# Overshoot band (percentage points, upper side only): vendors occasionally
+# publish exposures summing above 100 . Totals in
+# [100 + quiet band, 100 + this band] are rescaled to exactly 100 with a
+# warning so methodology shifts stay visible.
+_SPLIT_TOTAL_OVERSHOOT_TOLERANCE = 2.0
+
 # Dust band (percentage points) for tiny negative split weights: vendors
 # (notably the DWS holdings API behind Xtrackers positions) occasionally
 # report small negative offsets (e.g. cash/accrual rows around -0.0003) from
@@ -117,9 +123,11 @@ def normalize_split_rows(
 
     Tiny negative weights within ``_SPLIT_DUST_TOLERANCE`` of zero are
     snapped to 0.0 first (vendor float dust must not fail cache
-    validation). Returns ``None``/empty input unchanged, as well as totals
-    that are zero or further than ``_SPLIT_TOTAL_TOLERANCE`` from 100
-    (genuine partial data must not be inflated).
+    validation). Totals within ``_SPLIT_TOTAL_TOLERANCE`` of 100 rescale
+    quietly; overshooting totals up to ``_SPLIT_TOTAL_OVERSHOOT_TOLERANCE``
+    above 100 rescale with a warning. Returns ``None``/empty input
+    unchanged, as well as totals that are zero, under-covered, or further
+    overshooting.
     """
     if not rows:
         return rows
@@ -138,14 +146,28 @@ def normalize_split_rows(
         else:
             clamped.append(r)
     total = sum(float(r["weight_pct"]) for r in clamped)  # type: ignore[arg-type]
-    if total <= 0 or abs(total - 100.0) > _SPLIT_TOTAL_TOLERANCE:
+    if (
+        total <= 0
+        or total < 100.0 - _SPLIT_TOTAL_TOLERANCE
+        or total > 100.0 + _SPLIT_TOTAL_OVERSHOOT_TOLERANCE
+    ):
         return clamped if dust_hit else rows
     if total == 100.0 and not dust_hit:
         return rows
     factor = 100.0 / total
-    logger.info(
-        "Position: normalizing split rows summing to %.4f to 100", total
-    )
+    if total > 100.0 + _SPLIT_TOTAL_TOLERANCE:
+        logger.warning(
+            "Position: rescaling overshooting split rows summing to %.4f "
+            "to 100 (beyond the %.1fpp quiet band, within the %.1fpp "
+            "overshoot band)",
+            total,
+            _SPLIT_TOTAL_TOLERANCE,
+            _SPLIT_TOTAL_OVERSHOOT_TOLERANCE,
+        )
+    else:
+        logger.info(
+            "Position: normalizing split rows summing to %.4f to 100", total
+        )
     return [
         {"name": r["name"], "weight_pct": float(r["weight_pct"]) * factor}  # type: ignore[arg-type]
         for r in clamped
