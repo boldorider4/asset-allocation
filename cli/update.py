@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from cli.common import (
@@ -13,6 +14,7 @@ from cli.common import (
     PENSION_PORTFOLIO,
 )
 from cli.logger import attach_color_stderr_handler_for_module
+from position.justetf_position import JustETFPosition
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from scrape.oskar import update_oskar_etfs_in_portfolio
@@ -21,6 +23,7 @@ from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 from utils import (
     persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
+    save_position_in_cache,
 )
 
 if TYPE_CHECKING:
@@ -44,6 +47,16 @@ def main(ctx: RuntimeContext) -> None:
         update_oskar_etfs_in_portfolio(ctx)
         ctx.persist_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
+        # Fetch prices for OSKAR positions so share estimation works even without --fetch-prices
+        if not ctx.config.fetch_prices:
+            oskar_isins = [isin for isin in ctx.oskar_etfs.keys() if re.match(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$", isin)]
+            if oskar_isins:
+                logger.info("Fetching prices for %d OSKAR positions to enable share estimation", len(oskar_isins))
+                for isin in oskar_isins:
+                    pos = JustETFPosition(isin, ctx=ctx)
+                    price = pos._fast_info_price()
+                    if price is not None:
+                        save_position_in_cache(ctx, isin, price=price, update_price=True)
 
     if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
