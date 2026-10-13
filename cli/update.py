@@ -13,14 +13,16 @@ from cli.common import (
     PENSION_PORTFOLIO,
 )
 from cli.logger import attach_color_stderr_handler_for_module
+from position.justetf_position import JustETFPosition
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
-from scrape.oskar import update_oskar_etfs_in_portfolio
+from scrape.oskar import _ISIN_STRICT, _OSKAR, update_oskar_etfs_in_portfolio
 from scrape.scalable import update_scalable_etfs_in_portfolio
 from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 from utils import (
     persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
+    save_position_in_cache,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +30,52 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
+
+
+def _estimate_oskar_shares_with_fresh_quotes(ctx: RuntimeContext) -> int:
+    """Re-estimate OSKAR shares as fresh value / fresh quote, in place.
+
+    Only for ``--fetch-oskar`` without ``--fetch-prices`` (otherwise the
+    factory estimates once through the normal price path, and without an
+    OSKAR scrape there is nothing new to estimate from). Fetches one
+    JustETF quote per OSKAR ISIN, caches it (so composition later reuses
+    it instead of refetching), and writes shares straight into the
+    portfolio rows; the caller's ``persist_portfolio`` writes them out.
+    Rows without an ISIN (Tagesgeld/cash), without a value, or whose
+    quote fetch fails are skipped with a warning and never abort the run.
+    """
+    if not ctx.config.fetch_oskar or ctx.config.fetch_prices:
+        return 0
+    count = 0
+    for positions in ctx.portfolio.values():
+        for position in positions:
+            if (position.get("broker") or position.get("Broker")) != _OSKAR:
+                continue
+            isin = position.get("ISIN") or position.get("isin")
+            if not isin or not _ISIN_STRICT.match(str(isin)):
+                continue
+            value = position.get("value")
+            if value is None:
+                continue
+            try:
+                price = JustETFPosition(str(isin), ctx=ctx)._fast_info_price()
+            except (RuntimeError, OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "Skipping OSKAR share estimate for %s: quote fetch failed (%s)",
+                    isin,
+                    exc,
+                )
+                continue
+            if not price:
+                logger.warning(
+                    "Skipping OSKAR share estimate for %s: no quote available",
+                    isin,
+                )
+                continue
+            save_position_in_cache(ctx, str(isin), price=price, update_price=True)
+            position["shares"] = float(value) / float(price)
+            count += 1
+    return count
 
 
 def main(ctx: RuntimeContext) -> None:
@@ -42,6 +90,11 @@ def main(ctx: RuntimeContext) -> None:
     if ctx.config.fetch_oskar:
         logger.info("Fetching OSKAR ETF weights from cockpit")
         update_oskar_etfs_in_portfolio(ctx)
+        refreshed = _estimate_oskar_shares_with_fresh_quotes(ctx)
+        if refreshed:
+            logger.info(
+                "Re-estimated shares for %d OSKAR position(s)", refreshed
+            )
         ctx.persist_portfolio()
         logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
 
