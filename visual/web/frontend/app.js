@@ -266,43 +266,35 @@ function measureLabel(text, fontSize) {
   return _measureCtx.measureText(text).width;
 }
 
-function splitLabel(label) {
-  const i = label.lastIndexOf(" ");
-  if (i <= 0) {
-    return null;
-  }
-  return [label.slice(0, i), label.slice(i + 1)];
-}
-
 // Single font size for every wedge label: labels are never shrunk to
-// fit. A label that fits at this size is drawn, otherwise it wraps (when
-// a neighbor forces a restriction) or is dropped.
+// fit. Policy: wedges below WEDGE_LABEL_MIN_SHARE show no in-donut label
+// (their legend row still lists them); everything else is fitted, wraps
+// on collision, and is only ever kept overlapping as a last resort.
 const WEDGE_LABEL_FONT_SIZE = 10.5;
+// Fraction of the pie below which a wedge gets no in-donut label.
+const WEDGE_LABEL_MIN_SHARE = 0.01;
+// Narrowest label box worth attempting (px); below this even a single
+// short word cannot render.
+const WEDGE_LABEL_MIN_WIDTH = 6;
 
 function fitWedgeLabel(label, span, rLabel, ringWidth) {
   const chord = 2 * rLabel * Math.sin(Math.min(span, Math.PI) / 2);
-  // Generous cap: labels slightly wider than their chord still get fitted —
-  // the overlap pass below confines anything that actually touches a
-  // neighbor, so this gate only rejects the hopeless cases. Both labels
-  // of a tight pair may wrap; neither is dropped for the other's sake.
-  const maxWidth = chord * 1.5;
+  // Permissive cap: labels may overflow their wedge freely — the overlap
+  // pass below wraps anything that actually touches a neighbor. A label
+  // that fits nowhere (e.g. one very long word on a tiny wedge) still
+  // goes out unwrapped rather than vanishing; the <1% share gate at the
+  // call site is the only sanctioned disappearance.
+  const maxWidth = chord * 2.5;
   const fontSize = WEDGE_LABEL_FONT_SIZE;
-  if (maxWidth < 10 || ringWidth < 12) {
+  if (maxWidth < WEDGE_LABEL_MIN_WIDTH || ringWidth < 12) {
     return null;
   }
-  if (measureLabel(label, fontSize) <= maxWidth && fontSize + 2 <= ringWidth) {
+  const lines =
+    wrapLabel(label, maxWidth, fontSize, WEDGE_LABEL_MAX_LINES) || [label];
+  if (fontSize * lines.length > ringWidth) {
     return { lines: [label], fontSize };
   }
-  const parts = splitLabel(label);
-  if (
-    parts &&
-    fontSize * 2.05 <= ringWidth &&
-    measureLabel(parts[0], fontSize) <= maxWidth &&
-    measureLabel(parts[1], fontSize) <= maxWidth
-  ) {
-    return { lines: parts, fontSize };
-  }
-  return null;
+  return { lines, fontSize };
 }
 
 const WEDGE_LABEL_MAX_LINES = 4;
@@ -348,7 +340,7 @@ function fitWedgeLabelRestricted(label, maxWidth, ringWidth) {
   // onto up to WEDGE_LABEL_MAX_LINES lines at the constant label font
   // size. Prefers fewer lines.
   const fontSize = WEDGE_LABEL_FONT_SIZE;
-  if (maxWidth < 10 || ringWidth < 12) {
+  if (maxWidth < WEDGE_LABEL_MIN_WIDTH || ringWidth < 12) {
     return null;
   }
   for (let n = 1; n <= WEDGE_LABEL_MAX_LINES; n++) {
@@ -366,8 +358,9 @@ function fitWedgeLabelRestricted(label, maxWidth, ringWidth) {
 // Padding per side added to label boxes for collision detection:
 // measureText reports tight glyph advances, but the rendered label also
 // carries a 2.4px outline stroke plus glyph side bearings, so visually
-// touching boxes overlap before their measured boxes do.
-const WEDGE_LABEL_PAD_X = 4;
+// touching boxes overlap before their measured boxes do. Kept tight on
+// purpose: marginal touches resolve via wrapping instead of dropping.
+const WEDGE_LABEL_PAD_X = 2;
 const WEDGE_LABEL_PAD_Y = 1;
 
 function labelBox(item, cx, cy, rLabel) {
@@ -410,14 +403,15 @@ function resolveLabelOverlaps(labels, cx, cy, rLabel, ringWidth) {
   // biggest overflow, then narrower wedge. If neither side can resolve it
   // (e.g. a tall wrapped label next to an already-minimal neighbor), both
   // stay — a marginal touch beats a vanished label. Labels are only ever
-  // dropped at initial fit (wedge too small for a single word), never as
-  // a side effect of a neighbor. Wrap-only, never any font shrinking.
+  // dropped by the sub-1% share gate at collection, never for geometry
+  // and never as a side effect of a neighbor. Wrap-only, never any font
+  // shrinking. Only adjacent pairs are checked.
   if (labels.length < 2) {
     return labels;
   }
   const boxOf = (item) => labelBox(item, cx, cy, rLabel);
   const resolved = labels.slice();
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 6; pass++) {
     let changed = false;
     for (let i = 0; i < resolved.length; i++) {
       const j = (i + 1) % resolved.length;
@@ -524,7 +518,10 @@ function renderDonut(wedges) {
       }
       svg.appendChild(path);
     }
-    const fitted = label && span > 1e-9 ? fitWedgeLabel(label, span, rLabel, ringWidth) : null;
+    const fitted =
+      label && span > 1e-9 && share >= WEDGE_LABEL_MIN_SHARE
+        ? fitWedgeLabel(label, span, rLabel, ringWidth)
+        : null;
     if (fitted) {
       labels.push({ start: angle, end: next, label, ...fitted });
     }
