@@ -2,18 +2,35 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from portfolio.portfolio import Portfolio, LabeledPositionGroup
+from portfolio.portfolio import Portfolio
 from cli.logger import attach_color_stderr_handler_for_module
 
 if TYPE_CHECKING:
     from cli.context import RuntimeContext
+    from position.position import Position
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
+
+
+@dataclass
+class LabeledPositionGroup:
+    short_name: str
+    total_value: float
+    positions: list[Position]
+
+
+# Geosplit region keys shared by grouped and ungrouped wedges; grouped
+# wedges append ": <short_name>".
+_REGIONS = ("Equity US", "Equity Ex-US", "Equity Emrg. Markets")
+
+# Wedges below this portfolio-total fraction are dropped from the chart.
+_GEOSPLIT_MIN_WEIGHT = 0.007
 
 
 class RegionalPortfolio(Portfolio):
@@ -33,12 +50,94 @@ class RegionalPortfolio(Portfolio):
         self._labeled_groups, self._regional_positions = self._partition_and_group_labeled()
         self._build_geo_visualizers()
 
+    def _partition_and_group_labeled(self) -> tuple[list[LabeledPositionGroup], list[Position]]:
+        """Split positions into labeled groups (by short_name) and regional positions."""
+        labeled_raw = [p for p in self._positions if p._short_name]
+        regional = [p for p in self._positions if not p._short_name]
+
+        groups: dict[str, LabeledPositionGroup] = {}
+        for pos in labeled_raw:
+            key = pos._short_name
+            val = pos.value or 0.0
+            if key not in groups:
+                groups[key] = LabeledPositionGroup(short_name=key, total_value=val, positions=[pos])
+            else:
+                groups[key].total_value += val
+                groups[key].positions.append(pos)
+
+        return list(groups.values()), regional
+
+    @staticmethod
+    def _regional_absolute_values(positions: list[Position]) -> tuple[float, float, float]:
+        """Absolute (US, Ex-US, EM) values for the given positions.
+
+        Same value-weighted dmem/usavn math the geosplit always used,
+        factored so labeled groups and ungrouped positions share it.
+        """
+        values = np.asarray([p.value for p in positions], dtype=float)
+        dmem = np.asarray([p.dmem for p in positions], dtype=float)
+        usavn = np.asarray([p.usavn for p in positions], dtype=float)
+        developed = float(np.dot(values, dmem))
+        us = float(np.dot(values, usavn)) if developed > 0 else 0.0
+        subtotal = float(values.sum())
+        return us, developed - us, subtotal - developed
+
+    def _compute_geosplit_data(
+        self,
+        labeled_groups: list[LabeledPositionGroup],
+        regional_positions: list[Position],
+        total: float,
+    ) -> dict[str, float]:
+        """Region → portfolio-total fraction, split by Group afterwards.
+
+        Each labeled group is decomposed into regions first (from its own
+        positions' dmem/usavn), then emitted under ``"Equity <R>: <group>"``
+        keys scaled by its share of the total; group wedges below
+        ``_GEOSPLIT_MIN_WEIGHT`` fold into their parent plain region wedge
+        instead (25% ``Equity Ex-US`` + 0.5% ``Equity Ex-US: G`` renders as
+        25.5% ``Equity Ex-US``). Ungrouped positions feed the plain region
+        keys. Keys come out region-major (plain wedge first, then groups
+        alphabetically); a region whose folded total still falls below the
+        floor is dropped. Folding guarantees a non-empty chart whenever
+        the total is positive: all positive mass lands in some region
+        total, so one of them always clears the floor.
+        """
+        if total <= 0:
+            return {}
+        ordered_groups = sorted(
+            (g for g in labeled_groups if g.total_value > 0),
+            key=lambda g: g.short_name,
+        )
+        group_amounts = [
+            (g.short_name, self._regional_absolute_values(g.positions))
+            for g in ordered_groups
+        ]
+        plain_amounts = self._regional_absolute_values(regional_positions)
+        data: dict[str, float] = {}
+        for index, region in enumerate(_REGIONS):
+            plain = plain_amounts[index] / total if plain_amounts[index] > 0 else 0.0
+            smalls = 0.0
+            bigs: list[tuple[str, float]] = []
+            for short_name, amounts in group_amounts:
+                wedge = amounts[index] / total
+                if wedge <= 0:
+                    continue
+                if wedge >= _GEOSPLIT_MIN_WEIGHT:
+                    bigs.append((short_name, wedge))
+                else:
+                    smalls += wedge
+            region_total = plain + smalls
+            if region_total >= _GEOSPLIT_MIN_WEIGHT:
+                data[region] = region_total
+            for short_name, wedge in bigs:
+                data[f"{region}: {short_name}"] = wedge
+        return data
+
     def _build_geo_visualizers(self) -> None:
         """Build DMEM/USAVN/geosplit visualizers from construction-time state."""
         plotter = self._ctx.plotter_class()
         labeled_value = sum(g.total_value for g in self._labeled_groups)
         regional_value = self._value - labeled_value
-        scale_regional = regional_value / self._value if self._value > 0 else 0.0
 
         # DMEM/USAVN from REGIONAL positions only
         if regional_value > 0:
@@ -76,16 +175,10 @@ class RegionalPortfolio(Portfolio):
             self._dmem_visualizer = None
             self._usavn_visualizer = None
 
-        # Geosplit: labeled position groups first, then regional wedges (scaled)
-        self._geosplit_data = {}
-        for group in self._labeled_groups:
-            if group.total_value > 0:
-                self._geosplit_data[group.short_name] = group.total_value / self._value
-        self._geosplit_data.update({
-            "Equity US": us_within_developed * developed_share * scale_regional,
-            "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
-            "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
-        })
+        # Geosplit: regional separation first, then split by Group.
+        self._geosplit_data = self._compute_geosplit_data(
+            self._labeled_groups, self._regional_positions, self._value
+        )
 
         self._geosplit_visualizer = plotter(
             data=self._geosplit_data,
@@ -118,22 +211,6 @@ class RegionalPortfolio(Portfolio):
         # Partition merged positions
         merged._labeled_groups, merged._regional_positions = merged._partition_and_group_labeled()
 
-        # DMEM/USAVN from regional positions only
-        labeled_value = sum(g.total_value for g in merged._labeled_groups)
-        regional_value = merged._value - labeled_value
-        if regional_value > 0:
-            regional_values = np.asarray([p.value for p in merged._regional_positions], dtype=float)
-            regional_dmem = np.asarray([p.dmem for p in merged._regional_positions], dtype=float)
-            regional_usavn = np.asarray([p.usavn for p in merged._regional_positions], dtype=float)
-            developed_share = float(np.dot(regional_values, regional_dmem)) / regional_value
-            dmem_weighted = float(np.dot(regional_values, regional_dmem))
-            us_within_developed = (
-                float(np.dot(regional_values, regional_usavn)) / dmem_weighted if dmem_weighted > 0 else 0.0
-            )
-        else:
-            developed_share = 0.0
-            us_within_developed = 0.0
-
         merged._dmem = [p.dmem for p in merged._regional_positions]
         merged._usavn = [p.usavn for p in merged._regional_positions]
 
@@ -149,17 +226,11 @@ class RegionalPortfolio(Portfolio):
             merged._sectors,
         )
 
-        # Recompute geosplit_data from scratch
-        scale_regional = regional_value / merged._value if merged._value > 0 else 0.0
-        merged._geosplit_data = {}
-        for group in merged._labeled_groups:
-            if group.total_value > 0:
-                merged._geosplit_data[group.short_name] = group.total_value / merged._value
-        merged._geosplit_data.update({
-            "Equity US": us_within_developed * developed_share * scale_regional,
-            "Equity Ex-US": (1.0 - us_within_developed) * developed_share * scale_regional,
-            "Equity Emrg. Markets": (1.0 - developed_share) * scale_regional,
-        })
+        # Recompute geosplit_data from scratch (shared helper keeps the
+        # merged chart consistent with freshly built ones).
+        merged._geosplit_data = merged._compute_geosplit_data(
+            merged._labeled_groups, merged._regional_positions, merged._value
+        )
 
         # Merge visualizers via PieChart.__add__
         for attr in ("_dmem_visualizer", "_usavn_visualizer", "_geosplit_visualizer"):
