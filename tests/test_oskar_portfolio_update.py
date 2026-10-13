@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from scrape.oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
 from cli.context import AppConfig, RuntimeContext
+from cli.update import _estimate_oskar_shares_with_fresh_quotes
+from position.justetf_position import JustETFPosition
 
 
 class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
@@ -262,6 +264,94 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         names = [p["name"] for p in self.ctx.portfolio["equity_portfolio"]]
         self.assertNotIn("Manual OSKAR Entry", names)
         self.assertIn("Existing OSKAR ETF", names)
+
+    def test_estimates_oskar_shares_without_fetch_prices(self) -> None:
+        # --fetch-oskar alone: fresh JustETF quotes are fetched for OSKAR
+        # rows only and shares re-estimated in place; nothing else moves.
+        self.ctx.config.fetch_oskar = True
+        self.ctx.config.fetch_prices = False
+        self.ctx.portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 5.0,
+                "value": 199.0,
+                "broker": "oskar",
+            },
+            {
+                "name": "Scalable ETF",
+                "ISIN": "IE00B4YBJ215",
+                "shares": 7,
+                "value": 700.0,
+                "broker": "scalable",
+            },
+        ]
+        self.ctx.portfolio["cash_portfolio"] = [
+            {
+                "name": "Tagesgeld",
+                "value": 500.0,
+                "broker": "oskar",
+                "ISIN": None,
+            }
+        ]
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            refreshed = _estimate_oskar_shares_with_fresh_quotes(self.ctx)
+        self.assertEqual(refreshed, 1)
+        oskar_row = self.ctx.portfolio["equity_portfolio"][0]
+        self.assertEqual(oskar_row["shares"], 199.0 / 99.5)
+        scalable_row = self.ctx.portfolio["equity_portfolio"][1]
+        self.assertEqual(scalable_row["shares"], 7)
+        self.assertEqual(scalable_row["value"], 700.0)
+        tagesgeld = self.ctx.portfolio["cash_portfolio"][0]
+        self.assertEqual(tagesgeld["value"], 500.0)
+        self.assertIsNone(tagesgeld.get("shares"))
+        self.assertEqual(self.ctx.cache["IE0006WW1TQ4"]["price"], 99.5)
+        self.assertTrue(self.ctx.cache_dirty)
+
+    def test_skips_estimation_when_fetch_prices_set(self) -> None:
+        # With both flags the factory estimates once through the normal
+        # price path; this step must not fetch anything.
+        self.ctx.config.fetch_oskar = True
+        self.ctx.config.fetch_prices = True
+        with patch.object(
+            JustETFPosition,
+            "_fast_info_price",
+            side_effect=AssertionError("_fast_info_price should not be called"),
+        ):
+            refreshed = _estimate_oskar_shares_with_fresh_quotes(self.ctx)
+        self.assertEqual(refreshed, 0)
+        self.assertEqual(self.ctx.portfolio["equity_portfolio"][0]["shares"], 10)
+
+    def test_skips_row_when_quote_missing(self) -> None:
+        # A failed quote fetch skips the row with a warning instead of
+        # aborting the run; other rows still refresh.
+        self.ctx.config.fetch_oskar = True
+        self.ctx.config.fetch_prices = False
+        self.ctx.portfolio["equity_portfolio"] = [
+            {
+                "name": "Xtrackers",
+                "ISIN": "IE0006WW1TQ4",
+                "shares": 10,
+                "value": 100.0,
+                "broker": "oskar",
+            }
+        ]
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=None):
+            with self.assertLogs("cli.update", level="WARNING"):
+                refreshed = _estimate_oskar_shares_with_fresh_quotes(self.ctx)
+        self.assertEqual(refreshed, 0)
+        self.assertEqual(self.ctx.portfolio["equity_portfolio"][0]["shares"], 10)
+
+    def test_noop_without_fetch_oskar(self) -> None:
+        self.ctx.config.fetch_oskar = False
+        self.ctx.config.fetch_prices = False
+        with patch.object(
+            JustETFPosition,
+            "_fast_info_price",
+            side_effect=AssertionError("_fast_info_price should not be called"),
+        ):
+            refreshed = _estimate_oskar_shares_with_fresh_quotes(self.ctx)
+        self.assertEqual(refreshed, 0)
 
     @patch("scrape.oskar.fetch_oskar_etfs")
     def test_adds_missing_oskar_position_to_bucket(self, mock_fetch) -> None:

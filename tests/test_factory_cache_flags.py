@@ -266,9 +266,9 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(other_row["shares"], 50.0 / 99.5)
         write.assert_called_once()
 
-    def test_oskar_estimates_shares_from_cached_quote_without_fetch_prices(self) -> None:
-        # fetch_oskar alone estimates shares as fresh value / cached quote,
-        # without any live price fetch.
+    def test_oskar_no_estimation_without_fetch_prices(self) -> None:
+        # Estimation needs a fresh quote: fetch_oskar alone (cached price)
+        # estimates nothing, even for share-less rows.
         self.ctx.config.fetch_oskar = True
         self.ctx.config.fetch_prices = False
         self.ctx.portfolio.clear()
@@ -290,10 +290,10 @@ class TestFactoryCacheFlags(unittest.TestCase):
                 pos = self._factory(broker="oskar", value=199.0, shares=None, price=None)
             persist_oskar_shares_in_portfolio(self.ctx)
         self.assertEqual(pos.price, 10.0)
-        self.assertEqual(pos.shares, 199.0 / 10.0)
-        self.assertEqual(self.ctx.portfolio["equity_portfolio"][0]["shares"], 199.0 / 10.0)
+        self.assertIsNone(pos.shares)
+        self.assertIsNone(self.ctx.portfolio["equity_portfolio"][0]["shares"])
         self.assertEqual(self.ctx.pending_oskar_shares, {})
-        write.assert_called_once()
+        write.assert_not_called()
 
     def test_oskar_refreshes_set_shares_when_both_flags_set(self) -> None:
         self.ctx.config.fetch_oskar = True
