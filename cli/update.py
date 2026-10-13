@@ -136,13 +136,13 @@ def main(ctx: RuntimeContext) -> None:
         plotter._plot_seq = 0
     logger.info("Writing charts to %s", output_dir)
     total_growth_portfolio.plot_geosplit(
-        title="95-5 Equity Portfolio: Geo Breakdown",
+        title="90-10 Equity Portfolio: Geo Breakdown",
         closing_title="Total Value: {tot_value}",
         label_fontsize=7,
         autopct_fontsize=7,
     )
     total_growth_portfolio.plot_sectors(
-        title="95-5 Equity Portfolio: Sector Breakdown",
+        title="90-10 Equity Portfolio: Sector Breakdown",
         label_fontsize=7,
         autopct_fontsize=7,
     )
