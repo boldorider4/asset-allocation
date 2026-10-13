@@ -8,9 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from visual import PLOTTERS, SECTOR_PALETTE
+from visual import FALLBACK_PALETTE, PLOTTERS, SECTOR_PALETTE, family_colors
 from visual.plot.pie_chart import PieChart
-from visual.plot.web_chart import WebChart, _TAB10
+from visual.plot.web_chart import WebChart
 
 
 class TestWebChart(unittest.TestCase):
@@ -56,7 +56,8 @@ class TestWebChart(unittest.TestCase):
         self.assertEqual([w["value"] for w in wedges], [420.0, 380.0, 200.0])
         self.assertTrue(all(w["unit"] == "Euro" for w in wedges))
         self.assertTrue(all(w["color"].startswith("#") and len(w["color"]) == 7 for w in wedges))
-        self.assertEqual(wedges[0]["color"], "#1f77b4")
+        # No label matches a family: first fallback color.
+        self.assertEqual(wedges[0]["color"], FALLBACK_PALETTE[0])
 
     def test_rerun_overwrites_same_slug(self) -> None:
         WebChart(data={"A": 1.0}, title="Same Title").plot()
@@ -83,7 +84,25 @@ class TestWebChart(unittest.TestCase):
     def test_sector_palette_differs_from_geosplit(self) -> None:
         self.assertGreaterEqual(len(SECTOR_PALETTE), 12)
         self.assertTrue(all(c.startswith("#") and len(c) == 7 for c in SECTOR_PALETTE))
-        self.assertTrue(set(SECTOR_PALETTE).isdisjoint(_TAB10))
+        # The geo fallback carries no green, blue, or yellow (hue-gated;
+        # grays skip the gate since hue is meaningless without saturation).
+        import colorsys
+
+        for color in FALLBACK_PALETTE:
+            r, g, b = (int(color[i : i + 2], 16) / 255.0 for i in (1, 3, 5))
+            hue, _, saturation = colorsys.rgb_to_hls(r, g, b)
+            if saturation < 0.15:
+                continue
+            degrees = hue * 360.0
+            self.assertFalse(
+                80.0 <= degrees <= 165.0, f"{color} reads green"
+            )
+            self.assertFalse(
+                190.0 <= degrees <= 270.0, f"{color} reads blue"
+            )
+            self.assertFalse(
+                38.0 <= degrees <= 75.0, f"{color} reads yellow"
+            )
 
     def test_plot_uses_alternate_palette_when_passed(self) -> None:
         WebChart(data={"A": 0.6, "B": 0.4}, title="Palette").plot(
@@ -95,12 +114,12 @@ class TestWebChart(unittest.TestCase):
             [w["color"] for w in payload["wedges"]], ["#111111", "#222222"]
         )
 
-    def test_plot_defaults_to_tab10_without_palette(self) -> None:
+    def test_plot_defaults_to_family_colors_without_palette(self) -> None:
         WebChart(data={"A": 0.6, "B": 0.4}, title="Default").plot()
         path = self.data_dir / "01-default.raw"
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(
-            [w["color"] for w in payload["wedges"]], list(_TAB10[:2])
+            [w["color"] for w in payload["wedges"]], family_colors(["A", "B"])
         )
 
     def test_pie_chart_forwards_colors_to_matplotlib(self) -> None:
@@ -137,7 +156,7 @@ class TestWebChart(unittest.TestCase):
             PieChart(data={"A": 0.6, "B": 0.4}).plot(colors=["#111111", "#222222"])
             seen.clear()
             PieChart(data={"A": 0.6, "B": 0.4}).plot()
-        self.assertNotIn("colors", seen)
+        self.assertEqual(seen["colors"], family_colors(["A", "B"]))
 
     def test_add_matches_pie_chart_merge(self) -> None:
         left = {"Europe": 45.0, "Developed Markets": 23.0, "Emerging Markets": 32.0}

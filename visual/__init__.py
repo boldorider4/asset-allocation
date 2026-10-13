@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from .plot.visual import SECTOR_PALETTE, Visual
+from .plot.family_palette import FALLBACK_PALETTE, family_colors
 from .plot.web_chart import WebChart
 from .plot.pie_chart import PieChart
 
@@ -23,6 +24,8 @@ def plotter_class(kind: str):
 __all__ = [
     "Visual",
     "SECTOR_PALETTE",
+    "FALLBACK_PALETTE",
+    "family_colors",
     "WebChart",
     "PieChart",
     "PLOTTERS",

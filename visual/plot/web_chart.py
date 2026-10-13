@@ -12,21 +12,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 from .chart_merge import PieFactor, merge_charts, merge_closing_title
+from .family_palette import family_colors
 from .visual import Visual
-
-# matplotlib tab10 — explicit slice colors for the JS engine
-_TAB10 = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-)
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -119,7 +106,14 @@ class WebChart(Visual):
         if sum(sizes) <= 0:
             raise ValueError("sum of weights must be positive")
 
-        palette = list(colors) if colors is not None else _TAB10
+        # No explicit palette (i.e. the geo charts; sector charts pass
+        # SECTOR_PALETTE): color by label family so related wedges read
+        # as related.
+        palette = (
+            list(colors)
+            if colors is not None
+            else family_colors(list(self._data.keys()))
+        )
 
         dest = type(self).data_dir
         dest.mkdir(parents=True, exist_ok=True)

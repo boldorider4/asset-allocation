@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 from .chart_merge import PieFactor, merge_charts, merge_closing_title
+from .family_palette import family_colors
 from .visual_window import VisualWindow
 
 import matplotlib.pyplot as plt
@@ -99,12 +100,19 @@ class PieChart(VisualWindow):
         else:
             autopct_arg = "%1.1f%%"
 
+        # No explicit palette (i.e. the geo charts): same label-aware
+        # family colors as the web backend.
+        resolved_colors = (
+            list(colors)
+            if colors is not None
+            else family_colors(labels)
+        )
         _wedges, texts, autotexts = ax.pie(
             sizes,
             labels=labels,
             autopct=autopct_arg,
             startangle=90,
-            **({"colors": list(colors)} if colors is not None else {}),
+            colors=resolved_colors,
         )
         if label_fontsize is not None:
             for t in texts:
