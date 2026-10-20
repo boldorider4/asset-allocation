@@ -155,8 +155,19 @@ class TestLoadConstituents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets, cache = _write_files(Path(tmp))
             sections = load_constituents(assets, cache)
+        # Every canonical class is always listed (empty when the user
+        # holds nothing there), extra buckets come last.
         self.assertEqual(
-            [label for label, _ in sections], ["Equity", "Cash", "Weird Bucket"]
+            [label for _, label, _ in sections],
+            [
+                "Equity",
+                "Fixed Income",
+                "Commodities / Inflation",
+                "Fixed Maturity",
+                "Cash",
+                "Pensions",
+                "Weird Bucket",
+            ],
         )
 
     def test_full_label_mapping_and_order(self) -> None:
@@ -175,7 +186,7 @@ class TestLoadConstituents(unittest.TestCase):
             cache.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets, cache)
         self.assertEqual(
-            [label for label, _ in sections],
+            [label for _, label, _ in sections],
             [
                 "Equity",
                 "Fixed Income",
@@ -190,12 +201,12 @@ class TestLoadConstituents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets, cache = _write_files(Path(tmp))
             sections = load_constituents(assets, cache)
-        equity = dict(sections)["Equity"]
+        equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertEqual(equity[0]["price"], 81.25)
         self.assertIsNone(equity[0]["value"])
         self.assertTrue(equity[0]["editable_shares"])
         self.assertEqual(equity[1]["price"], 99.5)
-        cash = dict(sections)["Cash"]
+        cash = dict((label, rows) for _, label, rows in sections)["Cash"]
         self.assertIsNone(cash[0]["price"])
         # Editability follows the ISIN, not the broker: the Oskar row has
         # one, so its shares are editable...
@@ -211,7 +222,8 @@ class TestLoadConstituents(unittest.TestCase):
             assets = Path(tmp) / "assets.json"
             assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
             sections = load_constituents(assets, Path(tmp) / "nope.json")
-        self.assertIsNone(dict(sections)["Equity"][0]["price"])
+        equity = dict((label, rows) for _, label, rows in sections)["Equity"]
+        self.assertIsNone(equity[0]["price"])
 
     def test_non_object_assets_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,13 +244,13 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_thin_rules_divide_sections(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="section-rule"'), 2)
+        self.assertEqual(page.count('class="section-rule"'), 6)
         self.assertIn("<h2>Equity</h2>", page)
         self.assertIn("<h2>Weird Bucket</h2>", page)
 
     def test_tables_scroll_horizontally_on_small_screens(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="table-scroll"'), 3)
+        self.assertEqual(page.count('class="table-scroll"'), 7)
         css = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -287,7 +299,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
-        equity = dict(sections)["Equity"]
+        equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertEqual(equity[0]["short_name"], "Amundi")
         self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
         page = render_constituents_page(sections)
@@ -354,8 +366,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_sections_offer_add_row_button(self) -> None:
         page = self._page()
-        # One + button per section (3 fixture sections), addressed by bucket.
-        self.assertEqual(page.count('class="add-row"'), 3)
+        # One + button per section: the six canonical classes plus the
+        # fixture's extra bucket.
+        self.assertEqual(page.count('class="add-row"'), 7)
         self.assertIn(
             '<button type="button" class="add" data-bucket="equity_portfolio"',
             page,
@@ -430,8 +443,18 @@ class TestRenderConstituentsPage(unittest.TestCase):
             assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
-        self.assertEqual([label for label, _ in sections], ["Pensions"])
-        row = dict(sections)["Pensions"][0]
+        self.assertEqual(
+            [label for _, label, _ in sections],
+            [
+                "Equity",
+                "Fixed Income",
+                "Commodities / Inflation",
+                "Fixed Maturity",
+                "Cash",
+                "Pensions",
+            ],
+        )
+        row = dict((label, rows) for _, label, rows in sections)["Pensions"][0]
         self.assertFalse(row["editable_shares"])
         self.assertTrue(row["no_quote"])
         page = render_constituents_page(sections)
@@ -477,7 +500,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
             assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
             cache_path.write_text(json.dumps(cache), encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
-        by_label = dict(sections)
+        by_label = dict((label, rows) for _, label, rows in sections)
         self.assertTrue(by_label["Fixed Maturity"][0]["editable_shares"])
         self.assertTrue(by_label["Equity"][0]["editable_shares"])
         self.assertFalse(by_label["Fixed Maturity"][0]["no_quote"])
@@ -1367,6 +1390,74 @@ class TestKnownBrokers(unittest.TestCase):
             )
 
 
+class TestFreshUserSections(unittest.TestCase):
+    """A user with no assets yet still gets the full set of classes."""
+
+    def _store(self, tmp: Path, payload: object) -> tuple[Path, Path]:
+        assets = tmp / "assets.json"
+        cache = tmp / "cache.json"
+        assets.write_text(json.dumps({"alice": payload}), encoding="utf-8")
+        cache.write_text("{}", encoding="utf-8")
+        return assets, cache
+
+    def test_empty_user_gets_every_canonical_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = self._store(Path(tmp), {})
+            sections = load_constituents(assets, cache, "alice")
+        self.assertEqual(
+            [label for _, label, _ in sections],
+            [
+                "Equity",
+                "Fixed Income",
+                "Commodities / Inflation",
+                "Fixed Maturity",
+                "Cash",
+                "Pensions",
+            ],
+        )
+        self.assertTrue(all(rows == [] for _, _, rows in sections))
+
+    def test_null_user_gets_every_canonical_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = self._store(Path(tmp), None)
+            sections = load_constituents(assets, cache, "alice")
+        self.assertEqual(len(sections), 6)
+        self.assertTrue(all(rows == [] for _, _, rows in sections))
+
+    def test_extra_buckets_of_other_users_are_not_shown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = Path(tmp) / "assets.json"
+            cache = Path(tmp) / "cache.json"
+            assets.write_text(
+                json.dumps(
+                    {
+                        "alice": {},
+                        "bob": {"crypto_portfolio": [{"name": "C"}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cache.write_text("{}", encoding="utf-8")
+            sections = load_constituents(assets, cache, "alice")
+        self.assertNotIn("Crypto Portfolio", [label for _, label, _ in sections])
+
+    def test_add_button_on_every_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = self._store(Path(tmp), {})
+            page = render_constituents_page(load_constituents(assets, cache, "alice"))
+        # One "+" per class, so an empty portfolio can be filled.
+        self.assertEqual(page.count('class="add-row"'), 6)
+        for bucket in (
+            "equity_portfolio",
+            "bond_portfolio",
+            "commodity_portfolio",
+            "fixed_maturity_bond_portfolio",
+            "cash_portfolio",
+            "pension_portfolio",
+        ):
+            self.assertIn(f'data-bucket="{bucket}"', page)
+
+
 class TestAddConstituent(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
         assets = tmp / "assets.json"
@@ -1433,9 +1524,13 @@ class TestAddConstituent(unittest.TestCase):
                 with self.subTest(kwargs=kwargs):
                     with self.assertRaises(ValueError):
                         add_constituent(assets, "equity_portfolio", **kwargs)
-            with self.assertRaises(ValueError):
-                add_constituent(assets, "nope", name="X", broker="scalable")
+            # Junk rows are rejected and leave the file untouched...
             self.assertEqual(assets.read_text(encoding="utf-8"), before)
+            # ...while an unknown bucket is created, so the first row of a
+            # class the user does not hold yet can be added.
+            add_constituent(assets, "nope", name="X", broker="scalable")
+            stored = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            self.assertEqual([row["name"] for row in stored["nope"]], ["X"])
 
 
 class TestDeleteConstituent(unittest.TestCase):
@@ -2052,7 +2147,6 @@ class TestConstituentsRoute(_RouteCase):
     def test_post_add_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")
         for payload in [
-            {"bucket": "nope", "name": "X", "broker": "scalable"},
             {"bucket": "equity_portfolio", "name": "   ", "broker": "scalable"},
             {"bucket": "equity_portfolio", "name": "X", "broker": "nope"},
             {"bucket": "equity_portfolio", "name": "X", "broker": "scalable",
@@ -2065,6 +2159,12 @@ class TestConstituentsRoute(_RouteCase):
                 status, _ = self._post_add(payload)
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        # An unknown bucket is created instead of rejected, so a fresh user
+        # can add a row to a class they hold nothing in yet.
+        status, _ = self._post_add({"bucket": "nope", "name": "X", "broker": "scalable"})
+        self.assertEqual(status, 200)
+        stored = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        self.assertEqual([row["name"] for row in stored["nope"]], ["X"])
 
     def test_get_brokers_lists_marks(self) -> None:
         status, body = self._get("/api/constituents/brokers")

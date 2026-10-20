@@ -112,12 +112,13 @@ def main(ctx: RuntimeContext) -> None:
 
     # Composition from the final dicts: the factory stages cache backfills
     # and estimates OSKAR shares from fresh scrape values, queuing them for the persists below.
-    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio[EQUITY_PORTFOLIO], ctx=ctx)
-    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio[FIXED_MATURITY_BOND_PORTFOLIO], ctx=ctx)
-    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio[CASH_PORTFOLIO], ctx=ctx)
-    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio[BOND_PORTFOLIO], ctx=ctx)
-    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio[COMMODITY_PORTFOLIO], ctx=ctx)
-    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio[PENSION_PORTFOLIO], ctx=ctx)
+    # Missing buckets are simply empty (a fresh user holds nothing yet).
+    equity_portfolio = RegionalPortfolio(name="Equity Portfolio", positions=ctx.portfolio.get(EQUITY_PORTFOLIO, []), ctx=ctx)
+    fixed_maturity_bond_portfolio = NonRegionalPortfolio(name="Bimmer Fund", positions=ctx.portfolio.get(FIXED_MATURITY_BOND_PORTFOLIO, []), ctx=ctx)
+    cash_portfolio = NonRegionalPortfolio(name="Emergency Fund", positions=ctx.portfolio.get(CASH_PORTFOLIO, []), ctx=ctx)
+    non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio.get(BOND_PORTFOLIO, []), ctx=ctx)
+    commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio.get(COMMODITY_PORTFOLIO, []), ctx=ctx)
+    pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio.get(PENSION_PORTFOLIO, []), ctx=ctx)
 
     # The persists consume the factory-queued pending writes
     persist_oskar_shares_in_portfolio(ctx)

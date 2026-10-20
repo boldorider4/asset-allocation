@@ -42,12 +42,14 @@ class NonRegionalPortfolio(Portfolio):
         else:
             self._visualizer_data = {k: 0.0 for k in self._visualizer_data}
 
-        self._geosplit_visualizer = plotter(
-            data=self._visualizer_data,
-            title="{}: {:.2f} Euro".format(name, self._value),
-            closing_title="Value: {:.2f}".format(self._value),
-            factor={"value": self._value, "unit": "Euro"},
-        )
+        self._geosplit_visualizer = None
+        if self._visualizer_data:
+            self._geosplit_visualizer = plotter(
+                data=self._visualizer_data,
+                title="{}: {:.2f} Euro".format(name, self._value),
+                closing_title="Value: {:.2f}".format(self._value),
+                factor={"value": self._value, "unit": "Euro"},
+            )
 
     def _calculate_dmem(self) -> None:
         return None

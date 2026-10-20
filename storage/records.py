@@ -257,13 +257,16 @@ class UserAssets(StorageObject):
         self, key: str, data: dict[str, Any] | None = None
     ) -> None:
         self._key = str(key)
-        self._buckets: dict[str, list[dict[str, Any]]] = {}
-        if data:
-            self._buckets = self._coerce(data, key=self._key)
+        # _coerce defines what a user payload may be (None = a user listed
+        # without any assets yet); one place, so every path agrees.
+        self._buckets = self._coerce(data, key=self._key)
         self.validate()
 
     @staticmethod
     def _coerce(data: Any, *, key: str) -> dict[str, list[dict[str, Any]]]:
+        if data is None:
+            # A user listed without any assets yet: an empty portfolio.
+            return {}
         if isinstance(data, list):
             # A pre-user file stored the buckets directly at the top
             # level, so a list payload means the file predates users.

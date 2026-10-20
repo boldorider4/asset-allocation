@@ -180,12 +180,14 @@ class RegionalPortfolio(Portfolio):
             self._labeled_groups, self._regional_positions, self._value
         )
 
-        self._geosplit_visualizer = plotter(
-            data=self._geosplit_data,
-            title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
-            closing_title="Value: {:.2f}".format(self._value),
-            factor={"value": self._value, "unit": "Euro"},
-        )
+        self._geosplit_visualizer = None
+        if self._geosplit_data:
+            self._geosplit_visualizer = plotter(
+                data=self._geosplit_data,
+                title="{}: Regional Split (US vs. Ex-US vs. EM): {:.2f} Euro".format(self._name, self._value),
+                closing_title="Value: {:.2f}".format(self._value),
+                factor={"value": self._value, "unit": "Euro"},
+            )
 
     def plot_dmem(self) -> None:
         if self._dmem_visualizer is not None:

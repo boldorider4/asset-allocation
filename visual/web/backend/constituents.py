@@ -185,8 +185,14 @@ def load_constituents(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    """Read one user's assets + the shared cache into display sections."""
+) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    """Read one user's assets + the shared cache into display sections.
+
+    Sections are ``(bucket, label, rows)``. Every canonical asset class
+    is always present — empty when the user holds nothing there yet — so
+    a fresh user can add rows to any class; extra buckets the user has
+    (outside the canonical set) are appended after them.
+    """
     repo = _assets_repo(assets_path, user, backend, postgres_dsn)
     repo.open()
     if not repo.exists():
@@ -207,11 +213,13 @@ def load_constituents(
         cache = {}
 
     known = {key for key, _ in SECTION_ORDER}
-    ordered_keys = [key for key, _ in SECTION_ORDER if key in assets]
+    # Canonical classes first (always, even when empty), then any extra
+    # bucket the user happens to hold.
+    ordered_keys = [key for key, _ in SECTION_ORDER]
     ordered_keys.extend(k for k in assets if k not in known)
 
     labels = {key: label for key, label in SECTION_ORDER}
-    sections: list[tuple[str, list[dict[str, Any]]]] = []
+    sections: list[tuple[str, str, list[dict[str, Any]]]] = []
     for key in ordered_keys:
         rows = assets.get(key) or []
         if not isinstance(rows, list):
@@ -248,7 +256,7 @@ def load_constituents(
                     "no_quote": no_quote,
                 }
             )
-        sections.append((labels.get(key, _prettify_bucket(key)), display))
+        sections.append((key, labels.get(key, _prettify_bucket(key)), display))
     return sections
 
 
@@ -502,6 +510,11 @@ def add_constituent(
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
+    if rows is None:
+        # The user does not hold this class yet: create it, so the first
+        # row can be added to an empty portfolio.
+        rows = []
+        assets[bucket] = rows
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
     stored = {
@@ -599,10 +612,15 @@ def _render_row(row: dict[str, Any]) -> str:
 
 
 def render_constituents_page(
-    sections: list[tuple[str, list[dict[str, Any]]]],
+    sections: list[tuple[str, str, list[dict[str, Any]]]],
     incognito: bool = False,
 ) -> str:
-    """Render display sections as a full standalone HTML page."""
+    """Render display sections as a full standalone HTML page.
+
+    Sections are ``(bucket, label, rows)``. Every section gets the
+    "add row" button — including empty ones, so a fresh user can start
+    filling any class.
+    """
     overview_href = "/dashboard?incognito=true" if incognito else "/dashboard"
     if incognito:
         incognito_button = (
@@ -619,7 +637,7 @@ def render_constituents_page(
             '<span class="incognito-glyph" aria-hidden="true"></span></a>'
         )
     parts: list[str] = []
-    for index, (label, rows) in enumerate(sections):
+    for index, (bucket, label, rows) in enumerate(sections):
         if index:
             parts.append('<hr class="section-rule" />')
         parts.append(f"<section><h2>{html.escape(label, quote=False)}</h2>")
@@ -635,14 +653,15 @@ def render_constituents_page(
         for row in rows:
             parts.append(_render_row(row))
         parts.append("</tbody></table></div>")
-        if rows:
-            parts.append(
-                f'<div class="add-row">'
-                f'<button type="button" class="add" '
-                f'data-bucket="{html.escape(rows[0]["bucket"], quote=True)}" '
-                f'title="Add row" aria-label="Add row">+</button>'
-                f"</div>"
-            )
+        # The add button shows on empty sections too: a fresh user must be
+        # able to start filling any class.
+        parts.append(
+            f'<div class="add-row">'
+            f'<button type="button" class="add" '
+            f'data-bucket="{html.escape(bucket, quote=True)}" '
+            f'title="Add row" aria-label="Add row">+</button>'
+            f"</div>"
+        )
         parts.append("</section>")
     return f"""<!DOCTYPE html>
 <html lang="en">
