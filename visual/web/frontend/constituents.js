@@ -85,7 +85,7 @@
     };
     let data = null;
     try {
-      const response = await fetch("/api/constituents", {
+      const response = await fetch(urlWithParams("/api/constituents"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -148,7 +148,7 @@
     button.setAttribute("aria-disabled", "true");
     let data = null;
     try {
-      const response = await fetch("/api/constituents/delete", {
+      const response = await fetch(urlWithParams("/api/constituents/delete"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -224,7 +224,7 @@
     if (brokerCatalog) {
       return brokerCatalog;
     }
-    const response = await fetch("/api/constituents/brokers", { cache: "no-store" });
+    const response = await fetch(urlWithParams("/api/constituents/brokers"), { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
     }
@@ -418,7 +418,7 @@
     isinInput.dataset.busy = "1";
     let exists = false;
     try {
-      const response = await fetch("/api/constituents/check-isin", {
+      const response = await fetch(urlWithParams("/api/constituents/check-isin"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isin: isin }),
@@ -505,7 +505,7 @@
     okButton.dataset.busy = "1";
     let data = null;
     try {
-      const response = await fetch("/api/constituents/add", {
+      const response = await fetch(urlWithParams("/api/constituents/add"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -715,7 +715,7 @@
     }
     let data = null;
     try {
-      const response = await fetch("/api/constituents/order", {
+      const response = await fetch(urlWithParams("/api/constituents/order"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bucket: bucket, order: order }),
@@ -826,7 +826,9 @@
     if (overview) {
       overview.setAttribute(
         "href",
-        active ? "/dashboard?incognito=true" : "/dashboard"
+        urlWithParams("/dashboard", {
+          incognito: active ? "true" : null,
+        })
       );
     }
     // Keep the idle-prefetched dashboard URL on the current state.
@@ -841,11 +843,12 @@
       try {
         // The query is backend-tracked incognito state; the view lives
         // in the hash and must survive the rewrite (single document).
-        // Pathname stays wherever this document was served from
-        // (/dashboard in-app, /constituents on direct loads).
+        // The selected user is preserved as well.
         const path = window.location.pathname;
         const url =
-          path + (active ? "?incognito=true" : "") + window.location.hash;
+          urlWithParams(path, {
+            incognito: active ? "true" : null,
+          }) + window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts: visuals already applied.
@@ -911,9 +914,9 @@
       link.rel = "prefetch";
       document.head.appendChild(link);
     }
-    link.href = document.body.classList.contains("incognito")
-      ? "/dashboard?incognito=true"
-      : "/dashboard";
+    link.href = urlWithParams("/dashboard", {
+      incognito: document.body.classList.contains("incognito") ? "true" : null,
+    });
   }
 
   function setOverlay(visible) {
@@ -954,7 +957,7 @@
     link.dataset.busy = "1";
     setOverlay(true);
     try {
-      const response = await fetch("/api/update", { method: "POST" });
+      const response = await fetch(urlWithParams("/api/update"), { method: "POST" });
       if (!response.ok) {
         throw new Error(await response.text());
       }

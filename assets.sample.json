@@ -1,4 +1,5 @@
 {
+  "default": {
     "equity_portfolio": [
       {
         "name": "Amundi Core MSCI World UCITS ETF (Acc)",
@@ -121,4 +122,5 @@
         "usavn": null
       }
     ]
+  }
 }

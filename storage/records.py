@@ -33,6 +33,7 @@ __all__ = [
     "DictRow",
     "CacheEntry",
     "AssetBucket",
+    "UserAssets",
     "IsinRecord",
 ]
 
@@ -241,6 +242,95 @@ class CacheEntry(DictRow):
         if fractions is None:
             return None
         return [{"name": name, "weight_pct": float(w) * 100.0} for name, w in fractions.items()]
+
+
+class UserAssets(StorageObject):
+    """One user's whole portfolio: ``{bucket: [positions]}``.
+
+    Keyed by user name; the payload is that user's portfolio buckets, so
+    the assets file serialises as ``{"<user>": {"<bucket>": [...]}}``.
+    Buckets are validated through :class:`AssetBucket`, keeping the
+    per-bucket rules in one place.
+    """
+
+    def __init__(
+        self, key: str, data: dict[str, Any] | None = None
+    ) -> None:
+        self._key = str(key)
+        self._buckets: dict[str, list[dict[str, Any]]] = {}
+        if data:
+            self._buckets = self._coerce(data, key=self._key)
+        self.validate()
+
+    @staticmethod
+    def _coerce(data: Any, *, key: str) -> dict[str, list[dict[str, Any]]]:
+        if not isinstance(data, dict):
+            raise TypeError(f"user {key!r} assets must be a JSON object")
+        out: dict[str, list[dict[str, Any]]] = {}
+        for bucket, positions in data.items():
+            row = AssetBucket.from_dict(str(bucket), positions)
+            out[str(bucket)] = row.positions
+        return out
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    def buckets(self) -> dict[str, list[dict[str, Any]]]:
+        """The user's buckets as plain ``{bucket: [positions]}``."""
+        return {b: [dict(p) for p in positions] for b, positions in self._buckets.items()}
+
+    def set_bucket(self, bucket: str, positions: list[dict[str, Any]]) -> None:
+        """Replace one bucket wholesale (validating its positions)."""
+        row = AssetBucket.from_dict(str(bucket), positions)
+        self._buckets[str(bucket)] = row.positions
+
+    def remove_bucket(self, bucket: str) -> bool:
+        """Drop one bucket; True when anything was removed."""
+        return self._buckets.pop(str(bucket), None) is not None
+
+    def replace_all(self, buckets: dict[str, Any]) -> None:
+        """Replace the whole bucket map (the user's complete portfolio)."""
+        self._buckets = self._coerce(buckets, key=self._key)
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        return self.buckets()
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> UserAssets:
+        return cls(str(key), raw)
+
+    def merge(self, partial: dict[str, Any]) -> None:
+        """Replace the buckets named in ``partial`` (others are kept).
+
+        Matches the historical bucket semantics: a bucket is replaced
+        wholesale, never merged row by row.
+        """
+        if not isinstance(partial, dict):
+            raise TypeError(
+                f"partial update for {self._key!r} must be a dict of buckets"
+            )
+        coerced = self._coerce(partial, key=self._key)
+        self._buckets.update(coerced)
+
+    def validate(self) -> None:
+        if not self._key.strip():
+            raise ValueError("user key must be a non-empty string")
+        for bucket, positions in self._buckets.items():
+            AssetBucket.from_dict(bucket, positions)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, UserAssets)
+            and other._key == self._key
+            and other._buckets == self._buckets
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"UserAssets(key={self._key!r}, "
+            f"buckets={sorted(self._buckets)!r})"
+        )
 
 
 class AssetBucket(DictRow):

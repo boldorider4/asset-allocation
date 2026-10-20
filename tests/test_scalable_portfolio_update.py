@@ -114,7 +114,7 @@ class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "assets.json"
             write_portfolio(path, self.ctx.portfolio)
-            written = json.loads(path.read_text(encoding="utf-8"))
+            written = json.loads(path.read_text(encoding="utf-8"))["default"]
         pos = written[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)

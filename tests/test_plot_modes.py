@@ -143,7 +143,7 @@ class TestSinglePassWritesFlatDir(unittest.TestCase):
             title="Complete Portfolio",
             closing_title="Net Worth: {tot_value}",
         )
-        raw = server / "data" / "01-complete-portfolio.raw"
+        raw = server / "data" / "default" / "01-complete-portfolio.raw"
         self.assertTrue(raw.is_file())
         payload = json.loads(raw.read_text(encoding="utf-8"))
         self.assertEqual(payload["closing_title"], "Net Worth: 100.00")

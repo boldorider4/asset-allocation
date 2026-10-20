@@ -337,10 +337,16 @@ class TestRuntimeContextCache(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp))
             bad = Path(tmp) / "assets.json"
-            bad.write_text(_json.dumps({"equity_portfolio": [{"ISIN": "X"}]}), encoding="utf-8")
+            bad.write_text(
+                _json.dumps({"default": {"equity_portfolio": [{"ISIN": "X"}]}}),
+                encoding="utf-8",
+            )
             ctx.load_portfolio()
             self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
-            bad.write_text(_json.dumps({"equity_portfolio": "nope"}), encoding="utf-8")
+            bad.write_text(
+                _json.dumps({"default": {"equity_portfolio": "nope"}}),
+                encoding="utf-8",
+            )
             ctx2 = self._ctx(Path(tmp))
             with self.assertRaises(ValueError):
                 ctx2.load_portfolio()
@@ -391,7 +397,7 @@ class TestOutputDataDir(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"
             ctx = RuntimeContext(config=AppConfig(server=_server(server)))
-            self.assertEqual(ctx.output_data_dir(), server / "data")
+            self.assertEqual(ctx.output_data_dir(), server / "data" / "default")
 
     def test_output_dir_overrides_serve_tree(self) -> None:
         from cli.context import PlotterConfig
@@ -404,7 +410,7 @@ class TestOutputDataDir(unittest.TestCase):
                 plotter_config=PlotterConfig(output_dir=out),
             )
             ctx = RuntimeContext(config=config)
-            self.assertEqual(ctx.output_data_dir(), out)
+            self.assertEqual(ctx.output_data_dir(), out / "default")
 
     def test_server_data_dir_renames_legacy_tree(self) -> None:
         from cli.context import ServerConfig
@@ -419,7 +425,7 @@ class TestOutputDataDir(unittest.TestCase):
             ctx = RuntimeContext(config=AppConfig(server=server))
             self.assertEqual(
                 ctx.output_data_dir(),
-                Path(tmp) / "visualizer" / "d",
+                Path(tmp) / "visualizer" / "d" / "default",
             )
 
     def test_webchart_writes_to_server_data(self) -> None:
@@ -431,9 +437,11 @@ class TestOutputDataDir(unittest.TestCase):
             WebChart.data_dir = ctx.output_data_dir()
             WebChart._slug_counts = {}
             WebChart._plot_seq = 0
-            self.assertEqual(WebChart.data_dir, server / "data")
+            self.assertEqual(WebChart.data_dir, server / "data" / "default")
             WebChart(data={"A": 1.0}, title="Clear check").plot()
-            self.assertTrue((server / "data" / "01-clear-check.raw").is_file())
+            self.assertTrue(
+                (server / "data" / "default" / "01-clear-check.raw").is_file()
+            )
 
 
 def _server(directory: Path):

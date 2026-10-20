@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 from cli.common import DEFAULT_ISIN_PORTFOLIO_BUCKET
 from cli.logger import attach_color_stderr_handler_for_module
+from storage.assets_file import DEFAULT_USER_NAME
 from storage.records import CacheEntry
 
 logger = logging.getLogger(__name__)
@@ -112,33 +111,34 @@ def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
     logger.info("staged %d broker quote(s) in cache", count)
 
 
-def load_portfolio(path: Path) -> dict[str, list[dict]]:
-    """Load portfolio buckets from a JSON file."""
-    with Path(path).open(encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError("assets root must be a JSON object")
-    for key, positions in data.items():
-        if not isinstance(positions, list):
-            raise ValueError(f"{key!r} must be a JSON array")
-        for i, pos in enumerate(positions):
-            if not isinstance(pos, dict):
-                raise ValueError(f"{key}[{i}] must be a JSON object")
-    return data
+def load_portfolio(path: Path, user: str = DEFAULT_USER_NAME) -> dict[str, list[dict]]:
+    """Load one user's portfolio buckets from the assets JSON file.
 
-
-def write_portfolio(path: Path, data: dict[str, list[dict]]) -> None:
-    """Overwrite the assets JSON file at ``path`` with ``data``.
-
-    Written atomically (temp file + rename) so a killed update never
-    leaves a torn file behind.
+    The file is keyed by user (``{"<user>": {"<bucket>": [...]}}``); a
+    legacy flat file raises with a pointer to the migration script.
     """
+    from storage.assets_file import read_assets_root, user_buckets
+
+    return user_buckets(read_assets_root(path), user)
+
+
+def write_portfolio(
+    path: Path, data: dict[str, list[dict]], user: str = DEFAULT_USER_NAME
+) -> None:
+    """Overwrite one user's buckets in the assets JSON file at ``path``.
+
+    Other users' entries are preserved. Written atomically (temp file +
+    rename) so a killed update never leaves a torn file behind.
+    """
+    from storage.assets_file import read_assets_root, write_assets_root
+
     assets_path = Path(path)
-    tmp_path = assets_path.with_name(f".{assets_path.name}.{os.getpid()}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, assets_path)
+    try:
+        users = read_assets_root(assets_path)
+    except FileNotFoundError:
+        users = {}
+    users[str(user)] = data
+    write_assets_root(assets_path, users)
 
 
 def persist_oskar_shares_in_portfolio(ctx: Any) -> None:

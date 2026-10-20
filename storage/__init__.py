@@ -3,13 +3,22 @@
 
 * :mod:`storage.storage` — backend-agnostic ``Storage`` / ``StorageObject``.
 * :mod:`storage.records` — backend-agnostic row types (``DictRow``,
-  ``CacheEntry``, ``AssetBucket``, ``IsinRecord``).
+  ``CacheEntry``, ``AssetBucket``, ``UserAssets``, ``IsinRecord``).
+* :mod:`storage.assets_file` — the user-keyed assets file shape.
 * :mod:`storage.json_storage` / :mod:`storage.memory_storage` /
   :mod:`storage.postgres_storage` — backends.
 * :mod:`storage.repositories` — domain logic over any backend
   (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``).
 """
 
+from storage.assets_file import (
+    DEFAULT_USER_NAME,
+    LegacyAssetsFormat,
+    UnknownUser,
+    read_assets_root,
+    user_buckets,
+    write_assets_root,
+)
 from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
 from storage.postgres_storage import PostgresStorage
@@ -18,6 +27,7 @@ from storage.records import (
     CacheEntry,
     DictRow,
     IsinRecord,
+    UserAssets,
 )
 from storage.repositories import AssetRepository, CacheRepository, IsinRegistry
 from storage.storage import Storage, StorageObject
@@ -28,6 +38,7 @@ __all__ = [
     "DictRow",
     "CacheEntry",
     "AssetBucket",
+    "UserAssets",
     "IsinRecord",
     "JsonStorage",
     "MemoryStorage",
@@ -35,4 +46,10 @@ __all__ = [
     "CacheRepository",
     "AssetRepository",
     "IsinRegistry",
+    "DEFAULT_USER_NAME",
+    "LegacyAssetsFormat",
+    "UnknownUser",
+    "read_assets_root",
+    "user_buckets",
+    "write_assets_root",
 ]

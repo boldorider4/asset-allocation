@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import html
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from cli.common import (
     USAVN,
     VALUE,
 )
+from storage.assets_file import DEFAULT_USER_NAME
 
 # Canonical section order with display labels; unknown bucket keys are
 # appended after these, prettified.
@@ -153,14 +153,31 @@ def _has_isin(isin: Any) -> bool:
     return isinstance(isin, str) and bool(isin.strip())
 
 
+def _load_root(assets_path: str | Path) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Read the whole assets file (``{user: {bucket: [positions]}}``)."""
+    from storage.assets_file import read_assets_root
+
+    return read_assets_root(assets_path)
+
+
+def _save_root(
+    assets_path: str | Path,
+    root: dict[str, dict[str, list[dict[str, Any]]]],
+) -> None:
+    """Write the whole assets file (atomic)."""
+    from storage.assets_file import write_assets_root
+
+    write_assets_root(assets_path, root)
+
+
 def load_constituents(
-    assets_path: str | Path, cache_path: str | Path
+    assets_path: str | Path, cache_path: str | Path, user: str = DEFAULT_USER_NAME
 ) -> list[tuple[str, list[dict[str, Any]]]]:
-    """Read assets + cache from disk into ordered display sections."""
-    with open(assets_path, encoding="utf-8") as f:
-        assets = json.load(f)
-    if not isinstance(assets, dict):
-        raise ValueError("assets root must be a JSON object")
+    """Read one user's assets + the shared cache into display sections."""
+    from storage.assets_file import require_user
+
+    root = _load_root(assets_path)
+    assets = require_user(root, user)
     try:
         with open(cache_path, encoding="utf-8") as f:
             cache = json.load(f)
@@ -285,6 +302,7 @@ def store_constituent_value(
     field: str,
     raw_value: Any,
     cache: dict[str, Any] | None = None,
+    user: str = DEFAULT_USER_NAME,
 ) -> dict[str, Any]:
     """Persist one editable cell into the assets file (atomic write).
 
@@ -301,12 +319,12 @@ def store_constituent_value(
     Raises ``ValueError`` for invalid addresses, locked fields, or junk
     values; ``OSError``/``json`` errors propagate for missing/corrupt files.
     """
+    from storage.assets_file import require_user
+
     if field not in ("shares", "value", "short_name"):
         raise ValueError(f"field must be shares, value or short_name, got {field!r}")
-    with open(assets_path, encoding="utf-8") as f:
-        assets = json.load(f)
-    if not isinstance(assets, dict):
-        raise ValueError("assets root must be a JSON object")
+    root = _load_root(assets_path)
+    assets = require_user(root, user)
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -333,12 +351,8 @@ def store_constituent_value(
                 row["shares"] = value / price
         elif field == "shares" or _is_number(row.get("shares")):
             recomputed = False
-    path = Path(assets_path)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(assets, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    root[str(user)] = assets
+    _save_root(assets_path, root)
     return {
         "value": row.get("value"),
         "shares": row.get("shares"),
@@ -348,7 +362,10 @@ def store_constituent_value(
 
 
 def reorder_constituents(
-    assets_path: str | Path, bucket: str, order: list[int]
+    assets_path: str | Path,
+    bucket: str,
+    order: list[int],
+    user: str = DEFAULT_USER_NAME,
 ) -> dict[str, Any]:
     """Persist a new row order for one bucket (atomic write).
 
@@ -358,33 +375,32 @@ def reorder_constituents(
 
     Returns ``{"order": [...]}`` echoing the stored order.
     """
+    from storage.assets_file import require_user
+
     if (
         not isinstance(order, list)
         or not order
         or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
     ):
         raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
-    with open(assets_path, encoding="utf-8") as f:
-        assets = json.load(f)
-    if not isinstance(assets, dict):
-        raise ValueError("assets root must be a JSON object")
+    root = _load_root(assets_path)
+    assets = require_user(root, user)
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
     if sorted(order) != list(range(len(rows))):
         raise ValueError(f"order must list every row index once, got {order!r}")
     assets[bucket] = [rows[i] for i in order]
-    path = Path(assets_path)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(assets, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    root[str(user)] = assets
+    _save_root(assets_path, root)
     return {"order": list(order)}
 
 
 def delete_constituent(
-    assets_path: str | Path, bucket: str, index: int
+    assets_path: str | Path,
+    bucket: str,
+    index: int,
+    user: str = DEFAULT_USER_NAME,
 ) -> dict[str, Any]:
     """Delete one row from a bucket (atomic write).
 
@@ -393,10 +409,10 @@ def delete_constituent(
 
     Returns ``{"deleted": True, "rows": n}`` with the remaining row count.
     """
-    with open(assets_path, encoding="utf-8") as f:
-        assets = json.load(f)
-    if not isinstance(assets, dict):
-        raise ValueError("assets root must be a JSON object")
+    from storage.assets_file import require_user
+
+    root = _load_root(assets_path)
+    assets = require_user(root, user)
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -404,12 +420,8 @@ def delete_constituent(
         del rows[index]
     else:
         raise ValueError(f"row index out of range: {index!r}")
-    path = Path(assets_path)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(assets, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    root[str(user)] = assets
+    _save_root(assets_path, root)
     return {"deleted": True, "rows": len(rows)}
 
 
@@ -435,6 +447,7 @@ def add_constituent(
     shares: Any = None,
     broker: Any = None,
     cache: dict[str, Any] | None = None,
+    user: str = DEFAULT_USER_NAME,
 ) -> dict[str, Any]:
     """Append a new row to a bucket (atomic write).
 
@@ -445,6 +458,8 @@ def add_constituent(
     Returns the display row (same shape as :func:`load_constituents`
     rows) for rendering.
     """
+    from storage.assets_file import require_user
+
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be a non-blank string")
     if broker not in _BROKER_ICONS:
@@ -458,10 +473,8 @@ def add_constituent(
     parsed_value = None if value is None else _parse_stored_value(value)
     parsed_shares = None if shares is None else _parse_stored_value(shares)
     clean_short = _parse_stored_text("" if short_name is None else short_name)
-    with open(assets_path, encoding="utf-8") as f:
-        assets = json.load(f)
-    if not isinstance(assets, dict):
-        raise ValueError("assets root must be a JSON object")
+    root = _load_root(assets_path)
+    assets = require_user(root, user)
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -478,12 +491,8 @@ def add_constituent(
     }
     rows.append(stored)
     index = len(rows) - 1
-    path = Path(assets_path)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(assets, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    root[str(user)] = assets
+    _save_root(assets_path, root)
     price = _cached_price_for(cache, clean_isin)
     fields = updatable_fields(bucket, stored)
     return {
