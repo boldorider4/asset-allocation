@@ -44,12 +44,20 @@ class JsonStorage(Storage[T]):
     """
 
     def __init__(
-        self, path: str | Path, object_factory: type[T] | None = None
+        self,
+        path: str | Path,
+        object_factory: type[T] | None = None,
+        *,
+        strict: bool = False,
     ) -> None:
         self._path = Path(path)
         self._factory: type[T] = (
             object_factory if object_factory is not None else DictRow  # type: ignore[assignment]
         )
+        # Strict stores raise on a bad row instead of skipping it: the
+        # assets store uses it so a malformed file fails loudly instead of
+        # looking like an empty portfolio.
+        self._strict = strict
         self._objects: dict[str, T] = {}
         self._loaded = False
         self._dirty = False
@@ -157,6 +165,10 @@ class JsonStorage(Storage[T]):
             logger.warning("storage file %s unreadable (%s); starting empty", self._path, exc)
             raw = {}
         if not isinstance(raw, dict):
+            if self._strict:
+                raise ValueError(
+                    f"storage file {self._path} root must be a JSON object"
+                )
             logger.warning("storage file %s root must be an object; starting empty", self._path)
             raw = {}
         objects: dict[str, T] = {}
@@ -164,6 +176,8 @@ class JsonStorage(Storage[T]):
             try:
                 objects[str(key)] = self._factory.from_dict(str(key), value)  # type: ignore[assignment]
             except (TypeError, ValueError, KeyError) as exc:
+                if self._strict:
+                    raise
                 logger.warning("skipping bad row %r in %s (%s)", key, self._path, exc)
         self._objects = objects
         self._loaded = True

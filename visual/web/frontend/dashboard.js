@@ -59,7 +59,7 @@
     setSyncPressed(link, true);
     setStatus("Syncing prices…");
     try {
-      const response = await fetch("/api/update", {
+      const response = await fetch(urlWithParams("/api/update"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "fat" }),
@@ -109,7 +109,9 @@
     if (edit) {
       edit.setAttribute(
         "href",
-        active ? "/constituents?incognito=true" : "/constituents"
+        urlWithParams("/constituents", {
+          incognito: active ? "true" : null,
+        })
       );
     }
     // Keep the idle-prefetched constituents URL on the current state.
@@ -117,17 +119,20 @@
     if (prefetch) {
       prefetch.setAttribute(
         "href",
-        active ? "/constituents?incognito=true" : "/constituents"
+        urlWithParams("/constituents", {
+          incognito: active ? "true" : null,
+        })
       );
     }
     if (syncUrl) {
       try {
         // The query is backend-tracked incognito state; the view lives
         // in the hash and must survive the rewrite (single document).
+        // The selected user is preserved as well.
         const url =
-          "/dashboard" +
-          (active ? "?incognito=true" : "") +
-          window.location.hash;
+          urlWithParams(window.location.pathname, {
+            incognito: active ? "true" : null,
+          }) + window.location.hash;
         window.history.replaceState(null, "", url);
       } catch {
         // Non-pushState contexts (tests, file://): visuals already applied.
@@ -165,7 +170,7 @@
   }
 
   async function fetchUpdateStatus() {
-    const response = await fetch("/api/update", { cache: "no-store" });
+    const response = await fetch(urlWithParams("/api/update"), { cache: "no-store" });
     if (!response.ok) {
       throw new Error(await response.text());
     }
@@ -232,7 +237,7 @@
       event.currentTarget.getAttribute("href") || "/constituents";
     try {
       window
-        .fetch("/api/cancel", { method: "POST", keepalive: true })
+        .fetch(urlWithParams("/api/cancel"), { method: "POST", keepalive: true })
         .then(null, function () {
           // Ignore: the constituents page is useful with or without a cancel.
         });

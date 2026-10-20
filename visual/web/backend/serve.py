@@ -25,6 +25,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from .constituents import load_constituents, render_constituents_page
+from cli.common import DEFAULT_USER_NAME
+from storage.repositories import UnknownUser
+from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +164,9 @@ def _update_worker(
     cache_file: str,
     fat: bool,
     directory: str,
+    user: str,
+    backend: str,
+    postgres_dsn: str,
     result_conn,
     cancel_event,
 ) -> None:
@@ -202,7 +208,14 @@ def _update_worker(
         fetch_prices=fetch_prices,
         fetch_geosplit=fetch_geosplit,
         fetch_sectorsplit=fetch_sectorsplit,
-        server=ServerConfig(port=0, address="localhost", directory=Path(directory)),
+        user=user,
+        server=ServerConfig(
+            port=0,
+            address="localhost",
+            directory=Path(directory),
+            backend=backend,
+            postgres_dsn=postgres_dsn,
+        ),
         plotter_config=ini_plotter,
     )
     ctx = RuntimeContext(config=config)
@@ -297,13 +310,30 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         assets_file=None,
         cache_file=None,
         data_dirname=None,
+        user=None,
+        backend=None,
+        postgres_dsn=None,
         **kwargs,
     ):
         self._assets_file = assets_file
         self._cache_file = cache_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
+        # Default user; requests may select another one with ?user=.
+        self._default_user = user or DEFAULT_USER_NAME
+        # Which backend holds the assets (resolved by the app, not here).
+        self._backend = backend or BACKEND_JSON
+        self._postgres_dsn = postgres_dsn or DEFAULT_POSTGRES_DSN
         super().__init__(*args, **kwargs)
+
+    def _request_user(self) -> str:
+        """User selected by the request (``?user=``), else the default."""
+        query = parse_qs(urlsplit(self.path).query).get("user", [])
+        if query:
+            chosen = str(query[0]).strip()
+            if chosen:
+                return chosen
+        return self._default_user
 
     def _serve_update_status(self) -> bool:
         """Serve ``GET /api/update`` with the run state for the sync button."""
@@ -319,7 +349,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def _serve_constituents(self) -> bool:
-        """Render the constituents page; 502 with a plain reason on failure."""
+        """Render the constituents page; 404 for an unknown user."""
         parts = urlsplit(self.path)
         if parts.path not in CONSTITUENTS_PATHS:
             return False
@@ -327,10 +357,20 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
             body = render_constituents_page(
-                load_constituents(self._assets_file, self._cache_file),
+                load_constituents(
+                    self._assets_file,
+                    self._cache_file,
+                    self._request_user(),
+                    self._backend,
+                    self._postgres_dsn,
+                ),
                 incognito=incognito_flag(parts.query),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
+        except UnknownUser as exc:
+            logger.warning("constituents unavailable: %s", exc)
+            body = f"unknown user: {exc.user}".encode("utf-8")
+            status, content_type = 404, "text/plain; charset=utf-8"
         except Exception as exc:
             logger.warning("constituents unavailable: %s", exc)
             body = f"constituents unavailable: {exc}".encode("utf-8")
@@ -383,7 +423,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 payload.get("field"),
                 payload.get("value"),
                 cache,
+                self._request_user(),
+                self._backend,
+                self._postgres_dsn,
             )
+        except UnknownUser as exc:
+            self._plain_status(404, f"unknown user: {exc.user}")
+            return True
         except ValueError as exc:
             self._plain_status(400, str(exc))
             return True
@@ -427,7 +473,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 payload.get("bucket"),
                 payload.get("order"),
+                self._request_user(),
+                self._backend,
+                self._postgres_dsn,
             )
+        except UnknownUser as exc:
+            self._plain_status(404, f"unknown user: {exc.user}")
+            return True
         except ValueError as exc:
             self._plain_status(400, str(exc))
             return True
@@ -471,7 +523,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 payload.get("bucket"),
                 payload.get("index"),
+                self._request_user(),
+                self._backend,
+                self._postgres_dsn,
             )
+        except UnknownUser as exc:
+            self._plain_status(404, f"unknown user: {exc.user}")
+            return True
         except ValueError as exc:
             self._plain_status(400, str(exc))
             return True
@@ -593,6 +651,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     str(self._cache_file),
                     fat,
                     str(self.directory),
+                    self._request_user(),
+                    self._backend,
+                    self._postgres_dsn,
                     send_conn,
                     cancel_event,
                 ),
@@ -767,7 +828,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 shares=payload.get("shares"),
                 broker=payload.get("broker"),
                 cache=cache,
+                user=self._request_user(),
+                backend=self._backend,
+                postgres_dsn=self._postgres_dsn,
             )
+        except UnknownUser as exc:
+            self._plain_status(404, f"unknown user: {exc.user}")
+            return True
         except ValueError as exc:
             self._plain_status(400, str(exc))
             return True
@@ -802,16 +869,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if url_path in DASHBOARD_PATHS:
             return super().translate_path("/index.html")
         if url_path == DATA_PREFIX or url_path.startswith(DATA_PREFIX + "/"):
+            # Charts are per user: /data/<file>.raw serves the selected
+            # user's chart dir.
+            user = self._request_user()
             rest = url_path[len(DATA_PREFIX):].lstrip("/")
-            disk_path = (
-                f"/{self._data_dirname}/{rest}" if rest else f"/{self._data_dirname}/"
-            )
-            # Jail the remap under the data dir: normpath collapses
+            base = f"/{self._data_dirname}/{user}"
+            disk_path = f"{base}/{rest}" if rest else f"{base}/"
+            # Jail the remap under the user's data dir: normpath collapses
             # "/data/../index.html" to "/index.html", which would leak the
             # dashboard through /data. Force such escapes to a missing path
             # so they stay 404.
             norm = posixpath.normpath(disk_path)
-            base = f"/{self._data_dirname}"
             if norm != base and not norm.startswith(base + "/"):
                 return super().translate_path("/__not_found__")
             return super().translate_path(disk_path)
@@ -826,6 +894,9 @@ def serve_forever(
     assets_file: str | None = None,
     cache_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
+    user: str = DEFAULT_USER_NAME,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
     handler = functools.partial(
@@ -834,6 +905,9 @@ def serve_forever(
         assets_file=assets_file,
         cache_file=cache_file,
         data_dirname=data_dirname,
+        user=user,
+        backend=backend,
+        postgres_dsn=postgres_dsn,
     )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
@@ -847,6 +921,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--directory", required=True, help="Visualizer directory to serve.")
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
+    parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
+    parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | postgres).")
+    parser.add_argument("--postgres-dsn", default=DEFAULT_POSTGRES_DSN, help="Postgres connection string for the postgres backend.")
     parser.add_argument("--plotter-data-dir", default=DATA_DIRNAME, help="On-disk data dir name under --directory (default: data).")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -857,6 +934,9 @@ def main(argv: list[str] | None = None) -> None:
         assets_file=args.assets_file,
         cache_file=args.cache_file,
         data_dirname=args.plotter_data_dir,
+        user=args.user,
+        backend=args.backend,
+        postgres_dsn=args.postgres_dsn,
     )
 
 

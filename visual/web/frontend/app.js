@@ -30,10 +30,44 @@ let galleryBooted = false;
 // Gallery snapshot: last rendered cards + their signature, kept in
 // sessionStorage so a fresh dashboard load paints instantly and the
 // background refresh only refetches when the signature changed. The key
-// carries the stamped version, so deploys auto-invalidate. Snapshots are
+// carries the stamped version and the user (each user has their own
+// charts), so deploys and user switches auto-invalidate. Snapshots are
 // incognito-agnostic (blur is a body class, not markup).
+function currentUser() {
+  try {
+    return new URLSearchParams(window.location.search).get("user") || "";
+  } catch {
+    return "";
+  }
+}
+
+// Build a URL that keeps the current query (notably ?user=) and applies
+// the given overrides: a null/empty value removes the key. Used for view
+// links, API calls, and history rewrites so the selected user survives
+// incognito toggles and view switches.
+function urlWithParams(path, extra) {
+  let params;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    params = new URLSearchParams();
+  }
+  if (extra) {
+    for (const key of Object.keys(extra)) {
+      const value = extra[key];
+      if (value === null || value === undefined || value === "") {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 function snapshotKey() {
-  return `asalloc.gallery.${versionText()}`;
+  return `asalloc.gallery.${versionText()}.${currentUser()}`;
 }
 let prefetchScheduled = false;
 
@@ -90,9 +124,9 @@ function scheduleConstituentsPrefetch() {
 }
 
 function constituentsPrefetchHref() {
-  return document.body.classList.contains("incognito")
-    ? "/constituents?incognito=true"
-    : "/constituents";
+  return urlWithParams("/constituents", {
+    incognito: document.body.classList.contains("incognito") ? "true" : null,
+  });
 }
 
 function syncConstituentsPrefetch() {
@@ -127,13 +161,20 @@ function listRawHrefs(listingText) {
   return [...new Set(names)].sort();
 }
 
+// Chart data lives under the selected user's directory; the server maps
+// /data/* to it, so the ?user= query rides along with every request.
+function dataUrl(path) {
+  const user = currentUser();
+  return user ? `${path}?user=${encodeURIComponent(user)}` : path;
+}
+
 async function scanRawFiles() {
-  const response = await fetch("data/", { cache: "no-store" });
+  const response = await fetch(dataUrl("data/"), { cache: "no-store" });
   if (!response.ok) {
     return [];
   }
   const text = await response.text();
-  return listRawHrefs(text).map((name) => `data/${encodeURIComponent(name)}`);
+  return listRawHrefs(text).map((name) => dataUrl(`data/${encodeURIComponent(name)}`));
 }
 
 async function chartFileLastModified(url) {

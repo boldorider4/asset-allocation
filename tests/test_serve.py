@@ -20,9 +20,9 @@ class TestDashboardEndpoint(unittest.TestCase):
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
         self.root = Path(self._holder.name) / "visualizer"
-        (self.root / "data").mkdir(parents=True)
+        (self.root / "data" / "default").mkdir(parents=True)
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
-        (self.root / "data" / "01-a.raw").write_text("PLAIN", encoding="utf-8")
+        (self.root / "data" / "default" / "01-a.raw").write_text("PLAIN", encoding="utf-8")
         handler = functools.partial(DashboardHandler, directory=str(self.root))
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -121,9 +121,11 @@ class TestCustomDataLayout(unittest.TestCase):
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
         self.root = Path(self._holder.name) / "visualizer"
-        (self.root / "customdir").mkdir(parents=True)
+        (self.root / "customdir" / "default").mkdir(parents=True)
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
-        (self.root / "customdir" / "01-a.raw").write_text("PLAIN", encoding="utf-8")
+        (self.root / "customdir" / "default" / "01-a.raw").write_text(
+            "PLAIN", encoding="utf-8"
+        )
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),

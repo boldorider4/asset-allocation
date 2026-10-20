@@ -38,6 +38,7 @@ def _seed_files(tmp: Path) -> tuple[Path, Path, Path]:
     assets.write_text(
         json.dumps(
             {
+                "default": {
                 "equity_portfolio": [
                     {
                         "name": "Unknown",
@@ -52,6 +53,7 @@ def _seed_files(tmp: Path) -> tuple[Path, Path, Path]:
                 "bond_portfolio": [],
                 "commodity_portfolio": [],
                 "pension_portfolio": [],
+                }
             }
         ),
         encoding="utf-8",

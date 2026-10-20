@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tests for ``utils.load_portfolio`` and ``utils.write_portfolio``.
+"""Tests for reading/writing one user's portfolio through the repository.
 
 Run from repo root::
 
@@ -25,9 +25,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
-from utils import (  # noqa: E402
-    load_portfolio,
-    write_portfolio,
+from assets_helpers import (  # noqa: E402
+    read_user_buckets,
+    write_user_buckets,
 )
 
 SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
@@ -35,7 +35,7 @@ SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
 
 class TestLoadPortfolio(unittest.TestCase):
     def test_loads_sample_assets(self) -> None:
-        data = load_portfolio(SAMPLE_ASSETS)
+        data = read_user_buckets(SAMPLE_ASSETS)
 
         self.assertIsInstance(data, dict)
         for bucket in (
@@ -86,7 +86,7 @@ class TestWritePortfolioToFile(unittest.TestCase):
                 assets_file=tmp / "assets.json",
             )
         )
-        self.ctx.portfolio.update(load_portfolio(SAMPLE_ASSETS))
+        self.ctx.portfolio.update(read_user_buckets(SAMPLE_ASSETS))
 
     def test_mutations_round_trip_through_disk(self) -> None:
         mutated_value = 12345.67
@@ -99,12 +99,12 @@ class TestWritePortfolioToFile(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = Path(tmpdir) / "assets.json"
-            write_portfolio(out_path, self.ctx.portfolio)
+            write_user_buckets(out_path, self.ctx.portfolio)
 
             self.assertTrue(out_path.exists())
 
             with out_path.open(encoding="utf-8") as f:
-                written = json.load(f)
+                written = json.load(f)["default"]
 
         self.assertEqual(written["equity_portfolio"][0]["value"], mutated_value)
         self.assertIsNone(written["equity_portfolio"][0]["shares"])

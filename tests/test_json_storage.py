@@ -31,6 +31,7 @@ from storage import (  # noqa: E402
     DictRow,
     IsinRecord,
     IsinRegistry,
+    UserAssets,
     JsonStorage,
     MemoryStorage,
     PostgresStorage,
@@ -340,12 +341,12 @@ class TestAssetRepositoryComposition(unittest.TestCase):
     def test_set_get_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             backends: list[tuple[str, Storage[AssetBucket]]] = [
-                ("json", JsonStorage(Path(tmp) / "assets.json", AssetBucket)),
-                ("memory", MemoryStorage(AssetBucket)),
+                ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
+                ("memory", MemoryStorage(UserAssets)),
             ]
             for name, backend in backends:
                 with self.subTest(backend=name):
-                    repo = AssetRepository(backend)
+                    repo = AssetRepository("default", backend)
                     self.assertIsNone(repo.get_positions("equity_portfolio"))
                     repo.set_positions(
                         "equity_portfolio", [{"ISIN": "X", "value": 1.0}]
@@ -364,12 +365,12 @@ class TestAssetRepositoryComposition(unittest.TestCase):
         data = {"equity_portfolio": [{"ISIN": "X", "value": 1.0}]}
         with tempfile.TemporaryDirectory() as tmp:
             backends: list[tuple[str, Storage[AssetBucket]]] = [
-                ("json", JsonStorage(Path(tmp) / "assets.json", AssetBucket)),
-                ("memory", MemoryStorage(AssetBucket)),
+                ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
+                ("memory", MemoryStorage(UserAssets)),
             ]
             for name, backend in backends:
                 with self.subTest(backend=name):
-                    repo = AssetRepository(backend)
+                    repo = AssetRepository("default", backend)
                     repo.open()
                     self.assertEqual(repo.restore(data), 1)
                     self.assertEqual(repo.snapshot(), data)
@@ -377,7 +378,7 @@ class TestAssetRepositoryComposition(unittest.TestCase):
                     repo.close()
 
     def test_restore_skips_bad_buckets(self) -> None:
-        repo = AssetRepository(MemoryStorage(AssetBucket))
+        repo = AssetRepository("default", MemoryStorage(UserAssets))
         restored = repo.restore(
             {
                 "good": [{"ISIN": "X"}],
@@ -389,26 +390,23 @@ class TestAssetRepositoryComposition(unittest.TestCase):
         self.assertEqual(repo.get_positions("good"), [{"ISIN": "X"}])
         self.assertIsNone(repo.get_positions("bad"))
 
-    def test_json_persist_matches_write_portfolio_bytes(self) -> None:
-        from utils import write_portfolio  # noqa: E402
-
+    def test_json_persist_writes_user_keyed_shape(self) -> None:
         data = {
             "equity_portfolio": [{"ISIN": "X", "value": 1.0}],
             "bond_portfolio": [],
         }
         with tempfile.TemporaryDirectory() as tmp:
-            expected = Path(tmp) / "expected.json"
-            write_portfolio(expected, data)  # type: ignore[arg-type]
             actual = Path(tmp) / "actual.json"
-            repo = AssetRepository(JsonStorage(actual, AssetBucket))
+            repo = AssetRepository("default", JsonStorage(actual, UserAssets))
             repo.open()
             repo.restore(data)
             repo.persist()
-            # Byte-identical: same atomic tmp+rename write, indent=2,
-            # non-ASCII preserved, trailing newline.
-            self.assertEqual(
-                actual.read_bytes(), expected.read_bytes()
-            )
+            # The file is keyed by user; the payload is the user's buckets.
+            written = json.loads(actual.read_text(encoding="utf-8"))
+            self.assertEqual(list(written), ["default"])
+            self.assertEqual(written["default"], data)
+            # Atomic tmp+rename write: indent=2, trailing newline.
+            self.assertTrue(actual.read_text(encoding="utf-8").endswith("\n"))
 
 
 def _empty_registry() -> IsinRegistry:

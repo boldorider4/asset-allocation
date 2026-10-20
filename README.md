@@ -23,7 +23,27 @@ Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `
 
 ## Holdings file
 
-Copy or create `assets.json` in the project root. It must be a JSON object whose keys are portfolio buckets used by `allocation.py`:
+The holdings file is keyed by **user**: each top-level key is a user name, and its value holds that user's portfolio buckets.
+
+```json
+{
+  "default": {
+    "equity_portfolio": [ { "ISIN": "IE000BI8OT95", "shares": 220, "value": null } ],
+    "bond_portfolio": []
+  }
+}
+```
+
+The user name comes from `config.ini` (`[update] user = default`) and can be overridden per run with `--user NAME`. Charts are per user too: an update writes to `<output_dir>/<user>/`, and the server serves the selected user's charts.
+
+The store itself is backend-agnostic: the code above the storage layer only talks to `storage.repositories.AssetRepository`, and the concrete backend is chosen in one place (`storage/wiring.py`) from the `[server] backend` setting in `config.ini`:
+
+| `[server] backend` | Meaning |
+| --- | --- |
+| `json` (default) | Holdings in the JSON file named by `[update] assets_file` |
+| `postgres` | Not implemented yet: the wiring logs an error and the store fails to open |
+
+`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default).
 
 | Key | Purpose |
 | --- | --- |
@@ -46,7 +66,19 @@ Each bucket is an array of position objects. Typical fields:
 | `dmem_other` | When a country is “other”, fraction treated as developed (0–1) |
 | `usavn` | Within developed markets, fraction attributed to the **US** (0–1) |
 
-`assets.json` is listed in `.gitignore` so you can keep real balances private; `assets.sample.json` is a redacted starting point.
+`assets.json` is listed in `.gitignore` so you can keep real balances private; `assets.sample.json` is a redacted starting point (it ships with the `default` user).
+
+### Migrating an old holdings file
+
+A pre-user file (buckets directly at the top level) is rejected with a pointer to the migration script. Run it once per file — it backs the original up before writing:
+
+```bash
+python scripts/migrate_assets_user.py ~/.local/asalloc/assets.json default
+```
+
+The script touches only the file you pass (plus its `.bak` sibling), never `config.ini` or anything else in your home directory.
+
+> The `?user=` selector on the web server is **not authentication**: anyone who can reach the server can read and edit any user's holdings. Keep it on a trusted network.
 
 ## Price source
 
@@ -69,12 +101,13 @@ Useful `update` flags:
 | `--fetch-geosplit` | Scrape country allocations into `cache.json` |
 | `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
+| `--user NAME` | Portfolio user to read and write (default: `config.ini` `[update] user`, else `default`) |
 | `--assets-file PATH` | Use a holdings file other than `assets.json` |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
 
-The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/` (the `[plotter] output_dir`). Scaffold the JS app (without touching existing raw files) with:
+The default chart backend (`WebChart`) writes one JSON `*.raw` file per pie into `~/.local/asalloc/visualizer/data/<user>/` (the `[plotter] output_dir` plus the user subdir). Scaffold the JS app (without touching existing raw files) with:
 
 ```bash
 make web
@@ -88,7 +121,7 @@ make serve
 asalloc serve
 ```
 
-Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the charts — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
+Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the charts — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there. Add `?user=NAME` to view another user's portfolio (charts and holdings); an unknown user gets a 404.
 
 `http://localhost:8765/constituents` shows the holdings from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
 

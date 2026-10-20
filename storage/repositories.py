@@ -18,12 +18,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from storage.records import AssetBucket, CacheEntry, IsinRecord
+from storage.records import AssetBucket, CacheEntry, IsinRecord, UserAssets
 from storage.storage import Storage
 
 __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
 
 logger = logging.getLogger(__name__)
+
+
+class UnknownUser(LookupError):
+    """The requested user has no portfolio in the assets store."""
+
+    def __init__(self, user: str) -> None:
+        super().__init__(f"unknown user {user!r}: no portfolio stored for it")
+        self.user = str(user)
 
 
 class CacheRepository:
@@ -149,35 +157,78 @@ class CacheRepository:
 
 
 class AssetRepository:
-    """Portfolio buckets over any backend (separate store from the cache)."""
+    """One user's portfolio buckets over any backend.
 
-    def __init__(self, backend: Storage[AssetBucket]) -> None:
+    The backend holds one row per user (a :class:`UserAssets` row); this
+    repository is scoped to a single user and speaks in that user's
+    buckets (``{bucket: [positions]}``). Other users' rows are never
+    read or written.
+    """
+
+    def __init__(self, user: str, backend: Storage[UserAssets]) -> None:
+        self._user = str(user)
         self._backend = backend
 
     @property
-    def backend(self) -> Storage[AssetBucket]:
+    def user(self) -> str:
+        """The user this repository is scoped to."""
+        return self._user
+
+    @property
+    def backend(self) -> Storage[UserAssets]:
         return self._backend
 
-    def get(self, bucket: str) -> AssetBucket | None:
-        return self._backend.get(bucket)
+    def _row(self) -> UserAssets | None:
+        return self._backend.get(self._user)
+
+    def exists(self) -> bool:
+        """True when the store holds a portfolio for this user."""
+        return self._user in self._backend
+
+    def store_is_empty(self) -> bool:
+        """True when the store holds no portfolios at all.
+
+        Bulk read (a full scan on DB backends): callers use it on the
+        error path to tell "no store yet" (misconfiguration) from
+        "no portfolio for this user".
+        """
+        return not self._backend.snapshot()
+
+    def require(self) -> UserAssets:
+        """This user's row, or :class:`UnknownUser` when there is none."""
+        row = self._row()
+        if row is None:
+            raise UnknownUser(self._user)
+        return row
+
+    def get(self, bucket: str) -> list[dict[str, Any]] | None:
+        """One bucket's positions, or None when the user has no such bucket."""
+        row = self._row()
+        return None if row is None else row.buckets().get(str(bucket))
 
     def __contains__(self, bucket: object) -> bool:
-        return bucket in self._backend
+        row = self._row()
+        return row is not None and str(bucket) in row.buckets()
 
     def get_positions(self, bucket: str) -> list[dict[str, Any]] | None:
-        obj = self._backend.get(bucket)
-        return None if obj is None else obj.positions
+        return self.get(bucket)
 
     def set_positions(
         self, bucket: str, positions: list[dict[str, Any]]
-    ) -> AssetBucket:
+    ) -> UserAssets:
         """Replace a bucket wholesale (validated list-of-dicts)."""
-        obj = AssetBucket(str(bucket), positions)
-        self._backend.put(obj)
-        return obj
+        row = self._backend.get_or_create(self._user)
+        row.set_bucket(str(bucket), positions)
+        self._backend.put(row)
+        return row
 
     def remove_bucket(self, bucket: str) -> None:
-        self._backend.remove(bucket)
+        """Drop one bucket of this user (no-op when absent)."""
+        row = self._row()
+        if row is None:
+            return
+        if row.remove_bucket(str(bucket)):
+            self._backend.put(row)
 
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> AssetRepository:
@@ -186,24 +237,31 @@ class AssetRepository:
         return self
 
     def snapshot(self) -> dict[str, Any]:
-        """Whole store as plain ``{bucket: positions}`` (bulk-only, not hot-path)."""
-        return self._backend.snapshot()
+        """This user's buckets as plain ``{bucket: [positions]}``."""
+        row = self._row()
+        return {} if row is None else row.to_dict()
 
     def restore(self, rows: dict[str, Any]) -> int:
-        """Bulk-load plain buckets with validation; skip bad ones with a warning.
+        """Replace this user's buckets with ``rows`` (validated).
 
-        Returns the number of buckets restored. Used to push an externally
-        seeded plain dict (e.g. ``ctx.portfolio``) into the backend.
+        Bad buckets are skipped with a warning (the historical lenient
+        behavior); the rest replace this user's buckets wholesale. Other
+        users' rows stay untouched.
+
+        Returns the number of buckets restored.
         """
-        count = 0
+        good: dict[str, Any] = {}
         for key, raw in rows.items():
             try:
-                self._backend.put(AssetBucket.from_dict(str(key), raw))
+                AssetBucket.from_dict(str(key), raw)
             except (TypeError, ValueError, KeyError) as exc:
                 logger.warning("skipping bad asset bucket %r (%s)", key, exc)
                 continue
-            count += 1
-        return count
+            good[str(key)] = raw
+        row = self._backend.get_or_create(self._user)
+        row.replace_all(good)
+        self._backend.put(row)
+        return len(good)
 
     def persist(self) -> None:
         """Make staged writes durable (save / commit / no-op by backend)."""

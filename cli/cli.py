@@ -157,6 +157,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         sys.exit(1)
     assets_file = Path(args.assets_file) if args.assets_file else DEFAULT_ASSETS_PATH
     cache_file = Path(args.cache_file) if args.cache_file else DEFAULT_CACHE_PATH
+    user = getattr(args, "user", None) or ini_cfg.user
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -172,6 +173,12 @@ def cmd_serve(args: argparse.Namespace) -> None:
             str(assets_file),
             "--cache-file",
             str(cache_file),
+            "--user",
+            str(user),
+            "--backend",
+            str(ini_cfg.server.backend),
+            "--postgres-dsn",
+            str(ini_cfg.server.postgres_dsn),
             "--plotter-data-dir",
             ini_data_dir,
         ],
@@ -248,6 +255,12 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
             "Scrape sector allocations (JustETF) and write them to cache.json. "
             "Without this flag, sector weights are read from cache."
         ),
+    )
+    update.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="Portfolio user whose assets the run reads and writes (default: from config.ini [update] user, else 'default').",
     )
     update.add_argument(
         "--assets-file",
@@ -343,6 +356,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
     )
     _add_config_flag(serve, default=argparse.SUPPRESS)
+    serve.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="Default portfolio user for the served views (default: from config.ini [update] user, else 'default'). The ?user= query selects another one.",
+    )
     serve.add_argument(
         "--assets-file",
         type=Path,

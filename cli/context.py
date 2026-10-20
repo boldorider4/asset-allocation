@@ -26,6 +26,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
+from cli.common import DEFAULT_USER_NAME
+from storage.wiring import (
+    BACKEND_JSON,
+    DEFAULT_POSTGRES_DSN,
+    assets_backend,
+    normalize_backend,
+)
+
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as _MultiprocessingEvent
 
@@ -54,6 +62,11 @@ class ServerConfig:
     # Kept separate from the plotter output dir on purpose: one instance
     # may serve what another one wrote.
     data_dir: str = "data"
+    # Which backend stores the assets (``json`` today, ``postgres`` when
+    # it lands). Resolved in ``storage.wiring``.
+    backend: str = BACKEND_JSON
+    # Connection string for the postgres backend.
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN
 
 
 @dataclass
@@ -75,6 +88,7 @@ class AppConfig:
     fetch_traderepublic: bool = False
     position_source: PositionSource = "justetf"
     plotter: PlotterKind = "web"
+    user: str = DEFAULT_USER_NAME
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
     cache_file: Path = field(default_factory=lambda: DEFAULT_CACHE_PATH)
     isin_file: Path = field(default_factory=lambda: DEFAULT_ISIN_PATH)
@@ -95,6 +109,7 @@ class AppConfig:
 
     @classmethod
     def config_path(cls, override: Path | None = None) -> Path:
+        """Active config file (``ASALLOC_CONFIG`` env, else the repo's)."""
         if override is not None:
             return override
         env = os.environ.get("ASALLOC_CONFIG")
@@ -138,7 +153,21 @@ class AppConfig:
         data_dir = (
             parser.get("server", "plotter_data_dir", fallback="data").strip() or "data"
         )
-        return ServerConfig(port=port, address=address, directory=directory, data_dir=data_dir)
+        backend = normalize_backend(
+            parser.get("server", "backend", fallback=BACKEND_JSON)
+        )
+        postgres_dsn = (
+            parser.get("server", "postgres_dsn", fallback=DEFAULT_POSTGRES_DSN).strip()
+            or DEFAULT_POSTGRES_DSN
+        )
+        return ServerConfig(
+            port=port,
+            address=address,
+            directory=directory,
+            data_dir=data_dir,
+            backend=backend,
+            postgres_dsn=postgres_dsn,
+        )
 
     @classmethod
     def _update_from_ini(cls, path: Path | None = None) -> dict[str, Any]:
@@ -148,6 +177,7 @@ class AppConfig:
             "fetch_geosplit": False,
             "fetch_sectorsplit": False,
             "log_level": "INFO",
+            "user": DEFAULT_USER_NAME,
             "assets_file": DEFAULT_ASSETS_PATH,
             "cache_file": DEFAULT_CACHE_PATH,
             "isin_file": DEFAULT_ISIN_PATH,
@@ -169,6 +199,10 @@ class AppConfig:
         if log_level not in _VALID_LOG_LEVELS:
             raise ValueError(f"unknown log level {log_level!r}")
         values["log_level"] = log_level
+        values["user"] = (
+            parser.get("update", "user", fallback=DEFAULT_USER_NAME).strip()
+            or DEFAULT_USER_NAME
+        )
         values["assets_file"] = cls._resolve_ini_path(
             cfg_path,
             parser.get("update", "assets_file", fallback=None),
@@ -255,6 +289,8 @@ class AppConfig:
             fetch_traderepublic=bool(getattr(args, "fetch_tr", False)),
             position_source=source,  # type: ignore[arg-type]
             plotter=plotter,  # type: ignore[arg-type]
+            user=str(pick(getattr(args, "user", None), ini_update["user"])).strip()
+            or DEFAULT_USER_NAME,
             assets_file=Path(assets) if assets else ini_update["assets_file"],
             cache_file=Path(cache) if cache else ini_update["cache_file"],
             isin_file=Path(isin) if isin else ini_update["isin_file"],
@@ -304,17 +340,22 @@ class RuntimeContext:
     # -- portfolio --
     @property
     def asset_repo(self):  # type: ignore[no-untyped-def]
-        """Validated assets access: ``AssetRepository`` over ``JsonStorage``.
+        """Validated assets access: ``AssetRepository`` over the assets backend.
 
-        Lazily built against ``config.assets_file``.
+        Lazily built against ``config.assets_file`` and scoped to
+        ``config.user`` — other users' rows are never touched. The
+        backend itself is chosen in :mod:`storage.wiring`.
         """
-        from storage.json_storage import JsonStorage
-        from storage.records import AssetBucket
         from storage.repositories import AssetRepository
 
         if self._asset_repo is None:
             self._asset_repo = AssetRepository(
-                JsonStorage(self.config.assets_file, AssetBucket)
+                self.config.user,
+                assets_backend(
+                    self.config.assets_file,
+                    self.config.server.backend,
+                    self.config.server.postgres_dsn,
+                ),
             )
         return self._asset_repo
 
@@ -337,55 +378,32 @@ class RuntimeContext:
             self._isin_repo = repo
         return self._isin_repo
 
-    @staticmethod
-    def _validate_portfolio_shape(data: Any) -> None:
-        """Reject malformed assets payloads exactly like ``utils.load_portfolio``.
-
-        Raises ``ValueError`` on a non-dict root, non-list buckets, or
-        non-dict rows — strictness the pipeline has always relied on
-        (unlike the lenient cache loader, a corrupt assets file must fail
-        loudly instead of silently loading partial data).
-        """
-        if not isinstance(data, dict):
-            raise ValueError("assets root must be a JSON object")
-        for key, positions in data.items():
-            if not isinstance(positions, list):
-                raise ValueError(f"{key!r} must be a JSON array")
-            for i, pos in enumerate(positions):
-                if not isinstance(pos, dict):
-                    raise ValueError(f"{key}[{i}] must be a JSON object")
-
     def load_portfolio(self, path: Path | None = None) -> None:
-        import json as _json
-
         target = path or self.config.assets_file
-        # Strict gate first: missing file / invalid JSON / malformed shape
-        # propagate exactly as ``utils.load_portfolio`` always did.
-        with open(target, encoding="utf-8") as f:
-            raw = _json.load(f)
-        self._validate_portfolio_shape(raw)
         repo = (
             self._asset_repo_for(path)
             if path is not None and Path(path) != self.config.assets_file
             else self.asset_repo
         )
-        # Evict backend rows absent from the file so a reused backend can't
-        # leak stale buckets into the dict (all repo verbs; no backend nouns).
-        for key in list(repo.snapshot()):
-            if key not in raw:
-                repo.remove_bucket(key)
-        repo.restore(raw)
+        # The store is the source of truth: read this user's buckets
+        # straight out of it (a malformed store fails loudly here).
+        repo.open()
         data = repo.snapshot()
         self.portfolio.clear()
         self.portfolio.update(data)
 
     def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
         """Short-lived repository bound to an explicit path (not the config file)."""
-        from storage.json_storage import JsonStorage
-        from storage.records import AssetBucket
         from storage.repositories import AssetRepository
 
-        return AssetRepository(JsonStorage(Path(path), AssetBucket))
+        return AssetRepository(
+            self.config.user,
+            assets_backend(
+                Path(path),
+                self.config.server.backend,
+                self.config.server.postgres_dsn,
+            ),
+        )
 
     def persist_portfolio(self, path: Path | None = None) -> None:
         if path is not None and Path(path) != self.config.assets_file:
@@ -393,11 +411,8 @@ class RuntimeContext:
             repo.open()
         else:
             repo = self.asset_repo
-        # Drop backend rows absent from the dict so the file ends up
-        # exactly equal to it (same as the old overwrite semantics).
-        for key in list(repo.snapshot()):
-            if key not in self.portfolio:
-                repo.remove_bucket(key)
+        # Replace this user's buckets wholesale (other users' rows in the
+        # same file stay untouched).
         repo.restore(self.portfolio)
         repo.persist()
 
@@ -481,10 +496,11 @@ class RuntimeContext:
 
     def output_data_dir(self) -> Path:
         """Chart output dir: the configured plotter output dir (or the
-        legacy ``server.directory/data`` tree). The write side is
-        independent of the serve side on purpose: one instance may serve
-        what another one wrote."""
+        legacy ``server.directory/data`` tree) plus the user's subdir.
+        Charts are per user, so the server can serve each user's own
+        set. The write side is independent of the serve side on purpose:
+        one instance may serve what another one wrote."""
         base = self.config.plotter_config.output_dir
         if base is None:
             base = self.config.server.directory / self.config.server.data_dir
-        return base
+        return base / self.config.user
