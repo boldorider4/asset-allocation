@@ -51,11 +51,15 @@
           </span>
         </div>
       </form>
-      <p class="status" id="login-status" hidden></p>
+      <p class="sr-only" id="login-status" role="status" aria-live="polite"></p>
       <p class="login-hint">
         No portfolio yet? Ask admin to create a new user.
       </p>
     </main>
+    <footer class="site-footer">
+      <span id="version-label">asalloc v__ASALLOC_VERSION__</span>
+      <a href="__ASALLOC_REPO_URL__">__ASALLOC_REPO_URL__</a>
+    </footer>
     <script src="login.js"></script>
   </body>
 </html>

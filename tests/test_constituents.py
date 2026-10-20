@@ -804,13 +804,26 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('aria-pressed="false"', login_html)
         self.assertIn('id="incognito-state"', login_html)
         self.assertIn(">OFF</span>", login_html)
+        # The dashboard's bottom banner, minus the "Updated at ..." part.
+        self.assertIn('class="site-footer"', login_html)
+        self.assertIn("asalloc v__ASALLOC_VERSION__", login_html)
+        self.assertIn("__ASALLOC_REPO_URL__", login_html)
+        self.assertNotIn("Last updated", login_html)
         login_js = (root / "login.js").read_text(encoding="utf-8")
         self.assertIn("/api/login", login_js)
         self.assertIn('"ON"', login_js)
         self.assertIn('"OFF"', login_js)
+        # A failed login highlights the field (outline + one-shot flare)
+        # instead of showing a banner.
+        self.assertIn("login-error", login_js)
+        self.assertIn("login-flare", login_js)
+        self.assertIn("clearFieldError", login_js)
         css = (root / "styles.css").read_text(encoding="utf-8")
         self.assertIn(".login-body", css)
         self.assertIn(".login-form", css)
+        self.assertIn(".login-input.login-error", css)
+        self.assertIn(".login-input.login-flare", css)
+        self.assertIn(".sr-only", css)
 
     def test_button_labels_match_the_anchor_font_size(self) -> None:
         # "Log In" and "Logout" are <button>s, "Edit" an <a>: the button

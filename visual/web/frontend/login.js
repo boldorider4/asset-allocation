@@ -11,13 +11,38 @@
 
   var state = { incognito: false, busy: false };
 
-  function setStatus(text) {
+  // Failed logins highlight the field instead of showing a banner: a red
+  // outline that stays until the next attempt, plus a one-shot flare
+  // (like the constituents' saved/stale flash). The message still goes
+  // to the screen-reader-only status line.
+  function announce(text) {
     var status = document.getElementById("login-status");
-    if (!status) {
-      return;
+    if (status) {
+      status.textContent = text;
     }
-    status.textContent = text;
-    status.hidden = !text;
+  }
+
+  function fieldError(text) {
+    var input = document.getElementById("login-user");
+    if (input) {
+      input.classList.add("login-error");
+      input.classList.add("login-flare");
+      input.setAttribute("aria-invalid", "true");
+      window.setTimeout(function () {
+        input.classList.remove("login-flare");
+      }, 900);
+    }
+    announce(text);
+  }
+
+  function clearFieldError() {
+    var input = document.getElementById("login-user");
+    if (input) {
+      input.classList.remove("login-error");
+      input.classList.remove("login-flare");
+      input.removeAttribute("aria-invalid");
+    }
+    announce("");
   }
 
   function applyIncognito() {
@@ -46,12 +71,16 @@
     }
     var input = document.getElementById("login-user");
     var user = input ? String(input.value || "").trim() : "";
+    // A new attempt clears the previous error state.
+    clearFieldError();
     if (!user) {
-      setStatus("Enter a user name.");
+      fieldError("Enter a user name.");
+      if (input) {
+        input.focus();
+      }
       return;
     }
     state.busy = true;
-    setStatus("");
     try {
       var response = await fetch("/api/login", {
         method: "POST",
@@ -65,13 +94,13 @@
         data = {};
       }
       if (!response.ok || !data.ok) {
-        setStatus(data.error || "Login failed.");
+        fieldError(data.error || "Login failed.");
         state.busy = false;
         return;
       }
       window.location.href = data.redirect || "/dashboard";
     } catch (err) {
-      setStatus("Login failed: " + (err && err.message ? err.message : err));
+      fieldError("Login failed: " + (err && err.message ? err.message : err));
       state.busy = false;
     }
   }

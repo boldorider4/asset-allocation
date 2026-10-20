@@ -799,7 +799,8 @@ input.cell-box.editable.stale-flash {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 2rem 1.5rem;
+  /* Room for the fixed footer banner. */
+  padding: 2rem 1.5rem 5rem;
 }
 
 .login {
@@ -886,11 +887,37 @@ input.cell-box.editable.stale-flash {
   background: var(--paper);
   color: var(--text);
   font: inherit;
+  transition: border-color 0.5s ease, box-shadow 0.5s ease,
+    background-color 0.5s ease;
 }
 
 .login-input:focus {
   outline: none;
   border-color: var(--gold);
+}
+
+/* Failed login: the red outline stays until the next attempt, the flare
+ * is a one-shot background flash (like the constituents' saved flash). */
+.login-input.login-error {
+  border-color: #d96a5f;
+  box-shadow: 0 0 0 2px rgba(217, 106, 95, 0.25);
+}
+
+.login-input.login-flare {
+  background-color: #6e2a22;
+}
+
+/* Visually hidden, still announced by screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .login-actions {
