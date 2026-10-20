@@ -35,7 +35,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from storage.assets_file import is_legacy_root  # noqa: E402
+
+def _is_legacy_root(raw: Any) -> bool:
+    """True when ``raw`` is a pre-user flat portfolio (``{bucket: [...]}``)."""
+    if not isinstance(raw, dict) or not raw:
+        return False
+    return all(isinstance(value, list) for value in raw.values())
 
 
 def _backup_path(target: Path) -> Path:
@@ -74,7 +79,7 @@ def migrate(target: Path, user: str, *, force: bool = False) -> Path:
         raw = json.load(f)
     if not isinstance(raw, dict):
         raise ValueError("assets root must be a JSON object")
-    if not is_legacy_root(raw):
+    if not _is_legacy_root(raw):
         if not force:
             raise ValueError(
                 f"{target} is not in the legacy flat format (values must all "

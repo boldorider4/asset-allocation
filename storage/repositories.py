@@ -26,6 +26,14 @@ __all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
 logger = logging.getLogger(__name__)
 
 
+class UnknownUser(LookupError):
+    """The requested user has no portfolio in the assets store."""
+
+    def __init__(self, user: str) -> None:
+        super().__init__(f"unknown user {user!r}: no portfolio stored for it")
+        self.user = str(user)
+
+
 class CacheRepository:
     """Per-ISIN price / country / sector cache over any backend."""
 
@@ -172,6 +180,26 @@ class AssetRepository:
 
     def _row(self) -> UserAssets | None:
         return self._backend.get(self._user)
+
+    def exists(self) -> bool:
+        """True when the store holds a portfolio for this user."""
+        return self._user in self._backend
+
+    def store_is_empty(self) -> bool:
+        """True when the store holds no portfolios at all.
+
+        Bulk read (a full scan on DB backends): callers use it on the
+        error path to tell "no store yet" (misconfiguration) from
+        "no portfolio for this user".
+        """
+        return not self._backend.snapshot()
+
+    def require(self) -> UserAssets:
+        """This user's row, or :class:`UnknownUser` when there is none."""
+        row = self._row()
+        if row is None:
+            raise UnknownUser(self._user)
+        return row
 
     def get(self, bucket: str) -> list[dict[str, Any]] | None:
         """One bucket's positions, or None when the user has no such bucket."""

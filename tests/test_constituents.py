@@ -1143,7 +1143,8 @@ class TestReorderConstituents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
             assets.write_text(json.dumps({"default": {"equity_portfolio": {"a": 1}}}))
-            with self.assertRaises(ValueError):
+            # The store rejects the malformed bucket while loading it.
+            with self.assertRaises((TypeError, ValueError)):
                 reorder_constituents(assets, "equity_portfolio", [0])
 
 

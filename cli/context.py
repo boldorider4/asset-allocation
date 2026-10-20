@@ -26,7 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
-from storage.assets_file import DEFAULT_USER_NAME
+from cli.common import DEFAULT_USER_NAME
+from storage.wiring import assets_backend
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as _MultiprocessingEvent
@@ -314,19 +315,17 @@ class RuntimeContext:
     # -- portfolio --
     @property
     def asset_repo(self):  # type: ignore[no-untyped-def]
-        """Validated assets access: ``AssetRepository`` over ``JsonStorage``.
+        """Validated assets access: ``AssetRepository`` over the assets backend.
 
         Lazily built against ``config.assets_file`` and scoped to
-        ``config.user`` — other users' rows are never touched.
+        ``config.user`` — other users' rows are never touched. The
+        backend itself is chosen in :mod:`storage.wiring`.
         """
-        from storage.json_storage import JsonStorage
-        from storage.records import UserAssets
         from storage.repositories import AssetRepository
 
         if self._asset_repo is None:
             self._asset_repo = AssetRepository(
-                self.config.user,
-                JsonStorage(self.config.assets_file, UserAssets),
+                self.config.user, assets_backend(self.config.assets_file)
             )
         return self._asset_repo
 
@@ -350,33 +349,24 @@ class RuntimeContext:
         return self._isin_repo
 
     def load_portfolio(self, path: Path | None = None) -> None:
-        from storage.assets_file import read_assets_root, user_buckets
-
         target = path or self.config.assets_file
-        # Strict gate first: missing file / invalid JSON / malformed shape
-        # propagate exactly as ``utils.load_portfolio`` always did. A legacy
-        # (pre-user) file raises with a pointer to the migration script.
-        root = read_assets_root(target)
-        buckets = user_buckets(root, self.config.user)
         repo = (
             self._asset_repo_for(path)
             if path is not None and Path(path) != self.config.assets_file
             else self.asset_repo
         )
-        repo.restore(buckets)
+        # The store is the source of truth: read this user's buckets
+        # straight out of it (a malformed store fails loudly here).
+        repo.open()
         data = repo.snapshot()
         self.portfolio.clear()
         self.portfolio.update(data)
 
     def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
         """Short-lived repository bound to an explicit path (not the config file)."""
-        from storage.json_storage import JsonStorage
-        from storage.records import UserAssets
         from storage.repositories import AssetRepository
 
-        return AssetRepository(
-            self.config.user, JsonStorage(Path(path), UserAssets)
-        )
+        return AssetRepository(self.config.user, assets_backend(Path(path)))
 
     def persist_portfolio(self, path: Path | None = None) -> None:
         if path is not None and Path(path) != self.config.assets_file:

@@ -17,6 +17,7 @@ from typing import Any
 
 from cli.common import (
     BROKER,
+    DEFAULT_USER_NAME,
     DMEM,
     DMEM_OTHER,
     ISIN,
@@ -27,7 +28,8 @@ from cli.common import (
     USAVN,
     VALUE,
 )
-from storage.assets_file import DEFAULT_USER_NAME
+from storage.repositories import AssetRepository, UnknownUser
+from storage.wiring import assets_backend
 
 # Canonical section order with display labels; unknown bucket keys are
 # appended after these, prettified.
@@ -153,31 +155,26 @@ def _has_isin(isin: Any) -> bool:
     return isinstance(isin, str) and bool(isin.strip())
 
 
-def _load_root(assets_path: str | Path) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    """Read the whole assets file (``{user: {bucket: [positions]}}``)."""
-    from storage.assets_file import read_assets_root
-
-    return read_assets_root(assets_path)
-
-
-def _save_root(
-    assets_path: str | Path,
-    root: dict[str, dict[str, list[dict[str, Any]]]],
-) -> None:
-    """Write the whole assets file (atomic)."""
-    from storage.assets_file import write_assets_root
-
-    write_assets_root(assets_path, root)
+def _assets_repo(assets_path: str | Path, user: str) -> AssetRepository:
+    """Repository over the assets store, scoped to one user."""
+    return AssetRepository(user, assets_backend(assets_path))
 
 
 def load_constituents(
     assets_path: str | Path, cache_path: str | Path, user: str = DEFAULT_USER_NAME
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     """Read one user's assets + the shared cache into display sections."""
-    from storage.assets_file import require_user
-
-    root = _load_root(assets_path)
-    assets = require_user(root, user)
+    repo = _assets_repo(assets_path, user)
+    repo.open()
+    if not repo.exists():
+        if repo.store_is_empty():
+            # No portfolios at all: the store is missing or empty, which
+            # is a misconfiguration rather than an unknown user.
+            raise RuntimeError(
+                f"assets store {assets_path} holds no portfolios"
+            )
+        raise UnknownUser(user)
+    assets = repo.snapshot()
     try:
         with open(cache_path, encoding="utf-8") as f:
             cache = json.load(f)
@@ -319,12 +316,11 @@ def store_constituent_value(
     Raises ``ValueError`` for invalid addresses, locked fields, or junk
     values; ``OSError``/``json`` errors propagate for missing/corrupt files.
     """
-    from storage.assets_file import require_user
-
     if field not in ("shares", "value", "short_name"):
         raise ValueError(f"field must be shares, value or short_name, got {field!r}")
-    root = _load_root(assets_path)
-    assets = require_user(root, user)
+    repo = _assets_repo(assets_path, user)
+    repo.open()
+    assets = repo.snapshot()
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -351,8 +347,8 @@ def store_constituent_value(
                 row["shares"] = value / price
         elif field == "shares" or _is_number(row.get("shares")):
             recomputed = False
-    root[str(user)] = assets
-    _save_root(assets_path, root)
+    repo.restore(assets)
+    repo.persist()
     return {
         "value": row.get("value"),
         "shares": row.get("shares"),
@@ -375,7 +371,7 @@ def reorder_constituents(
 
     Returns ``{"order": [...]}`` echoing the stored order.
     """
-    from storage.assets_file import require_user
+    from storage.repositories import UnknownUser
 
     if (
         not isinstance(order, list)
@@ -383,16 +379,17 @@ def reorder_constituents(
         or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
     ):
         raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
-    root = _load_root(assets_path)
-    assets = require_user(root, user)
+    repo = _assets_repo(assets_path, user)
+    repo.open()
+    assets = repo.snapshot()
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
     if sorted(order) != list(range(len(rows))):
         raise ValueError(f"order must list every row index once, got {order!r}")
     assets[bucket] = [rows[i] for i in order]
-    root[str(user)] = assets
-    _save_root(assets_path, root)
+    repo.restore(assets)
+    repo.persist()
     return {"order": list(order)}
 
 
@@ -409,10 +406,9 @@ def delete_constituent(
 
     Returns ``{"deleted": True, "rows": n}`` with the remaining row count.
     """
-    from storage.assets_file import require_user
-
-    root = _load_root(assets_path)
-    assets = require_user(root, user)
+    repo = _assets_repo(assets_path, user)
+    repo.open()
+    assets = repo.snapshot()
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -420,8 +416,8 @@ def delete_constituent(
         del rows[index]
     else:
         raise ValueError(f"row index out of range: {index!r}")
-    root[str(user)] = assets
-    _save_root(assets_path, root)
+    repo.restore(assets)
+    repo.persist()
     return {"deleted": True, "rows": len(rows)}
 
 
@@ -458,8 +454,6 @@ def add_constituent(
     Returns the display row (same shape as :func:`load_constituents`
     rows) for rendering.
     """
-    from storage.assets_file import require_user
-
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be a non-blank string")
     if broker not in _BROKER_ICONS:
@@ -473,8 +467,9 @@ def add_constituent(
     parsed_value = None if value is None else _parse_stored_value(value)
     parsed_shares = None if shares is None else _parse_stored_value(shares)
     clean_short = _parse_stored_text("" if short_name is None else short_name)
-    root = _load_root(assets_path)
-    assets = require_user(root, user)
+    repo = _assets_repo(assets_path, user)
+    repo.open()
+    assets = repo.snapshot()
     rows = assets.get(bucket)
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
@@ -491,8 +486,8 @@ def add_constituent(
     }
     rows.append(stored)
     index = len(rows) - 1
-    root[str(user)] = assets
-    _save_root(assets_path, root)
+    repo.restore(assets)
+    repo.persist()
     price = _cached_price_for(cache, clean_isin)
     fields = updatable_fields(bucket, stored)
     return {

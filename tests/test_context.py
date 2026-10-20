@@ -343,17 +343,27 @@ class TestRuntimeContextCache(unittest.TestCase):
             )
             ctx.load_portfolio()
             self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
+            # A bucket that is not a list is a type error.
             bad.write_text(
                 _json.dumps({"default": {"equity_portfolio": "nope"}}),
                 encoding="utf-8",
             )
             ctx2 = self._ctx(Path(tmp))
-            with self.assertRaises(ValueError):
+            with self.assertRaises((TypeError, ValueError)):
                 ctx2.load_portfolio()
+            # A root that is not an object is a shape error.
             bad.write_text(_json.dumps(["not", "a", "dict"]), encoding="utf-8")
             ctx3 = self._ctx(Path(tmp))
-            with self.assertRaises(ValueError):
+            with self.assertRaises((TypeError, ValueError)):
                 ctx3.load_portfolio()
+            # A pre-user (flat) file points at the migration script.
+            bad.write_text(
+                _json.dumps({"equity_portfolio": [{"ISIN": "X"}]}), encoding="utf-8"
+            )
+            ctx4 = self._ctx(Path(tmp))
+            with self.assertRaises(ValueError) as ctx_exc:
+                ctx4.load_portfolio()
+            self.assertIn("migrate_assets_user.py", str(ctx_exc.exception))
 
 
 class TestPlotterSelection(unittest.TestCase):

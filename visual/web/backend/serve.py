@@ -25,7 +25,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from .constituents import load_constituents, render_constituents_page
-from storage.assets_file import DEFAULT_USER_NAME, UnknownUser
+from cli.common import DEFAULT_USER_NAME
+from storage.repositories import UnknownUser
 
 logger = logging.getLogger(__name__)
 

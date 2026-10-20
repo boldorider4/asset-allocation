@@ -21,7 +21,7 @@ from scrape.traderepublic import (
     update_traderepublic_etfs_in_portfolio,
 )
 from cli.context import AppConfig, RuntimeContext
-from utils import write_portfolio
+from assets_helpers import write_user_buckets
 
 
 class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
@@ -112,7 +112,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         update_traderepublic_etfs_in_portfolio(self.ctx)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "assets.json"
-            write_portfolio(path, self.ctx.portfolio)
+            write_user_buckets(path, self.ctx.portfolio)
             written = json.loads(path.read_text(encoding="utf-8"))["default"]
         pos = written[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)

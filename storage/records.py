@@ -264,6 +264,14 @@ class UserAssets(StorageObject):
 
     @staticmethod
     def _coerce(data: Any, *, key: str) -> dict[str, list[dict[str, Any]]]:
+        if isinstance(data, list):
+            # A pre-user file stored the buckets directly at the top
+            # level, so a list payload means the file predates users.
+            raise ValueError(
+                f"row {key!r} holds a bucket list, not a user portfolio; "
+                "migrate the file once with: python "
+                "scripts/migrate_assets_user.py <assets.json> <user>"
+            )
         if not isinstance(data, dict):
             raise TypeError(f"user {key!r} assets must be a JSON object")
         out: dict[str, list[dict[str, Any]]] = {}

@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The user-keyed assets file: shape, isolation, migration, server routing."""
+"""The user-keyed assets store: shape, isolation, migration, wiring.
+
+The store is reached through ``storage.repositories.AssetRepository``
+over the backend chosen in ``storage.wiring`` — the same path
+production uses, so these tests exercise the real composition.
+"""
 
 from __future__ import annotations
 
@@ -14,85 +19,83 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from cli.common import DEFAULT_USER_NAME  # noqa: E402
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
-from storage.assets_file import (  # noqa: E402
-    DEFAULT_USER_NAME,
-    LegacyAssetsFormat,
-    UnknownUser,
-    is_legacy_root,
-    read_assets_root,
-    require_user,
-    user_buckets,
-    write_assets_root,
-)
-from storage.json_storage import JsonStorage  # noqa: E402
 from storage.records import UserAssets  # noqa: E402
-from storage.repositories import AssetRepository  # noqa: E402
-from utils import load_portfolio, write_portfolio  # noqa: E402
+from storage.repositories import AssetRepository, UnknownUser  # noqa: E402
+from storage.wiring import assets_backend  # noqa: E402
 
 BUCKET = "equity_portfolio"
 POSITION = {"name": "ETF", "ISIN": "IE00TEST0001", "shares": 2, "value": 100.0}
 
 
-class TestAssetsFileShape(unittest.TestCase):
-    def test_file_is_keyed_by_user(self) -> None:
+def _repo(path: Path, user: str) -> AssetRepository:
+    return AssetRepository(user, assets_backend(path))
+
+
+class TestAssetsStoreShape(unittest.TestCase):
+    def test_store_is_keyed_by_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
-            write_assets_root(path, {"foobar": {BUCKET: [POSITION]}})
+            repo = _repo(path, "foobar")
+            repo.open()
+            repo.restore({BUCKET: [POSITION]})
+            repo.persist()
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(list(raw), ["foobar"])
             self.assertEqual(raw["foobar"][BUCKET][0]["ISIN"], "IE00TEST0001")
 
-    def test_legacy_flat_file_is_detected(self) -> None:
-        self.assertTrue(is_legacy_root({BUCKET: [POSITION]}))
-        self.assertFalse(is_legacy_root({"default": {BUCKET: [POSITION]}}))
-        self.assertFalse(is_legacy_root({}))
-
-    def test_legacy_file_is_rejected_with_migration_hint(self) -> None:
+    def test_legacy_flat_store_is_rejected_with_migration_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
             path.write_text(json.dumps({BUCKET: [POSITION]}), encoding="utf-8")
-            with self.assertRaises(LegacyAssetsFormat) as ctx:
-                read_assets_root(path)
+            repo = _repo(path, DEFAULT_USER_NAME)
+            with self.assertRaises(ValueError) as ctx:
+                repo.open()
             self.assertIn("migrate_assets_user.py", str(ctx.exception))
 
+    def test_malformed_store_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(json.dumps({"default": "nope"}), encoding="utf-8")
+            repo = _repo(path, DEFAULT_USER_NAME)
+            with self.assertRaises((TypeError, ValueError)):
+                repo.open()
+
     def test_unknown_user_raises(self) -> None:
-        root = {"default": {BUCKET: [POSITION]}}
-        self.assertEqual(require_user(root, "default"), {BUCKET: [POSITION]})
-        with self.assertRaises(UnknownUser):
-            require_user(root, "alice")
-        self.assertEqual(user_buckets(root, "alice"), {})
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp) / "assets.json", "alice")
+            repo.open()
+            self.assertFalse(repo.exists())
+            with self.assertRaises(UnknownUser):
+                repo.require()
 
 
 class TestUserIsolation(unittest.TestCase):
-    def test_write_portfolio_preserves_other_users(self) -> None:
+    def test_writing_one_user_preserves_the_other(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
-            write_portfolio(path, {BUCKET: [POSITION]}, "alice")
-            write_portfolio(path, {BUCKET: [dict(POSITION, value=1.0)]}, "bob")
-            root = read_assets_root(path)
-            self.assertEqual(sorted(root), ["alice", "bob"])
-            self.assertEqual(root["alice"][BUCKET][0]["value"], 100.0)
-            self.assertEqual(root["bob"][BUCKET][0]["value"], 1.0)
-
-    def test_load_portfolio_scopes_to_user(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "assets.json"
-            write_portfolio(path, {BUCKET: [POSITION]}, "alice")
-            self.assertEqual(load_portfolio(path, "alice")[BUCKET][0]["ISIN"], "IE00TEST0001")
-            self.assertEqual(load_portfolio(path, "bob"), {})
+            for user, value in (("alice", 100.0), ("bob", 1.0)):
+                repo = _repo(path, user)
+                repo.open()
+                repo.restore({BUCKET: [dict(POSITION, value=value)]})
+                repo.persist()
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(sorted(raw), ["alice", "bob"])
+            self.assertEqual(raw["alice"][BUCKET][0]["value"], 100.0)
+            self.assertEqual(raw["bob"][BUCKET][0]["value"], 1.0)
 
     def test_repository_is_user_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
-            backend = JsonStorage(path, UserAssets)
+            backend = assets_backend(path)
             alice = AssetRepository("alice", backend)
             bob = AssetRepository("bob", backend)
             alice.set_positions(BUCKET, [POSITION])
             self.assertEqual(alice.snapshot()[BUCKET][0]["ISIN"], "IE00TEST0001")
             self.assertEqual(bob.snapshot(), {})
-            backend.persist()
-            self.assertEqual(sorted(read_assets_root(path)), ["alice"])
+            self.assertTrue(alice.exists())
+            self.assertFalse(bob.exists())
 
 
 class TestRuntimeContextUser(unittest.TestCase):
@@ -109,7 +112,10 @@ class TestRuntimeContextUser(unittest.TestCase):
     def test_load_and_persist_round_trip_per_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            write_assets_root(root / "assets.json", {"alice": {BUCKET: [POSITION]}})
+            repo = _repo(root / "assets.json", "alice")
+            repo.open()
+            repo.restore({BUCKET: [POSITION]})
+            repo.persist()
             alice = self._ctx(root, "alice")
             alice.load_portfolio()
             self.assertEqual(alice.portfolio[BUCKET][0]["ISIN"], "IE00TEST0001")
@@ -118,13 +124,33 @@ class TestRuntimeContextUser(unittest.TestCase):
             self.assertEqual(bob.portfolio, {})
             # Writing bob's (empty) portfolio must not touch alice's.
             bob.persist_portfolio()
-            self.assertEqual(
-                read_assets_root(root / "assets.json")["alice"][BUCKET][0]["ISIN"],
-                "IE00TEST0001",
-            )
+            raw = json.loads((root / "assets.json").read_text(encoding="utf-8"))
+            self.assertEqual(raw["alice"][BUCKET][0]["ISIN"], "IE00TEST0001")
 
     def test_default_user_name(self) -> None:
         self.assertEqual(AppConfig().user, DEFAULT_USER_NAME)
+
+
+class TestWiring(unittest.TestCase):
+    def test_assets_backend_is_chosen_in_one_place(self) -> None:
+        # The backend is composed by storage.wiring only: swapping in
+        # Postgres later is a one-line change there.
+        import storage.wiring as wiring
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = wiring.assets_backend(Path(tmp) / "assets.json")
+        self.assertEqual(backend._factory, UserAssets)  # type: ignore[attr-defined]
+
+    def test_no_json_shaped_helpers_in_the_storage_layer(self) -> None:
+        # The storage layer must not know about file formats: the old
+        # assets_file module (file IO + legacy detection) is gone, and
+        # only the backends may touch a file format.
+        self.assertFalse((REPO_ROOT / "storage" / "assets_file.py").exists())
+        for name in ("records.py", "repositories.py", "storage.py", "wiring.py"):
+            source = (REPO_ROOT / "storage" / name).read_text(encoding="utf-8")
+            self.assertNotIn("json.dump", source, name)
+            self.assertNotIn("json.load", source, name)
+            self.assertNotIn("with open(", source, name)
 
 
 class TestMigrationScript(unittest.TestCase):
@@ -140,9 +166,9 @@ class TestMigrationScript(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            root = read_assets_root(path)
-            self.assertEqual(list(root), ["foobar"])
-            self.assertEqual(root["foobar"][BUCKET][0]["ISIN"], "IE00TEST0001")
+            repo = _repo(path, "foobar")
+            repo.open()
+            self.assertEqual(repo.snapshot()[BUCKET][0]["ISIN"], "IE00TEST0001")
             backup = path.with_name(path.name + ".bak")
             self.assertTrue(backup.is_file())
             # The backup still holds the original flat file.
@@ -154,7 +180,10 @@ class TestMigrationScript(unittest.TestCase):
         script = REPO_ROOT / "scripts" / "migrate_assets_user.py"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
-            write_assets_root(path, {"default": {BUCKET: [POSITION]}})
+            repo = _repo(path, "default")
+            repo.open()
+            repo.restore({BUCKET: [POSITION]})
+            repo.persist()
             result = subprocess.run(
                 [sys.executable, str(script), str(path), "foobar"],
                 capture_output=True,
@@ -163,7 +192,8 @@ class TestMigrationScript(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("legacy", result.stderr)
             # Untouched.
-            self.assertEqual(list(read_assets_root(path)), ["default"])
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(list(raw), ["default"])
 
 
 if __name__ == "__main__":

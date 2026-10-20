@@ -5,7 +5,6 @@ from typing import Any
 
 from cli.common import DEFAULT_ISIN_PORTFOLIO_BUCKET
 from cli.logger import attach_color_stderr_handler_for_module
-from storage.assets_file import DEFAULT_USER_NAME
 from storage.records import CacheEntry
 
 logger = logging.getLogger(__name__)
@@ -109,36 +108,6 @@ def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
             ctx._mirror_cache_row(str(isin))
     ctx.mark_cache_dirty()
     logger.info("staged %d broker quote(s) in cache", count)
-
-
-def load_portfolio(path: Path, user: str = DEFAULT_USER_NAME) -> dict[str, list[dict]]:
-    """Load one user's portfolio buckets from the assets JSON file.
-
-    The file is keyed by user (``{"<user>": {"<bucket>": [...]}}``); a
-    legacy flat file raises with a pointer to the migration script.
-    """
-    from storage.assets_file import read_assets_root, user_buckets
-
-    return user_buckets(read_assets_root(path), user)
-
-
-def write_portfolio(
-    path: Path, data: dict[str, list[dict]], user: str = DEFAULT_USER_NAME
-) -> None:
-    """Overwrite one user's buckets in the assets JSON file at ``path``.
-
-    Other users' entries are preserved. Written atomically (temp file +
-    rename) so a killed update never leaves a torn file behind.
-    """
-    from storage.assets_file import read_assets_root, write_assets_root
-
-    assets_path = Path(path)
-    try:
-        users = read_assets_root(assets_path)
-    except FileNotFoundError:
-        users = {}
-    users[str(user)] = data
-    write_assets_root(assets_path, users)
 
 
 def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
