@@ -43,11 +43,33 @@ def stamp_index(index_path: Path | None = None) -> None:
     )
 
 
+def stamp_pages(target: Path) -> list[Path]:
+    """Stamp every page in *target* (a file, or a directory of pages).
+
+    The visualizer ships more than one page (the app shell and the login
+    screen); each carries the version and repo placeholders in its
+    footer, so all of them must be stamped.
+    """
+    if target.is_dir():
+        pages = sorted(target.glob("*.html"))
+    else:
+        pages = [target]
+    for page in pages:
+        stamp_index(page)
+    return pages
+
+
 def main() -> None:
     import sys
 
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    stamp_index(path)
+    targets = [Path(arg) for arg in sys.argv[1:]]
+    if not targets:
+        stamp_pages(
+            Path.home() / ".local" / "asalloc" / "visualizer" / "index.html"
+        )
+        return
+    for target in targets:
+        stamp_pages(target)
 
 
 if __name__ == "__main__":

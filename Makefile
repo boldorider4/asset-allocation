@@ -23,7 +23,7 @@ web:
 	mkdir -p $(VISUALIZER)/data
 	cp -R $(TEMPLATE)/. $(VISUALIZER)/
 	mkdir -p $(VISUALIZER)/data
-	python -m visual.web.backend.stamp_web $(VISUALIZER)/index.html
+	python -m visual.web.backend.stamp_web $(VISUALIZER)
 
 web-example: web
 	python -m visual.web.backend.web_example

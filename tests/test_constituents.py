@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Constituents endpoint: sections, cells, icons, and the /constituents route."""
+"""Constituents endpoint: sections, cells, icons, and the /constituents route.
+
+The app routes need a login session: the cookie the login endpoint
+hands out (``asalloc_sid=...``) travels with every protected request,
+and the server acts on the session user.
+"""
 
 from __future__ import annotations
 
 import functools
+import http.client
 import http.server
 import json
 import os
@@ -14,6 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from cli.common import DEFAULT_USER_NAME
 from visual.web.backend.constituents import (
     add_constituent,
     delete_constituent,
@@ -24,6 +31,12 @@ from visual.web.backend.constituents import (
     store_constituent_value,
 )
 from visual.web.backend.serve import DashboardHandler
+from visual.web.backend.session import read_session
+
+#: The user the fixtures know about (the assets store is keyed by user).
+_USER = "default"
+#: Sentinel for "the session cookie of this test"; ``None`` sends none.
+_SESSION = object()
 
 _ASSETS = {
     "cash_portfolio": [
@@ -70,6 +83,27 @@ def _write_files(tmp: Path) -> tuple[Path, Path]:
     assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
     cache.write_text(json.dumps(_CACHE), encoding="utf-8")
     return assets, cache
+
+
+def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
+    """Log in over HTTP; returns the session cookie (``asalloc_sid=...``).
+
+    The cookie is the credential every protected route needs from now
+    on: without it the server answers 302 (login page) or 404 (charts).
+    """
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/login",
+        data=json.dumps({"user": user, "incognito": incognito}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        resp.read()
+        set_cookie = resp.headers.get("Set-Cookie") or ""
+    cookie = set_cookie.split(";", 1)[0].strip()
+    if not cookie.startswith("asalloc_sid="):
+        raise AssertionError(f"login set no session cookie: {set_cookie!r}")
+    return cookie
 
 
 class _StubUpdateProcess:
@@ -559,13 +593,37 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # hover contour must only exist where hovering exists. The
         # pressed look (aria-pressed) is separate and untouched.
         self.assertIn("-webkit-tap-highlight-color", css)
-        hover_block = css.split("@media (hover: hover)", 1)[1]
-        self.assertIn(".nav-button:hover", hover_block)
-        self.assertIn(".nav-button.icon-button:hover .sync-glyph", hover_block)
-        self.assertIn(
-            ".nav-button.icon-button:hover .incognito-glyph", hover_block
-        )
         self.assertIn('[aria-pressed="true"]', css)
+        # Structural check: every nav-button :hover rule must live inside a
+        # "@media (hover: hover)" block, whatever the order of the blocks.
+        stack: list[bool] = []  # per open block: is it a hover media query?
+        i = 0
+        while i < len(css):
+            if css.startswith("@media", i):
+                brace = css.index("{", i)
+                stack.append(css[i:brace].startswith("@media (hover: hover)"))
+                i = brace + 1
+                continue
+            if css[i] == "{":
+                selector = css[css.rfind("}", 0, i) + 1 : i]
+                if ":hover" in selector and ".nav-button" in selector:
+                    self.assertTrue(
+                        any(stack),
+                        f"hover rule outside a hover media query: {selector.strip()[-80:]}",
+                    )
+                stack.append(False)
+                i += 1
+                continue
+            if css[i] == "}":
+                if stack:
+                    stack.pop()
+                i += 1
+                continue
+            i += 1
+        # The rules must still exist at all.
+        self.assertIn(".nav-button:hover", css)
+        self.assertIn(".nav-button.icon-button:hover .sync-glyph", css)
+        self.assertIn(".nav-button.icon-button:hover .incognito-glyph", css)
 
     def test_view_switcher_swaps_without_reload(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
@@ -706,6 +764,153 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(".overlay {", css)
         self.assertIn("position: fixed", css)
         self.assertIn(".overlay[hidden]", css)
+
+    def test_frontend_asks_the_server_for_the_session_user(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        # The user comes from the server session now; there is no
+        # ?user= parameter and no client-side user switch any more.
+        self.assertNotIn("currentUser", app_js)
+        self.assertNotIn("dataUrl", app_js)
+        # The shared query helper keeps the incognito state alive...
+        self.assertIn("urlWithParams", app_js)
+        # ...and the session user is fetched from the server.
+        self.assertIn("fetchSessionUser", app_js)
+        self.assertIn("api/session", app_js)
+        # The chart files live in the session user's directory, so the
+        # data URLs carry no user parameter.
+        self.assertIn('fetch("data/"', app_js)
+
+    def test_dashboard_has_a_logout_button(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        index = (root / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="logout-link"', index)
+        self.assertIn(">Logout</button>", index)
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # The button drops the server session and leaves for the login page.
+        self.assertIn("/api/logout", dashboard_js)
+        self.assertIn('getElementById("logout-link")', dashboard_js)
+
+    def test_login_page_has_the_login_form(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        login_html = (root / "login.html").read_text(encoding="utf-8")
+        # Title, user field, submit button...
+        self.assertIn("<title>Asset Allocation</title>", login_html)
+        self.assertIn(">User</label>", login_html)
+        self.assertIn('id="login-user"', login_html)
+        self.assertIn(">Log In</button>", login_html)
+        # ...the incognito toggle and its ON/OFF read-out.
+        self.assertIn('id="incognito-link"', login_html)
+        self.assertIn('aria-pressed="false"', login_html)
+        self.assertIn('id="incognito-state"', login_html)
+        self.assertIn(">OFF</span>", login_html)
+        # The dashboard's bottom banner, minus the "Updated at ..." part.
+        self.assertIn('class="site-footer"', login_html)
+        self.assertIn("asalloc v__ASALLOC_VERSION__", login_html)
+        self.assertIn("__ASALLOC_REPO_URL__", login_html)
+        self.assertNotIn("Last updated", login_html)
+        login_js = (root / "login.js").read_text(encoding="utf-8")
+        self.assertIn("/api/login", login_js)
+        self.assertIn('"ON"', login_js)
+        self.assertIn('"OFF"', login_js)
+        # A failed login highlights the field (outline + one-shot flare)
+        # instead of showing a banner.
+        self.assertIn("login-error", login_js)
+        self.assertIn("login-flare", login_js)
+        self.assertIn("clearFieldError", login_js)
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".login-body", css)
+        self.assertIn(".login-form", css)
+        self.assertIn(".login-input.login-error", css)
+        self.assertIn(".login-input.login-flare", css)
+        self.assertIn(".sr-only", css)
+
+    def test_button_labels_match_the_anchor_font_size(self) -> None:
+        # "Log In" and "Logout" are <button>s, "Edit" an <a>: the button
+        # reset must not override .nav-button's font-size (a "font: inherit"
+        # shorthand would reset it to the inherited size).
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("button.nav-button", css)
+        button_rule = css.split("button.nav-button {", 1)[1].split("}", 1)[0]
+        self.assertNotIn("font:", button_rule)
+        nav_rule = css.split(".nav-button {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-size:", nav_rule)
+        # Both take the size from the same custom property, so they cannot
+        # drift apart.
+        self.assertIn("--nav-font-size", nav_rule)
+        self.assertIn("var(--nav-font-size)", button_rule)
+
+    def test_button_reset_is_not_trapped_in_a_media_query(self) -> None:
+        # The button reset once sat inside "@media (hover: hover)", so
+        # touch devices (no hover support) kept the UA button font and
+        # rendered "Log In" / "Logout" bigger than "Edit".
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        media_depth = 0
+        rule = ""
+        i = 0
+        while i < len(css):
+            char = css[i]
+            if css.startswith("@media", i):
+                media_depth += 1
+                i += 6
+                continue
+            if char == "{":
+                rule = css[max(0, i - 40) : i]
+                if "button.nav-button" in rule:
+                    self.assertEqual(
+                        media_depth,
+                        0,
+                        "button.nav-button is inside a media query: touch "
+                        "devices would fall back to the UA button font",
+                    )
+                i += 1
+                continue
+            if char == "}":
+                media_depth = max(0, media_depth - 1)
+            i += 1
+        # The stylesheet must still be balanced.
+        self.assertEqual(css.count("{"), css.count("}"))
+
+    def test_buttons_and_anchors_share_text_alignment(self) -> None:
+        # "Log In", "Logout" and "Edit" must place their label the same
+        # way inside the pill: a native button centres its content while
+        # the anchor sits on the text baseline, so the reset pins the
+        # anchor's behaviour (no native appearance, baseline alignment,
+        # centred text) for the buttons.
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+
+        def rule_with(needle: str) -> str:
+            """The CSS block containing *needle* (the first one)."""
+            index = css.index(needle)
+            start = css.rindex("{", 0, index)
+            end = css.index("}", index)
+            return css[start:end]
+
+        button_rule = rule_with("button.nav-button {")
+        nav_rule = rule_with("--nav-font-size: 0.85rem")
+        # Anchors and buttons must be the same box type: an <a> lays its
+        # text out on the text baseline while a <button> centres it in
+        # the UA box, so mixing them puts the labels at different
+        # heights. Both are inline-flex with centred content.
+        for rule, name in ((button_rule, "button"), (nav_rule, "anchor")):
+            for expected in (
+                "display: inline-flex",
+                "align-items: center",
+                "justify-content: center",
+                "text-align: center",
+            ):
+                self.assertIn(expected, rule, f"{name}: {expected}")
+        # The button must not fall back to the native widget.
+        self.assertIn("appearance: none", button_rule)
+        # Both take the size from the same custom property, so they cannot
+        # drift apart.
+        self.assertIn("font-size: var(--nav-font-size)", nav_rule)
+        self.assertIn("font-size: var(--nav-font-size)", button_rule)
+        # The iOS tap flash must stay suppressed.
+        self.assertIn("-webkit-tap-highlight-color", nav_rule)
 
     def test_dashboard_has_sync_prices_button(self) -> None:
         index = (
@@ -1427,7 +1632,18 @@ class TestNumberFormatting(unittest.TestCase):
         self.assertIn("white-space: nowrap", css)
 
 
-class TestConstituentsRoute(unittest.TestCase):
+class _RouteCase(unittest.TestCase):
+    """The visualizer server with a logged-in session.
+
+    Every protected request carries the session cookie the login
+    endpoint hands out; the server acts on the session user from now on
+    (there is no ``?user=`` parameter any more).
+    """
+
+    #: The update endpoint binds the session itself (see
+    #: ``DashboardHandler._run_update``).
+    bind_update_session = True
+
     def setUp(self) -> None:
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
@@ -1435,6 +1651,7 @@ class TestConstituentsRoute(unittest.TestCase):
         self.root = tmp / "visualizer"
         self.root.mkdir()
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
+        (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
         # Updates run in stubbed child processes (threads), so
         # ``cli.update.main`` patches apply and no real worker spawns.
@@ -1463,15 +1680,101 @@ class TestConstituentsRoute(unittest.TestCase):
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
         self.addCleanup(self._httpd.shutdown)
+        # Log in: the session cookie every protected request carries.
+        self.cookie = self._login()
 
-    def _get(self, path: str) -> tuple[int, str]:
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+    # -- requests ------------------------------------------------------
+    def _url(self, path: str) -> str:
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    def _login(self, user: str = _USER, incognito: bool = False) -> str:
+        """Log in over HTTP; returns the session cookie."""
+        return _login_cookie(self.port, user, incognito)
+
+    def _get(
+        self, path: str, cookie: str | None | object = _SESSION
+    ) -> tuple[int, str]:
+        """GET (redirects followed); returns (status, body)."""
+        req = urllib.request.Request(self._url(path))
+        if cookie is _SESSION:
+            cookie = self.cookie
+        if cookie:
+            req.add_header("Cookie", cookie)
         try:
             with urllib.request.urlopen(req) as resp:
                 return resp.status, resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", errors="replace")
 
+    def _raw(
+        self,
+        path: str,
+        cookie: str | None | object = _SESSION,
+        method: str = "GET",
+        data: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, dict[str, str], str]:
+        """Request without redirect following; returns (status, headers, body)."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port)
+        try:
+            sent = dict(headers or {})
+            if cookie is _SESSION:
+                cookie = self.cookie
+            if cookie:
+                sent["Cookie"] = cookie
+            conn.request(method, path, body=data, headers=sent)
+            resp = conn.getresponse()
+            body = resp.read().decode("utf-8", errors="replace")
+            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, body
+        finally:
+            conn.close()
+
+    def _post_json(
+        self,
+        path: str,
+        payload: dict,
+        cookie: str | None | object = _SESSION,
+    ) -> tuple[int, str]:
+        """POST a JSON body with the session cookie; returns (status, body)."""
+        req = urllib.request.Request(
+            self._url(path),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        if cookie is _SESSION:
+            cookie = self.cookie
+        if cookie:
+            req.add_header("Cookie", cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def _post(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents", payload)
+
+    def _post_order(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents/order", payload)
+
+    def _post_delete(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents/delete", payload)
+
+    def _post_add(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents/add", payload)
+
+    def _post_check_isin(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents/check-isin", payload)
+
+    def _post_update(self, payload: dict | None = None) -> tuple[int, str]:
+        return self._post_json("/api/update", {} if payload is None else payload)
+
+    def _post_path(self, path: str, payload: dict | None = None) -> tuple[int, str]:
+        return self._post_json(path, {} if payload is None else payload)
+
+
+class TestConstituentsRoute(_RouteCase):
     def test_constituents_renders_table(self) -> None:
         for path in ("/constituents", "/constituents/"):
             status, body = self._get(path)
@@ -1479,6 +1782,80 @@ class TestConstituentsRoute(unittest.TestCase):
             self.assertIn("Amundi Core", body)
             self.assertIn("81.25", body)
             self.assertIn("<table>", body)
+
+    def test_constituents_needs_a_session(self) -> None:
+        status, headers, _ = self._raw("/constituents", cookie=None)
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
+
+    def test_constituents_shows_the_session_users_portfolio(self) -> None:
+        # The store knows a second user: their session shows their rows.
+        data = json.loads(self.assets.read_text(encoding="utf-8"))
+        data["alice"] = {
+            "equity_portfolio": [
+                {
+                    "name": "Alice Fund",
+                    "shares": 1,
+                    "value": 2,
+                    "broker": "scalable",
+                    "ISIN": None,
+                }
+            ]
+        }
+        self.assets.write_text(json.dumps(data), encoding="utf-8")
+        cookie = self._login("alice")
+        status, body = self._get("/constituents", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("Alice Fund", body)
+        self.assertNotIn("Amundi Core", body)
+
+    def test_api_constituents_needs_a_session(self) -> None:
+        status, headers, _ = self._raw(
+            "/api/constituents",
+            cookie=None,
+            method="POST",
+            data=json.dumps(
+                {
+                    "bucket": "equity_portfolio",
+                    "index": 0,
+                    "field": "shares",
+                    "value": "1",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
+
+    def test_api_session_reports_the_logged_in_user(self) -> None:
+        status, _, body = self._raw("/api/session")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"user": _USER, "incognito": False})
+
+    def test_login_rejects_an_unknown_user(self) -> None:
+        status, _, body = self._raw(
+            "/api/login",
+            cookie=None,
+            method="POST",
+            data=json.dumps({"user": "nobody"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("unknown user: nobody", body)
+
+    def test_logout_ends_the_session(self) -> None:
+        status, _, body = self._raw(
+            "/api/logout",
+            method="POST",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"ok": True, "redirect": "/login"})
+        # The session is gone: the page is out of reach again.
+        status, headers, _ = self._raw("/constituents", cookie=self.cookie)
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
 
     def test_constituents_holds_incognito_in_overview_link(self) -> None:
         status, body = self._get("/constituents?incognito=true")
@@ -1553,19 +1930,6 @@ class TestConstituentsRoute(unittest.TestCase):
         # must use it instead of a hardcoded path.
         self.assertIn('link.getAttribute("href")', js)
 
-    def _post(self, payload: dict) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
-
     def test_post_edit_persists_to_disk(self) -> None:
         status, body = self._post(
             {
@@ -1611,19 +1975,6 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
 
-    def _post_order(self, payload: dict) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents/order",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
-
     def test_post_order_persists_to_disk(self) -> None:
         status, body = self._post_order(
             {"bucket": "equity_portfolio", "order": [1, 0]}
@@ -1650,19 +2001,6 @@ class TestConstituentsRoute(unittest.TestCase):
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
 
-    def _post_delete(self, payload: dict) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents/delete",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
-
     def test_post_delete_persists_to_disk(self) -> None:
         status, body = self._post_delete(
             {"bucket": "equity_portfolio", "index": 0}
@@ -1688,19 +2026,6 @@ class TestConstituentsRoute(unittest.TestCase):
                 status, _ = self._post_delete(payload)
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
-
-    def _post_add(self, payload: dict) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents/add",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
 
     def test_post_add_persists_and_returns_row(self) -> None:
         status, body = self._post_add(
@@ -1752,19 +2077,6 @@ class TestConstituentsRoute(unittest.TestCase):
         )
         for entry in brokers:
             self.assertTrue("icons/" in entry["mark"] or "<svg" in entry["mark"])
-
-    def _post_check_isin(self, payload: dict) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents/check-isin",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
 
     def test_post_check_isin_reports_probe(self) -> None:
         from unittest.mock import patch
@@ -1818,19 +2130,6 @@ class TestConstituentsRoute(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             self.assertEqual(exc.code, 404)
 
-    def _post_update(self, payload: dict | None = None) -> tuple[int, str]:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/update",
-            data=json.dumps(payload if payload is not None else {}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
-
     def test_post_update_runs_lite_refresh_at_error_level(self) -> None:
         import logging
         from unittest.mock import patch
@@ -1863,6 +2162,8 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertEqual(logging.getLogger().level, before)
         self.assertEqual(str(config.assets_file), str(self.assets))
         self.assertEqual(str(config.cache_file), str(self.cache))
+        # The update runs for the session user (no ?user= parameter).
+        self.assertEqual(config.user, _USER)
 
     def test_post_update_failure_is_500(self) -> None:
         from unittest.mock import patch
@@ -1961,7 +2262,7 @@ class TestConstituentsRoute(unittest.TestCase):
             req = urllib.request.Request(
                 f"http://127.0.0.1:{self.port}/api/update",
                 data=b"not json{{{",
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "Cookie": self.cookie},
                 method="POST",
             )
             with urllib.request.urlopen(req) as resp:
@@ -1980,6 +2281,11 @@ class TestConstituentsRoute(unittest.TestCase):
         self.assertFalse(payload["updating"])
         self.assertIn("last_ok", payload)
         self.assertIn("last_error", payload)
+
+    def test_update_status_needs_a_session(self) -> None:
+        status, headers, _ = self._raw("/api/update", cookie=None)
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
 
     def test_update_status_tracks_running_job(self) -> None:
         import threading as _threading
@@ -2113,6 +2419,9 @@ class TestConstituentsRoute(unittest.TestCase):
         thread.start()
         self.addCleanup(httpd.shutdown)
         req = urllib.request.Request(f"http://127.0.0.1:{port}/constituents")
+        # The session store lives in the served directory, so this
+        # server knows the session of the test.
+        req.add_header("Cookie", self.cookie)
         try:
             urllib.request.urlopen(req)
             self.fail("expected HTTPError")
@@ -2123,58 +2432,31 @@ class TestConstituentsRoute(unittest.TestCase):
             self.assertNotIn("Traceback", body)
 
 
-class TestUpdateCancellation(unittest.TestCase):
-    def setUp(self) -> None:
-        self._holder = tempfile.TemporaryDirectory()
-        self.addCleanup(self._holder.cleanup)
-        tmp = Path(self._holder.name)
-        self.root = tmp / "visualizer"
-        self.root.mkdir()
-        (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
-        self.assets, self.cache = _write_files(tmp)
-        # Same stubbed spawning as TestConstituentsRoute (see above).
-        del _SPAWNED_STUBS[:]
+class TestUpdateSessionBinding(_RouteCase):
+    """The update endpoint runs for the logged-in user."""
+
+    def test_post_update_runs_for_the_session_user(self) -> None:
         from unittest.mock import patch
 
-        spawn_patch = patch(
-            "visual.web.backend.serve._spawn_update_process",
-            side_effect=_stub_spawn_update_process,
-        )
-        spawn_patch.start()
-        self.addCleanup(spawn_patch.stop)
-        # Isolate the stub worker from the real config file (see above).
-        env_patch = patch.dict(os.environ, {"ASALLOC_CONFIG": str(tmp / "nope.ini")})
-        env_patch.start()
-        self.addCleanup(env_patch.stop)
-        handler = functools.partial(
-            DashboardHandler,
-            directory=str(self.root),
-            assets_file=str(self.assets),
-            cache_file=str(self.cache),
-        )
-        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        self.port = self._httpd.server_address[1]
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
-        self._thread.start()
-        self.addCleanup(self._httpd.shutdown)
+        seen = {}
 
-    def _post_path(self, path: str, payload: dict | None = None) -> tuple[int, str]:
-        data = (
-            json.dumps(payload).encode("utf-8")
-            if payload is not None
-            else b"{}"
-        )
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}{path}",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req) as resp:
-                return resp.status, resp.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            return exc.code, exc.read().decode("utf-8", errors="replace")
+        def fake_main(ctx) -> None:
+            seen["config"] = ctx.config
+
+        with (
+            patch("cli.update.main", side_effect=fake_main),
+            patch("visual.web.backend.serve._quiesce_update_units"),
+            patch("visual.web.backend.serve._restore_update_timer"),
+        ):
+            status, body = self._post_update()
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"updated": True})
+        # The update runs for the session user (no ?user= parameter).
+        self.assertEqual(seen["config"].user, _USER)
+
+
+class TestUpdateCancellation(_RouteCase):
+    """Same server fixture as the route tests (see _RouteCase)."""
 
     def test_cancel_without_job(self) -> None:
         status, body = self._post_path("/api/cancel")

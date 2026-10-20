@@ -167,6 +167,18 @@ def _assets_repo(
     )
 
 
+def assets_user_exists(
+    assets_path: str | Path,
+    user: str,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> bool:
+    """True when the assets store holds a portfolio for ``user``."""
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo.open()
+    return repo.exists()
+
+
 def load_constituents(
     assets_path: str | Path,
     cache_path: str | Path,

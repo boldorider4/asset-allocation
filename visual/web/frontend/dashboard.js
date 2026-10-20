@@ -79,7 +79,9 @@
   function isIncognitoMode() {
     try {
       return (
-        new URLSearchParams(window.location.search).get("incognito") === "true"
+        new URLSearchParams(window.location.search)
+          .get("incognito")
+          ?.toLowerCase() === "true"
       );
     } catch {
       return false;
@@ -257,6 +259,17 @@
     switchViewOrNavigate(target);
   }
 
+  async function logout(event) {
+    // Drop the server session, then leave for the login page.
+    event.preventDefault();
+    try {
+      await fetch(urlWithParams("/api/logout"), { method: "POST" });
+    } catch {
+      // Ignore: the login page decides the next step anyway.
+    }
+    window.location.href = "/login";
+  }
+
   // Idempotent boot: this script loads on both pages (the view switcher
   // swaps bodies in place), but only the dashboard has #sync-link. Fresh
   // nodes after a swap get painted + bound exactly once via wiredNodes;
@@ -274,6 +287,10 @@
     const edit = document.getElementById("edit-link");
     if (markWired(edit)) {
       edit.addEventListener("click", cancelAndEdit);
+    }
+    const logoutLink = document.getElementById("logout-link");
+    if (markWired(logoutLink)) {
+      logoutLink.addEventListener("click", logout);
     }
   }
 

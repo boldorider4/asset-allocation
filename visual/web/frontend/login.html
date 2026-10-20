@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Asset Allocation</title>
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="login-body">
+    <main class="login">
+      <h1 class="login-title">Asset Allocation</h1>
+      <svg
+        class="login-donut"
+        viewBox="0 0 320 320"
+        role="img"
+        aria-label="Sample allocation: equity, bonds and gold"
+      >
+        <circle class="login-donut-track" cx="160" cy="160" r="120" />
+        <circle class="login-donut-ring equity-us" cx="160" cy="160" r="120" />
+        <circle class="login-donut-ring equity-ex-us" cx="160" cy="160" r="120" />
+        <circle class="login-donut-ring bonds" cx="160" cy="160" r="120" />
+        <circle class="login-donut-ring gold" cx="160" cy="160" r="120" />
+      </svg>
+      <form class="login-form" id="login-form" autocomplete="off">
+        <label class="login-label" for="login-user">User</label>
+        <input
+          class="login-input"
+          id="login-user"
+          name="user"
+          type="text"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div class="login-actions">
+          <button class="nav-button" id="login-submit" type="submit">Log In</button>
+          <span class="login-toggle">
+            <button
+              class="nav-button icon-button"
+              id="incognito-link"
+              type="button"
+              aria-pressed="false"
+              title="Incognito mode"
+              aria-label="Incognito mode"
+            >
+              <span class="incognito-glyph" aria-hidden="true"></span>
+            </button>
+            <span class="login-toggle-label">Incognito</span>
+            <span class="login-toggle-state" id="incognito-state">OFF</span>
+          </span>
+        </div>
+      </form>
+      <p class="sr-only" id="login-status" role="status" aria-live="polite"></p>
+      <p class="login-hint">
+        No portfolio yet? Ask admin to create a new user.
+      </p>
+    </main>
+    <footer class="site-footer">
+      <span id="version-label">asalloc v__ASALLOC_VERSION__</span>
+      <a href="__ASALLOC_REPO_URL__">__ASALLOC_REPO_URL__</a>
+    </footer>
+    <script src="login.js"></script>
+  </body>
+</html>

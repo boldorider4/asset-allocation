@@ -796,7 +796,9 @@
   function isIncognitoMode() {
     try {
       return (
-        new URLSearchParams(window.location.search).get("incognito") === "true"
+        new URLSearchParams(window.location.search)
+          .get("incognito")
+          ?.toLowerCase() === "true"
       );
     } catch {
       return false;
