@@ -49,8 +49,9 @@
   function constituentsUrl() {
     try {
       const incognito =
-        new URLSearchParams(window.location.search).get("incognito") ===
-        "true";
+        new URLSearchParams(window.location.search)
+          .get("incognito")
+          ?.toLowerCase() === "true";
       return incognito ? "/constituents?incognito=true" : "/constituents";
     } catch {
       return "/constituents";

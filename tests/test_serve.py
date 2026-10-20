@@ -279,7 +279,7 @@ class TestSessionApi(_ServerCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["user"], _USER)
         self.assertFalse(payload["incognito"])
-        self.assertEqual(payload["redirect"], "/dashboard?incognito=False")
+        self.assertEqual(payload["redirect"], "/dashboard?incognito=false")
         self.assertIn("asalloc_sid=", headers["set-cookie"])
 
     def test_login_carries_the_incognito_flag(self) -> None:
@@ -289,7 +289,7 @@ class TestSessionApi(_ServerCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertTrue(payload["incognito"])
-        self.assertEqual(payload["redirect"], "/dashboard?incognito=True")
+        self.assertEqual(payload["redirect"], "/dashboard?incognito=true")
         cookie = headers["set-cookie"].split(";", 1)[0]
         status, _, body = self._raw("/api/session", cookie=cookie)
         self.assertEqual(status, 200)

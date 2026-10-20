@@ -788,6 +788,18 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(".login-body", css)
         self.assertIn(".login-form", css)
 
+    def test_button_labels_match_the_anchor_font_size(self) -> None:
+        # "Log In" and "Logout" are <button>s, "Edit" an <a>: the button
+        # reset must not override .nav-button's font-size (a "font: inherit"
+        # shorthand would reset it to the inherited size).
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("button.nav-button", css)
+        button_rule = css.split("button.nav-button {", 1)[1].split("}", 1)[0]
+        self.assertNotIn("font:", button_rule)
+        nav_rule = css.split(".nav-button {", 1)[1].split("}", 1)[0]
+        self.assertIn("font-size:", nav_rule)
+
     def test_dashboard_has_sync_prices_button(self) -> None:
         index = (
             Path(__file__).resolve().parent.parent

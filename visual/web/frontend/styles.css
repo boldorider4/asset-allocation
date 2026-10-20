@@ -334,9 +334,11 @@ code {
 }
 
 /* Buttons styled like the nav anchors (the dashboard uses <a>, the login
- * screen and Logout use <button>). */
+ * screen and Logout use <button>). Only the family is inherited: the
+ * font-size comes from .nav-button, so "Log In" and "Logout" match
+ * "Edit" exactly. */
 button.nav-button {
-  font: inherit;
+  font-family: inherit;
   color: inherit;
   cursor: pointer;
 }

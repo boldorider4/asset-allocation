@@ -425,7 +425,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 "user": user,
                 "incognito": incognito,
                 "redirect": "/dashboard?incognito=%s"
-                % ("True" if incognito else "False"),
+                % ("true" if incognito else "false"),
             }
         ).encode("utf-8")
         self.send_response(200)
