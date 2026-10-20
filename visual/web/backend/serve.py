@@ -25,6 +25,16 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from .constituents import load_constituents, render_constituents_page
+from .session import (
+    Session,
+    clear_cookie_header,
+    cookie_header,
+    login as start_session,
+    logout as end_session,
+    new_session_id,
+    read_session,
+    session_id_from_cookie,
+)
 from cli.common import DEFAULT_USER_NAME
 from storage.repositories import UnknownUser
 from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN
@@ -55,6 +65,7 @@ KILL_GRACE_S = 5.0
 
 DASHBOARD_PATHS = ("/dashboard", "/dashboard/")
 CONSTITUENTS_PATHS = ("/constituents", "/constituents/")
+LOGIN_PATHS = ("/login", "/login/")
 DATA_PREFIX = "/data"
 # On-disk chart layout under the served directory. The URL prefix stays
 # /data (frontend contract); the dir name is overridable per handler
@@ -294,11 +305,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def _redirect_root(self) -> bool:
-        """302 ``/`` to ``/dashboard``, preserving any query string."""
+        """302 ``/`` to the session's landing page, preserving the query."""
         if urlsplit(self.path).path != "/":
             return False
         query = urlsplit(self.path).query
-        target = "/dashboard" + (f"?{query}" if query else "")
+        target = "/dashboard" if self._session() else "/login"
+        if query:
+            target += f"?{query}"
         self.send_response(302)
         self.send_header("Location", target)
         self.end_headers()
@@ -319,26 +332,141 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._cache_file = cache_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
-        # Default user; requests may select another one with ?user=.
+        # Fallback user when no session is active (login page default).
         self._default_user = user or DEFAULT_USER_NAME
         # Which backend holds the assets (resolved by the app, not here).
         self._backend = backend or BACKEND_JSON
         self._postgres_dsn = postgres_dsn or DEFAULT_POSTGRES_DSN
         super().__init__(*args, **kwargs)
 
-    def _request_user(self) -> str:
-        """User selected by the request (``?user=``), else the default."""
-        query = parse_qs(urlsplit(self.path).query).get("user", [])
-        if query:
-            chosen = str(query[0]).strip()
-            if chosen:
-                return chosen
-        return self._default_user
+    def _session(self) -> Session | None:
+        """The session of this browser, if it is logged in."""
+        return read_session(
+            self.directory, self.headers.get("Cookie")
+        )
+
+    def _session_user(self) -> str | None:
+        """The logged-in user's name, or None."""
+        session = self._session()
+        return session.user if session else None
+
+    def _require_session(self) -> Session | None:
+        """The session, or a 302 to the login page (when unanswered)."""
+        session = self._session()
+        if session is None:
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return None
+        return session
+
+    def _serve_login_page(self) -> bool:
+        """Redirect a live session away from the login page."""
+        if urlsplit(self.path).path not in LOGIN_PATHS:
+            return False
+        if self._session() is None:
+            # No session: the page itself is served as a static file.
+            return False
+        self.send_response(302)
+        self.send_header("Location", "/dashboard")
+        self.end_headers()
+        return True
+
+    def _serve_dashboard(self) -> bool:
+        """Serve the app shell; without a session it goes to the login page."""
+        if urlsplit(self.path).path not in DASHBOARD_PATHS:
+            return False
+        if self._session() is None:
+            self.send_response(302)
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return True
+        return False
+
+    def _serve_session_status(self) -> bool:
+        """Serve ``GET /api/session`` with the logged-in user and state."""
+        if urlsplit(self.path).path != "/api/session":
+            return False
+        session = self._session()
+        body = json.dumps(
+            {
+                "user": session.user if session else None,
+                "incognito": session.incognito if session else False,
+            }
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+        return True
+
+    def _login(self) -> bool:
+        """Handle ``POST /api/login``: start a session for a known user."""
+        if urlsplit(self.path).path != "/api/login":
+            return False
+        payload = self._read_json_body()
+        if payload is None:
+            return True
+        user = str(payload.get("user") or "").strip()
+        if not user:
+            self._plain_status(400, "user must not be empty")
+            return True
+        incognito = bool(payload.get("incognito"))
+        if not self._user_exists(user):
+            self._plain_status(404, f"unknown user: {user}")
+            return True
+        session_id = new_session_id()
+        start_session(self.directory, session_id, user, incognito=incognito)
+        body = json.dumps(
+            {
+                "ok": True,
+                "user": user,
+                "incognito": incognito,
+                "redirect": "/dashboard?incognito=%s"
+                % ("True" if incognito else "False"),
+            }
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Set-Cookie", cookie_header(session_id))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _logout(self) -> bool:
+        """Handle ``POST /api/logout``: drop the session."""
+        if urlsplit(self.path).path != "/api/logout":
+            return False
+        session_id = session_id_from_cookie(self.headers.get("Cookie"))
+        if session_id:
+            end_session(self.directory, session_id)
+        body = json.dumps({"ok": True, "redirect": "/login"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Set-Cookie", clear_cookie_header())
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _user_exists(self, user: str) -> bool:
+        """True when the assets store holds a portfolio for ``user``."""
+        from .constituents import assets_user_exists
+
+        return assets_user_exists(
+            self._assets_file, user, self._backend, self._postgres_dsn
+        )
 
     def _serve_update_status(self) -> bool:
         """Serve ``GET /api/update`` with the run state for the sync button."""
         if urlsplit(self.path).path != "/api/update":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         body = json.dumps(_update_status_payload()).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -353,6 +481,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         parts = urlsplit(self.path)
         if parts.path not in CONSTITUENTS_PATHS:
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
@@ -360,7 +491,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 load_constituents(
                     self._assets_file,
                     self._cache_file,
-                    self._request_user(),
+                    session.user,
                     self._backend,
                     self._postgres_dsn,
                 ),
@@ -389,6 +520,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         if urlsplit(self.path).path != "/api/constituents":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
@@ -423,7 +557,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 payload.get("field"),
                 payload.get("value"),
                 cache,
-                self._request_user(),
+                session.user,
                 self._backend,
                 self._postgres_dsn,
             )
@@ -451,6 +585,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         if urlsplit(self.path).path != "/api/constituents/order":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
@@ -473,7 +610,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 payload.get("bucket"),
                 payload.get("order"),
-                self._request_user(),
+                session.user,
                 self._backend,
                 self._postgres_dsn,
             )
@@ -501,6 +638,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         if urlsplit(self.path).path != "/api/constituents/delete":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
@@ -523,7 +663,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 payload.get("bucket"),
                 payload.get("index"),
-                self._request_user(),
+                session.user,
                 self._backend,
                 self._postgres_dsn,
             )
@@ -572,6 +712,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         if not (
             self._redirect_root()
+            or self._serve_login_page()
+            or self._serve_dashboard()
+            or self._serve_session_status()
             or self._serve_update_status()
             or self._serve_brokers()
             or self._serve_constituents()
@@ -581,6 +724,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_HEAD(self) -> None:
         if not (
             self._redirect_root()
+            or self._serve_login_page()
+            or self._serve_dashboard()
+            or self._serve_session_status()
             or self._serve_update_status()
             or self._serve_brokers()
             or self._serve_constituents()
@@ -617,6 +763,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         """
         if urlsplit(self.path).path != "/api/update":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
@@ -651,7 +800,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     str(self._cache_file),
                     fat,
                     str(self.directory),
-                    self._request_user(),
+                    session.user,
                     self._backend,
                     self._postgres_dsn,
                     send_conn,
@@ -803,6 +952,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         if urlsplit(self.path).path != "/api/constituents/add":
             return False
+        session = self._require_session()
+        if session is None:
+            return True
         payload = self._read_json_body()
         if payload is None:
             return True
@@ -828,7 +980,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 shares=payload.get("shares"),
                 broker=payload.get("broker"),
                 cache=cache,
-                user=self._request_user(),
+                user=session.user,
                 backend=self._backend,
                 postgres_dsn=self._postgres_dsn,
             )
@@ -854,7 +1006,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not (
-            self._store_constituent()
+            self._login()
+            or self._logout()
+            or self._store_constituent()
             or self._reorder_constituents()
             or self._delete_constituent()
             or self._check_isin()
@@ -868,10 +1022,14 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         url_path = urlsplit(path).path
         if url_path in DASHBOARD_PATHS:
             return super().translate_path("/index.html")
+        if url_path in LOGIN_PATHS:
+            return super().translate_path("/login.html")
         if url_path == DATA_PREFIX or url_path.startswith(DATA_PREFIX + "/"):
-            # Charts are per user: /data/<file>.raw serves the selected
+            # Charts are per user: /data/<file>.raw serves the logged-in
             # user's chart dir.
-            user = self._request_user()
+            user = self._session_user()
+            if not user:
+                return super().translate_path("/__not_found__")
             rest = url_path[len(DATA_PREFIX):].lstrip("/")
             base = f"/{self._data_dirname}/{user}"
             disk_path = f"{base}/{rest}" if rest else f"{base}/"

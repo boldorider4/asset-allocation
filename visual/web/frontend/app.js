@@ -30,21 +30,15 @@ let galleryBooted = false;
 // Gallery snapshot: last rendered cards + their signature, kept in
 // sessionStorage so a fresh dashboard load paints instantly and the
 // background refresh only refetches when the signature changed. The key
-// carries the stamped version and the user (each user has their own
-// charts), so deploys and user switches auto-invalidate. Snapshots are
-// incognito-agnostic (blur is a body class, not markup).
-function currentUser() {
-  try {
-    return new URLSearchParams(window.location.search).get("user") || "";
-  } catch {
-    return "";
-  }
-}
+// carries the stamped version and the session user (each user has their
+// own charts), so deploys and user switches auto-invalidate. Snapshots
+// are incognito-agnostic (blur is a body class, not markup).
+let sessionUser = "";
 
-// Build a URL that keeps the current query (notably ?user=) and applies
-// the given overrides: a null/empty value removes the key. Used for view
-// links, API calls, and history rewrites so the selected user survives
-// incognito toggles and view switches.
+// Build a URL that keeps the current query (notably ?incognito=) and
+// applies the given overrides: a null/empty value removes the key. Used
+// for view links, API calls, and history rewrites so the incognito state
+// survives toggles and view switches.
 function urlWithParams(path, extra) {
   let params;
   try {
@@ -67,7 +61,22 @@ function urlWithParams(path, extra) {
 }
 
 function snapshotKey() {
-  return `asalloc.gallery.${versionText()}.${currentUser()}`;
+  return `asalloc.gallery.${versionText()}.${sessionUser}`;
+}
+
+// The logged-in user comes from the server session (there is no ?user=
+// parameter any more).
+async function fetchSessionUser() {
+  try {
+    const response = await fetch("api/session", { cache: "no-store" });
+    if (!response.ok) {
+      return "";
+    }
+    const data = await response.json();
+    return data && data.user ? String(data.user) : "";
+  } catch {
+    return "";
+  }
 }
 let prefetchScheduled = false;
 
@@ -161,20 +170,15 @@ function listRawHrefs(listingText) {
   return [...new Set(names)].sort();
 }
 
-// Chart data lives under the selected user's directory; the server maps
-// /data/* to it, so the ?user= query rides along with every request.
-function dataUrl(path) {
-  const user = currentUser();
-  return user ? `${path}?user=${encodeURIComponent(user)}` : path;
-}
-
+// Chart data lives under the logged-in user's directory; the server maps
+// /data/* to it from the session, so no user parameter is needed here.
 async function scanRawFiles() {
-  const response = await fetch(dataUrl("data/"), { cache: "no-store" });
+  const response = await fetch("data/", { cache: "no-store" });
   if (!response.ok) {
     return [];
   }
   const text = await response.text();
-  return listRawHrefs(text).map((name) => dataUrl(`data/${encodeURIComponent(name)}`));
+  return listRawHrefs(text).map((name) => `data/${encodeURIComponent(name)}`);
 }
 
 async function chartFileLastModified(url) {
@@ -809,13 +813,18 @@ async function refresh() {
 // body content in place, so on return visits the same nodes (and this
 // interval) are still alive — __dashboardShow just triggers an immediate
 // verify. Safe to load on the constituents page: no #gallery, no boot.
+// The session user is fetched first: the snapshot key is per user, so a
+// snapshot of another user must never be painted.
 function ensureGalleryBoot() {
   if (galleryBooted || !galleryEl()) {
     return;
   }
   galleryBooted = true;
-  restoreSnapshot();
-  refresh();
+  fetchSessionUser().then(function (user) {
+    sessionUser = user;
+    restoreSnapshot();
+    refresh();
+  });
   setInterval(refresh, POLL_MS);
 }
 

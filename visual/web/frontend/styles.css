@@ -328,10 +328,18 @@ code {
  * elsewhere, so an unguarded :hover leaves a persistent gold contour.
  * The aria-pressed look below is unaffected and still shows on touch. */
 @media (hover: hover) {
-  .nav-button:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-  }
+.nav-button:hover {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+/* Buttons styled like the nav anchors (the dashboard uses <a>, the login
+ * screen and Logout use <button>). */
+button.nav-button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
 }
 
 .nav-button[aria-disabled="true"] {
@@ -756,4 +764,139 @@ input.cell-box.editable.stale-flash {
   background: var(--paper);
   color: var(--text);
   font-size: 1rem;
+}
+
+/* ---------------------------------------------------------------- login */
+
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 1.5rem;
+}
+
+.login {
+  width: min(100%, 26rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.4rem;
+  text-align: center;
+}
+
+/* Same face as the dashboard title, sized for a centered card. */
+.login-title {
+  margin: 0;
+  font-family: Georgia, "Iowan Old Style", "Palatino", serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.login-donut {
+  width: min(100%, 17rem);
+  height: auto;
+}
+
+.login-donut-track {
+  fill: none;
+  stroke: var(--paper);
+  stroke-width: 58;
+}
+
+.login-donut-ring {
+  fill: none;
+  stroke-width: 58;
+  stroke-linecap: butt;
+  transform: rotate(-90deg);
+  transform-origin: 160px 160px;
+}
+
+.login-donut-ring.equity-us {
+  stroke: #1a9850;
+  stroke-dasharray: 339.29 414.69;
+  stroke-dashoffset: 0;
+}
+
+.login-donut-ring.equity-ex-us {
+  stroke: #a6d96a;
+  stroke-dasharray: 226.19 527.79;
+  stroke-dashoffset: -339.29;
+}
+
+.login-donut-ring.bonds {
+  stroke: #1e4e8c;
+  stroke-dasharray: 113.10 640.88;
+  stroke-dashoffset: -565.48;
+}
+
+.login-donut-ring.gold {
+  stroke: #d9a521;
+  stroke-dasharray: 75.40 678.58;
+  stroke-dashoffset: -678.58;
+}
+
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  text-align: left;
+}
+
+.login-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.login-input {
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--paper);
+  color: var(--text);
+  font: inherit;
+}
+
+.login-input:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+.login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.login-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.login-toggle-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.login-toggle-state {
+  color: var(--gold);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  min-width: 2.2rem;
+  text-align: left;
+}
+
+.login-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }

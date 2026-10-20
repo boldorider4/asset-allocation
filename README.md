@@ -121,9 +121,15 @@ make serve
 asalloc serve
 ```
 
-Stop it with `make stop-serve`. Open `http://localhost:8765/dashboard` for the charts — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there. Add `?user=NAME` to view another user's portfolio (charts and holdings); an unknown user gets a 404.
+Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you to the login page.
 
-`http://localhost:8765/constituents` shows the holdings from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
+**Login.** The login screen asks for a **User** (your portfolio name in the assets file) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no portfolio, no session).
+
+The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts and lasts as long as you keep it. **Logout** (top right, next to Edit) drops it; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more.
+
+`http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
+
+`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
 
 Clicking Dashboard runs a lite refresh first — but only if a cell was edited since the page loaded, in which case it navigates to the dashboard once the refresh completes (`POST /api/update`: no scraping flags, log level ERROR). With no edits it navigates straight to the dashboard.
 
