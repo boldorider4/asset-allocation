@@ -241,8 +241,8 @@ code {
   }
 
   .nav-button {
+    --nav-font-size: 0.78rem;
     padding: 0.35rem 0.8rem;
-    font-size: 0.78rem;
   }
 
   main section h2 {
@@ -312,15 +312,18 @@ code {
 }
 
 .nav-button {
+  --nav-font-size: 0.85rem;
   display: inline-block;
   padding: 0.45rem 1.1rem;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--paper);
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: var(--nav-font-size);
+  line-height: normal;
+  vertical-align: baseline;
+  text-align: center;
   text-decoration: none;
-  -webkit-tap-highlight-color: transparent;
 }
 
 /* Hover styling only where a hover exists: touch browsers (notably iOS
@@ -328,20 +331,34 @@ code {
  * elsewhere, so an unguarded :hover leaves a persistent gold contour.
  * The aria-pressed look below is unaffected and still shows on touch. */
 @media (hover: hover) {
-.nav-button:hover {
-  border-color: var(--gold);
-  color: var(--gold);
+  .nav-button:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
 }
 
 /* Buttons styled like the nav anchors (the dashboard uses <a>, the login
- * screen and Logout use <button>). Only the family is inherited: the
- * font-size comes from .nav-button, so "Log In" and "Logout" match
- * "Edit" exactly. */
+ * screen and Logout use <button>). The size comes from the shared custom
+ * property, so "Log In" and "Logout" match "Edit" exactly; the family,
+ * weight and line height are inherited like the anchor's. Without this,
+ * iOS Safari renders <button> with its own (larger) UA font.
+ *
+ * appearance/display/vertical-align matter for the text position too:
+ * a native button centres its content inside the box, while the anchor
+ * sits on the text baseline. Resetting them makes both labels land on
+ * the same baseline, so the text reads identically centred. */
 button.nav-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
   font-family: inherit;
+  font-size: var(--nav-font-size);
+  font-weight: inherit;
+  line-height: normal;
+  vertical-align: baseline;
+  text-align: center;
   color: inherit;
   cursor: pointer;
-}
 }
 
 .nav-button[aria-disabled="true"] {

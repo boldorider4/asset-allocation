@@ -593,13 +593,40 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # hover contour must only exist where hovering exists. The
         # pressed look (aria-pressed) is separate and untouched.
         self.assertIn("-webkit-tap-highlight-color", css)
-        hover_block = css.split("@media (hover: hover)", 1)[1]
-        self.assertIn(".nav-button:hover", hover_block)
-        self.assertIn(".nav-button.icon-button:hover .sync-glyph", hover_block)
-        self.assertIn(
-            ".nav-button.icon-button:hover .incognito-glyph", hover_block
-        )
         self.assertIn('[aria-pressed="true"]', css)
+        # Structural check: every nav-button :hover rule must live inside a
+        # "@media (hover: hover)" block, whatever the order of the blocks.
+        media_depth = 0
+        hover_media_depth = 0
+        selector = ""
+        i = 0
+        while i < len(css):
+            char = css[i]
+            if css.startswith("@media", i):
+                media_depth += 1
+                if css[i : i + 20].startswith("@media (hover: hover)"):
+                    hover_media_depth += 1
+                i += 6
+                continue
+            if char == "{":
+                selector = css[max(0, i - 120) : i].split("}")[-1]
+                if ":hover" in selector and ".nav-button" in selector:
+                    self.assertGreater(
+                        hover_media_depth,
+                        0,
+                        f"hover rule outside a hover media query: {selector.strip()[-80:]}",
+                    )
+                i += 1
+                continue
+            if char == "}":
+                media_depth = max(0, media_depth - 1)
+                if media_depth == 0:
+                    hover_media_depth = 0
+            i += 1
+        # The rules must still exist at all.
+        self.assertIn(".nav-button:hover", css)
+        self.assertIn(".nav-button.icon-button:hover .sync-glyph", css)
+        self.assertIn(".nav-button.icon-button:hover .incognito-glyph", css)
 
     def test_view_switcher_swaps_without_reload(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
@@ -799,6 +826,62 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertNotIn("font:", button_rule)
         nav_rule = css.split(".nav-button {", 1)[1].split("}", 1)[0]
         self.assertIn("font-size:", nav_rule)
+        # Both take the size from the same custom property, so they cannot
+        # drift apart.
+        self.assertIn("--nav-font-size", nav_rule)
+        self.assertIn("var(--nav-font-size)", button_rule)
+
+    def test_button_reset_is_not_trapped_in_a_media_query(self) -> None:
+        # The button reset once sat inside "@media (hover: hover)", so
+        # touch devices (no hover support) kept the UA button font and
+        # rendered "Log In" / "Logout" bigger than "Edit".
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        media_depth = 0
+        rule = ""
+        i = 0
+        while i < len(css):
+            char = css[i]
+            if css.startswith("@media", i):
+                media_depth += 1
+                i += 6
+                continue
+            if char == "{":
+                rule = css[max(0, i - 40) : i]
+                if "button.nav-button" in rule:
+                    self.assertEqual(
+                        media_depth,
+                        0,
+                        "button.nav-button is inside a media query: touch "
+                        "devices would fall back to the UA button font",
+                    )
+                i += 1
+                continue
+            if char == "}":
+                media_depth = max(0, media_depth - 1)
+            i += 1
+        # The stylesheet must still be balanced.
+        self.assertEqual(css.count("{"), css.count("}"))
+
+    def test_buttons_and_anchors_share_text_alignment(self) -> None:
+        # "Log In", "Logout" and "Edit" must place their label the same
+        # way inside the pill: a native button centres its content while
+        # the anchor sits on the text baseline, so the reset pins the
+        # anchor's behaviour (no native appearance, baseline alignment,
+        # centred text) for the buttons.
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        button_rule = css.split("button.nav-button {", 1)[1].split("}", 1)[0]
+        for expected in (
+            "appearance: none",
+            "display: inline-block",
+            "vertical-align: baseline",
+            "text-align: center",
+        ):
+            self.assertIn(expected, button_rule, expected)
+        nav_rule = css.split(".nav-button {", 1)[1].split("}", 1)[0]
+        self.assertIn("text-align: center", nav_rule)
+        self.assertIn("vertical-align: baseline", nav_rule)
 
     def test_dashboard_has_sync_prices_button(self) -> None:
         index = (
