@@ -596,32 +596,29 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('[aria-pressed="true"]', css)
         # Structural check: every nav-button :hover rule must live inside a
         # "@media (hover: hover)" block, whatever the order of the blocks.
-        media_depth = 0
-        hover_media_depth = 0
-        selector = ""
+        stack: list[bool] = []  # per open block: is it a hover media query?
         i = 0
         while i < len(css):
-            char = css[i]
             if css.startswith("@media", i):
-                media_depth += 1
-                if css[i : i + 20].startswith("@media (hover: hover)"):
-                    hover_media_depth += 1
-                i += 6
+                brace = css.index("{", i)
+                stack.append(css[i:brace].startswith("@media (hover: hover)"))
+                i = brace + 1
                 continue
-            if char == "{":
-                selector = css[max(0, i - 120) : i].split("}")[-1]
+            if css[i] == "{":
+                selector = css[css.rfind("}", 0, i) + 1 : i]
                 if ":hover" in selector and ".nav-button" in selector:
-                    self.assertGreater(
-                        hover_media_depth,
-                        0,
+                    self.assertTrue(
+                        any(stack),
                         f"hover rule outside a hover media query: {selector.strip()[-80:]}",
                     )
+                stack.append(False)
                 i += 1
                 continue
-            if char == "}":
-                media_depth = max(0, media_depth - 1)
-                if media_depth == 0:
-                    hover_media_depth = 0
+            if css[i] == "}":
+                if stack:
+                    stack.pop()
+                i += 1
+                continue
             i += 1
         # The rules must still exist at all.
         self.assertIn(".nav-button:hover", css)
@@ -871,17 +868,36 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # centred text) for the buttons.
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
         css = (root / "styles.css").read_text(encoding="utf-8")
-        button_rule = css.split("button.nav-button {", 1)[1].split("}", 1)[0]
-        for expected in (
-            "appearance: none",
-            "display: inline-block",
-            "vertical-align: baseline",
-            "text-align: center",
-        ):
-            self.assertIn(expected, button_rule, expected)
-        nav_rule = css.split(".nav-button {", 1)[1].split("}", 1)[0]
-        self.assertIn("text-align: center", nav_rule)
-        self.assertIn("vertical-align: baseline", nav_rule)
+
+        def rule_with(needle: str) -> str:
+            """The CSS block containing *needle* (the first one)."""
+            index = css.index(needle)
+            start = css.rindex("{", 0, index)
+            end = css.index("}", index)
+            return css[start:end]
+
+        button_rule = rule_with("button.nav-button {")
+        nav_rule = rule_with("--nav-font-size: 0.85rem")
+        # Anchors and buttons must be the same box type: an <a> lays its
+        # text out on the text baseline while a <button> centres it in
+        # the UA box, so mixing them puts the labels at different
+        # heights. Both are inline-flex with centred content.
+        for rule, name in ((button_rule, "button"), (nav_rule, "anchor")):
+            for expected in (
+                "display: inline-flex",
+                "align-items: center",
+                "justify-content: center",
+                "text-align: center",
+            ):
+                self.assertIn(expected, rule, f"{name}: {expected}")
+        # The button must not fall back to the native widget.
+        self.assertIn("appearance: none", button_rule)
+        # Both take the size from the same custom property, so they cannot
+        # drift apart.
+        self.assertIn("font-size: var(--nav-font-size)", nav_rule)
+        self.assertIn("font-size: var(--nav-font-size)", button_rule)
+        # The iOS tap flash must stay suppressed.
+        self.assertIn("-webkit-tap-highlight-color", nav_rule)
 
     def test_dashboard_has_sync_prices_button(self) -> None:
         index = (
