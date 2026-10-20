@@ -21,7 +21,9 @@ def read_user_buckets(
     path: Path, user: str = "default"
 ) -> dict[str, list[dict[str, Any]]]:
     """One user's buckets as stored."""
-    repo = AssetRepository(user, assets_backend(path))
+    # Backend pinned to json: a local config.ini must not change what
+    # the tests use.
+    repo = AssetRepository(user, assets_backend(path, "json"))
     repo.open()
     return repo.snapshot()
 
@@ -30,7 +32,7 @@ def write_user_buckets(
     path: Path, data: dict[str, list[dict[str, Any]]], user: str = "default"
 ) -> None:
     """Replace one user's buckets (other users are preserved)."""
-    repo = AssetRepository(user, assets_backend(path))
+    repo = AssetRepository(user, assets_backend(path, "json"))
     repo.open()
     repo.restore(data)
     repo.persist()

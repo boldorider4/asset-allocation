@@ -36,7 +36,14 @@ The holdings file is keyed by **user**: each top-level key is a user name, and i
 
 The user name comes from `config.ini` (`[update] user = default`) and can be overridden per run with `--user NAME`. Charts are per user too: an update writes to `<output_dir>/<user>/`, and the server serves the selected user's charts.
 
-The store itself is backend-agnostic: the code above the storage layer only talks to `storage.repositories.AssetRepository`, and the concrete backend is chosen in one place (`storage/wiring.py`). Moving the holdings to Postgres later is a one-line change there.
+The store itself is backend-agnostic: the code above the storage layer only talks to `storage.repositories.AssetRepository`, and the concrete backend is chosen in one place (`storage/wiring.py`) from the `[server] backend` setting in `config.ini`:
+
+| `[server] backend` | Meaning |
+| --- | --- |
+| `json` (default) | Holdings in the JSON file named by `[update] assets_file` |
+| `postgres` | Not implemented yet: the wiring logs an error and the store fails to open |
+
+`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default).
 
 | Key | Purpose |
 | --- | --- |

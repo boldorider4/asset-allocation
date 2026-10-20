@@ -9,11 +9,13 @@ production uses, so these tests exercise the real composition.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -21,16 +23,24 @@ if str(REPO_ROOT) not in sys.path:
 
 from cli.common import DEFAULT_USER_NAME  # noqa: E402
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
+from storage.json_storage import JsonStorage  # noqa: E402
+from storage.postgres_storage import PostgresStorage  # noqa: E402
 from storage.records import UserAssets  # noqa: E402
 from storage.repositories import AssetRepository, UnknownUser  # noqa: E402
-from storage.wiring import assets_backend  # noqa: E402
+from storage.wiring import (  # noqa: E402
+    BACKEND_JSON,
+    BACKEND_POSTGRES,
+    DEFAULT_POSTGRES_DSN,
+    assets_backend,
+    normalize_backend,
+)
 
 BUCKET = "equity_portfolio"
 POSITION = {"name": "ETF", "ISIN": "IE00TEST0001", "shares": 2, "value": 100.0}
 
 
 def _repo(path: Path, user: str) -> AssetRepository:
-    return AssetRepository(user, assets_backend(path))
+    return AssetRepository(user, assets_backend(path, "json"))
 
 
 class TestAssetsStoreShape(unittest.TestCase):
@@ -88,7 +98,7 @@ class TestUserIsolation(unittest.TestCase):
     def test_repository_is_user_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "assets.json"
-            backend = assets_backend(path)
+            backend = assets_backend(path, "json")
             alice = AssetRepository("alice", backend)
             bob = AssetRepository("bob", backend)
             alice.set_positions(BUCKET, [POSITION])
@@ -131,6 +141,77 @@ class TestRuntimeContextUser(unittest.TestCase):
         self.assertEqual(AppConfig().user, DEFAULT_USER_NAME)
 
 
+class TestBackendSelection(unittest.TestCase):
+    """The assets backend is chosen by the app and built by storage.wiring."""
+
+    def test_default_is_json(self) -> None:
+        with tempfile.TemporaryDirectory() as store:
+            backend = assets_backend(Path(store) / "assets.json")
+        self.assertIsInstance(backend, JsonStorage)
+
+    def test_postgres_is_handed_over_and_logged(self) -> None:
+        # The stub is wired in and an error is logged; the wiring itself
+        # does not raise.
+        with tempfile.TemporaryDirectory() as store:
+            with self.assertLogs("storage.wiring", level="ERROR"):
+                backend = assets_backend(
+                    Path(store) / "assets.json",
+                    BACKEND_POSTGRES,
+                    "postgresql://example/db",
+                )
+        self.assertIsInstance(backend, PostgresStorage)
+        self.assertEqual(backend.table, "user_assets")
+
+    def test_unknown_backend_falls_back_to_json(self) -> None:
+        with self.assertLogs("storage.wiring", level="WARNING"):
+            self.assertEqual(normalize_backend("sqlite"), "json")
+        with tempfile.TemporaryDirectory() as store:
+            backend = assets_backend(
+                Path(store) / "assets.json", "sqlite"
+            )
+        self.assertIsInstance(backend, JsonStorage)
+
+    def test_wiring_reads_no_configuration(self) -> None:
+        # The wiring module is a pure factory: the app resolves the
+        # settings and passes them in.
+        import inspect
+
+        import storage.wiring as wiring
+
+        self.assertFalse(hasattr(wiring, "config_path"))
+        self.assertFalse(hasattr(wiring, "configured_backend"))
+        self.assertFalse(hasattr(wiring, "configparser"))
+        self.assertFalse(hasattr(wiring, "os"))
+        params = inspect.signature(wiring.assets_backend).parameters
+        self.assertIn("backend", params)
+        self.assertIn("postgres_dsn", params)
+
+    def test_server_config_carries_the_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = Path(tmp) / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\naddress = localhost\n"
+                "directory = /tmp/x\nbackend = postgres\n"
+                "postgres_dsn = postgresql://example/db\n",
+                encoding="utf-8",
+            )
+            config = AppConfig.from_ini(ini)
+        self.assertEqual(config.server.backend, "postgres")
+        self.assertEqual(config.server.postgres_dsn, "postgresql://example/db")
+
+    def test_server_config_defaults_to_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = Path(tmp) / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\naddress = localhost\n"
+                "directory = /tmp/x\n",
+                encoding="utf-8",
+            )
+            config = AppConfig.from_ini(ini)
+        self.assertEqual(config.server.backend, "json")
+        self.assertEqual(config.server.postgres_dsn, DEFAULT_POSTGRES_DSN)
+
+
 class TestWiring(unittest.TestCase):
     def test_assets_backend_is_chosen_in_one_place(self) -> None:
         # The backend is composed by storage.wiring only: swapping in
@@ -138,7 +219,7 @@ class TestWiring(unittest.TestCase):
         import storage.wiring as wiring
 
         with tempfile.TemporaryDirectory() as tmp:
-            backend = wiring.assets_backend(Path(tmp) / "assets.json")
+            backend = wiring.assets_backend(Path(tmp) / "assets.json", "json")
         self.assertEqual(backend._factory, UserAssets)  # type: ignore[attr-defined]
 
     def test_no_json_shaped_helpers_in_the_storage_layer(self) -> None:

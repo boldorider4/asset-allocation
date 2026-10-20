@@ -27,7 +27,12 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from cli.common import DEFAULT_USER_NAME
-from storage.wiring import assets_backend
+from storage.wiring import (
+    BACKEND_JSON,
+    DEFAULT_POSTGRES_DSN,
+    assets_backend,
+    normalize_backend,
+)
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as _MultiprocessingEvent
@@ -57,6 +62,11 @@ class ServerConfig:
     # Kept separate from the plotter output dir on purpose: one instance
     # may serve what another one wrote.
     data_dir: str = "data"
+    # Which backend stores the assets (``json`` today, ``postgres`` when
+    # it lands). Resolved in ``storage.wiring``.
+    backend: str = BACKEND_JSON
+    # Connection string for the postgres backend.
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN
 
 
 @dataclass
@@ -99,6 +109,7 @@ class AppConfig:
 
     @classmethod
     def config_path(cls, override: Path | None = None) -> Path:
+        """Active config file (``ASALLOC_CONFIG`` env, else the repo's)."""
         if override is not None:
             return override
         env = os.environ.get("ASALLOC_CONFIG")
@@ -142,7 +153,21 @@ class AppConfig:
         data_dir = (
             parser.get("server", "plotter_data_dir", fallback="data").strip() or "data"
         )
-        return ServerConfig(port=port, address=address, directory=directory, data_dir=data_dir)
+        backend = normalize_backend(
+            parser.get("server", "backend", fallback=BACKEND_JSON)
+        )
+        postgres_dsn = (
+            parser.get("server", "postgres_dsn", fallback=DEFAULT_POSTGRES_DSN).strip()
+            or DEFAULT_POSTGRES_DSN
+        )
+        return ServerConfig(
+            port=port,
+            address=address,
+            directory=directory,
+            data_dir=data_dir,
+            backend=backend,
+            postgres_dsn=postgres_dsn,
+        )
 
     @classmethod
     def _update_from_ini(cls, path: Path | None = None) -> dict[str, Any]:
@@ -325,7 +350,12 @@ class RuntimeContext:
 
         if self._asset_repo is None:
             self._asset_repo = AssetRepository(
-                self.config.user, assets_backend(self.config.assets_file)
+                self.config.user,
+                assets_backend(
+                    self.config.assets_file,
+                    self.config.server.backend,
+                    self.config.server.postgres_dsn,
+                ),
             )
         return self._asset_repo
 
@@ -366,7 +396,14 @@ class RuntimeContext:
         """Short-lived repository bound to an explicit path (not the config file)."""
         from storage.repositories import AssetRepository
 
-        return AssetRepository(self.config.user, assets_backend(Path(path)))
+        return AssetRepository(
+            self.config.user,
+            assets_backend(
+                Path(path),
+                self.config.server.backend,
+                self.config.server.postgres_dsn,
+            ),
+        )
 
     def persist_portfolio(self, path: Path | None = None) -> None:
         if path is not None and Path(path) != self.config.assets_file:

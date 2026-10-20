@@ -28,7 +28,12 @@ from storage.repositories import (
     UnknownUser,
 )
 from storage.storage import Storage, StorageObject
-from storage.wiring import assets_backend
+from storage.wiring import (
+    BACKEND_JSON,
+    BACKEND_POSTGRES,
+    assets_backend,
+    normalize_backend,
+)
 
 __all__ = [
     "Storage",
@@ -46,4 +51,7 @@ __all__ = [
     "IsinRegistry",
     "UnknownUser",
     "assets_backend",
+    "normalize_backend",
+    "BACKEND_JSON",
+    "BACKEND_POSTGRES",
 ]
