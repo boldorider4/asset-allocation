@@ -58,6 +58,8 @@ _FALLBACK_MARK = ("?", "#6b6259")
 # Max accepted characters per editable box (Name is plain text, not a box).
 _SHORT_NAME_MAXLEN = 32
 _FIGURE_MAXLEN = 16
+# Max accepted characters for the portfolio name.
+_PORTFOLIO_NAME_MAXLEN = 120
 
 
 def _prettify_bucket(key: str) -> str:
@@ -206,6 +208,45 @@ def ensure_assets_user(
     repo.restore({})
     repo.persist()
     return True
+
+
+def assets_portfolio_name(
+    assets_path: str | Path,
+    user: str,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> str:
+    """The name of the user's portfolio (the charts are titled with it)."""
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo.open()
+    return repo.portfolio_name
+
+
+def store_portfolio_name(
+    assets_path: str | Path,
+    name: Any,
+    user: str = DEFAULT_USER_NAME,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> dict[str, Any]:
+    """Persist the name of the user's portfolio (atomic write).
+
+    The name belongs to the portfolio, not to a row, so it is stored on
+    the user's own record. Raises ``ValueError`` for a blank or
+    oversized name; the file stays untouched then.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("portfolio name must be a non-blank string")
+    text = name.strip()
+    if len(text) > _PORTFOLIO_NAME_MAXLEN:
+        raise ValueError(
+            f"portfolio name must be at most {_PORTFOLIO_NAME_MAXLEN} characters"
+        )
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo.open()
+    repo.set_portfolio_name(text)
+    repo.persist()
+    return {"name": text}
 
 
 def load_constituents(
@@ -643,12 +684,14 @@ def _render_row(row: dict[str, Any]) -> str:
 def render_constituents_page(
     sections: list[tuple[str, str, list[dict[str, Any]]]],
     incognito: bool = False,
+    portfolio_name: str = "Portfolio",
 ) -> str:
     """Render display sections as a full standalone HTML page.
 
     Sections are ``(bucket, label, rows)``. Every section gets the
     "add row" button — including empty ones, so a fresh user can start
-    filling any class.
+    filling any class. The last block edits the name of the portfolio
+    itself (the charts are titled with it).
     """
     overview_href = "/dashboard?incognito=true" if incognito else "/dashboard"
     if incognito:
@@ -692,6 +735,19 @@ def render_constituents_page(
             f"</div>"
         )
         parts.append("</section>")
+    # The name of the portfolio itself, at the very end: it titles the
+    # charts, so it belongs below the positions it names.
+    parts.append(
+        '<section class="portfolio-name">'
+        "<h2>Portfolio Name</h2>"
+        '<input class="cell-box editable text portfolio-name-input" '
+        'id="portfolio-name" type="text" '
+        f'value="{html.escape(portfolio_name, quote=True)}" '
+        f'data-original="{html.escape(portfolio_name, quote=True)}" '
+        'aria-label="Portfolio Name" '
+        f'maxlength="{_PORTFOLIO_NAME_MAXLEN}" />'
+        "</section>"
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
   <head>

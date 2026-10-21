@@ -24,6 +24,7 @@ from assets_helpers import user_payload
 
 from cli.common import DEFAULT_USER_NAME
 from visual.web.backend.constituents import (
+    assets_portfolio_name,
     add_constituent,
     delete_constituent,
     known_brokers,
@@ -31,6 +32,7 @@ from visual.web.backend.constituents import (
     render_constituents_page,
     reorder_constituents,
     store_constituent_value,
+    store_portfolio_name,
 )
 from visual.web.backend.serve import DashboardHandler
 from visual.web.backend.session import read_session
@@ -250,6 +252,75 @@ class TestLoadConstituents(unittest.TestCase):
             cache.write_text("{}", encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_constituents(assets, cache)
+
+
+class TestPortfolioNameField(unittest.TestCase):
+    """The name of the portfolio, edited at the end of the page."""
+
+    def _page(self, name: str = "Portfolio") -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            sections = load_constituents(assets, cache)
+        return render_constituents_page(sections, portfolio_name=name)
+
+    def test_the_page_shows_the_name_at_the_end(self) -> None:
+        page = self._page("My Portfolio")
+        self.assertIn("<h2>Portfolio Name</h2>", page)
+        self.assertIn('id="portfolio-name"', page)
+        self.assertIn('value="My Portfolio"', page)
+        # It comes after the last section.
+        self.assertGreater(
+            page.index("Portfolio Name"), page.index("<h2>Weird Bucket</h2>")
+        )
+
+    def test_the_stored_name_is_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            self.assertEqual(assets_portfolio_name(assets, "default"), "Portfolio")
+            store_portfolio_name(assets, "Renamed")
+            self.assertEqual(assets_portfolio_name(assets, "default"), "Renamed")
+            sections = load_constituents(assets, cache)
+            page = render_constituents_page(
+                sections, portfolio_name=assets_portfolio_name(assets, "default")
+            )
+        self.assertIn('value="Renamed"', page)
+
+    def test_storing_the_name_persists_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            result = store_portfolio_name(assets, "  My Portfolio  ")
+            self.assertEqual(result, {"name": "My Portfolio"})
+            stored = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            self.assertEqual(stored["portfolio_name"], "My Portfolio")
+            # The positions are untouched.
+            self.assertIn("equity_portfolio", stored["positions"])
+
+    def test_a_blank_name_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            before = assets.read_text(encoding="utf-8")
+            with self.assertRaises(ValueError):
+                store_portfolio_name(assets, "   ")
+            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+
+    def test_the_route_stores_the_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assets, cache = _write_files(Path(tmp))
+            result = store_portfolio_name(assets, "Renamed")
+            self.assertEqual(result["name"], "Renamed")
+
+    def test_the_frontend_posts_the_name(self) -> None:
+        root = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+        )
+        js = (root / "constituents.js").read_text(encoding="utf-8")
+        self.assertIn("/api/constituents/name", js)
+        self.assertIn("savePortfolioName", js)
+        # A saved name stages an update, so Dashboard runs the lite one.
+        self.assertIn("dirty = true", js)
 
 
 class TestRenderConstituentsPage(unittest.TestCase):
@@ -1044,10 +1115,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # ...while a clean Overview navigates straight to the dashboard.
         self.assertIn("if (!dirty)", js)
         self.assertIn("window.location.href = target", js)
-        # Shares/value edits, short_name edits, deletes, and adds stage an update:
-        # one dirty flag in the pair-refresh path, one in the short_name path,
-        # one in the delete flow, one in the add flow. Reorders persist silently.
-        self.assertEqual(js.count("dirty = true"), 4)
+        # Shares/value edits, short_name edits, deletes, adds, and the
+        # portfolio name stage an update: one dirty flag in the
+        # pair-refresh path, one in the short_name path, one in the delete
+        # flow, one in the add flow, one for the portfolio name. Reorders
+        # persist silently.
+        self.assertEqual(js.count("dirty = true"), 5)
         # In the pair-refresh path (shares/value), dirty is set after refreshPair.
         pair_refresh = js.split("const updated = refreshPair(input, data);")[1].split(
             "if (data && data.recomputed === false)"
@@ -1884,6 +1957,9 @@ class _RouteCase(unittest.TestCase):
     def _post_check_isin(self, payload: dict) -> tuple[int, str]:
         return self._post_json("/api/constituents/check-isin", payload)
 
+    def _post_name(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents/name", payload)
+
     def _post_update(self, payload: dict | None = None) -> tuple[int, str]:
         return self._post_json("/api/update", {} if payload is None else payload)
 
@@ -2149,6 +2225,36 @@ class TestConstituentsRoute(_RouteCase):
                 status, _ = self._post_delete(payload)
                 self.assertEqual(status, 400)
         self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def test_post_name_persists_the_portfolio_name(self) -> None:
+        status, body = self._post_name({"name": "My Portfolio"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"name": "My Portfolio"})
+        stored = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        self.assertEqual(stored["portfolio_name"], "My Portfolio")
+        # The positions are untouched.
+        self.assertIn("equity_portfolio", stored["positions"])
+        # The page shows the new name.
+        status, page = self._get("/constituents")
+        self.assertEqual(status, 200)
+        self.assertIn('value="My Portfolio"', page)
+
+    def test_post_name_rejects_a_blank_name(self) -> None:
+        before = self.assets.read_text(encoding="utf-8")
+        status, _ = self._post_name({"name": "   "})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+
+    def test_post_name_needs_a_session(self) -> None:
+        status, headers, _ = self._raw(
+            "/api/constituents/name",
+            cookie=None,
+            method="POST",
+            data=json.dumps({"name": "X"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
 
     def test_post_add_persists_and_returns_row(self) -> None:
         status, body = self._post_add(

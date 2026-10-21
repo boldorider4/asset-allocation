@@ -572,9 +572,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._backend,
                 self._postgres_dsn,
             )
+            from .constituents import assets_portfolio_name
+
             body = render_constituents_page(
                 sections,
                 incognito=incognito_flag(parts.query),
+                portfolio_name=assets_portfolio_name(
+                    self._assets_file,
+                    session.user,
+                    self._backend,
+                    self._postgres_dsn,
+                ),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
         except UnknownUser as exc:
@@ -648,6 +656,58 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return True
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("constituents store failed: %s", exc)
+            self._plain_status(502, f"constituents unavailable: {exc}")
+            return True
+        body = json.dumps(result).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _store_portfolio_name(self) -> bool:
+        """Handle ``POST /api/constituents/name``; plain-text statuses on failure."""
+        from .constituents import store_portfolio_name
+
+        if urlsplit(self.path).path != "/api/constituents/name":
+            return False
+        session = self._require_session()
+        if session is None:
+            return True
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > 65536:
+            self._plain_status(400, "empty or oversized request body")
+            return True
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeError) as exc:
+            self._plain_status(400, f"invalid JSON: {exc}")
+            return True
+        if not isinstance(payload, dict):
+            self._plain_status(400, "body must be a JSON object")
+            return True
+        try:
+            if not self._assets_file:
+                raise RuntimeError("assets file not configured")
+            result = store_portfolio_name(
+                self._assets_file,
+                payload.get("name"),
+                session.user,
+                self._backend,
+                self._postgres_dsn,
+            )
+        except UnknownUser as exc:
+            self._plain_status(404, f"unknown user: {exc.user}")
+            return True
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("portfolio name update failed: %s", exc)
             self._plain_status(502, f"constituents unavailable: {exc}")
             return True
         body = json.dumps(result).encode("utf-8")
@@ -1088,6 +1148,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._login()
             or self._logout()
             or self._store_constituent()
+            or self._store_portfolio_name()
             or self._reorder_constituents()
             or self._delete_constituent()
             or self._check_isin()

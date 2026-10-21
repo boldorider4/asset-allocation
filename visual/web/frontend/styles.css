@@ -478,6 +478,17 @@ main section h2 {
   margin: 0 0 0.6rem 4rem;
 }
 
+/* The portfolio name, at the very end of the page. */
+main section.portfolio-name {
+  max-width: 100rem;
+  margin: 1.6rem auto 2rem;
+}
+
+input.portfolio-name-input {
+  width: 24rem;
+  max-width: 100%;
+}
+
 table {
   width: 100%;
   max-width: 100rem;

@@ -76,6 +76,34 @@
     return updated;
   }
 
+  /* The name of the portfolio itself (the charts are titled with it).
+   * It belongs to the portfolio, not to a row, so it gets its own
+   * endpoint. A successful save stages an update: the next Dashboard
+   * click runs the lite update, which picks the name up.
+   */
+  async function savePortfolioName(input) {
+    const payload = { name: input.value };
+    let data = null;
+    try {
+      const response = await fetch(urlWithParams("/api/constituents/name"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      data = await response.json();
+    } catch {
+      revert(input);
+      return;
+    }
+    input.value = data && data.name !== undefined ? String(data.name) : input.value;
+    input.dataset.original = input.value;
+    flash(input, "saved-flash");
+    dirty = true;
+  }
+
   async function save(input) {
     const payload = {
       bucket: input.dataset.bucket,
@@ -123,7 +151,15 @@
       onDraftBroker(target);
       return;
     }
-    if (!(target instanceof HTMLInputElement) || !target.matches("input.cell-box.editable")) {
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    // The portfolio name is not a row: it has its own endpoint.
+    if (target.matches("input.portfolio-name-input")) {
+      savePortfolioName(target);
+      return;
+    }
+    if (!target.matches("input.cell-box.editable")) {
       return;
     }
     if (target.closest("tr.draft")) {
