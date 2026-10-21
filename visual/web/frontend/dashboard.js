@@ -270,6 +270,23 @@
     window.location.href = "/login";
   }
 
+  /* The logged-in user, left of the nav buttons. The dashboard is a
+   * static page, so the name comes from the server session (the same
+   * /api/session call the gallery uses).
+   */
+  async function showSessionUser() {
+    const label = document.getElementById("session-user");
+    if (!label) {
+      return;
+    }
+    let user = "";
+    if (typeof fetchSessionUser === "function") {
+      user = await fetchSessionUser();
+    }
+    label.textContent = user;
+    label.hidden = !user;
+  }
+
   // Idempotent boot: this script loads on both pages (the view switcher
   // swaps bodies in place), but only the dashboard has #sync-link. Fresh
   // nodes after a swap get painted + bound exactly once via wiredNodes;
@@ -279,6 +296,7 @@
       return;
     }
     wireIncognitoToggle();
+    showSessionUser();
     const sync = document.getElementById("sync-link");
     if (markWired(sync)) {
       sync.addEventListener("click", syncPrices);

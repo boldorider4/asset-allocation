@@ -916,6 +916,22 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # data URLs carry no user parameter.
         self.assertIn('fetch("data/"', app_js)
 
+    def test_dashboard_shows_the_logged_in_user(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        index = (root / "index.html").read_text(encoding="utf-8")
+        # The user sits left of the nav buttons.
+        self.assertIn('id="session-user"', index)
+        self.assertLess(
+            index.index('id="session-user"'), index.index('class="nav-buttons"')
+        )
+        dashboard_js = (root / "dashboard.js").read_text(encoding="utf-8")
+        # The name comes from the server session.
+        self.assertIn("showSessionUser", dashboard_js)
+        self.assertIn("fetchSessionUser", dashboard_js)
+        self.assertIn('getElementById("session-user")', dashboard_js)
+        css = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".session-user {", css)
+
     def test_dashboard_has_a_logout_button(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
         index = (root / "index.html").read_text(encoding="utf-8")
@@ -2068,6 +2084,26 @@ class TestConstituentsRoute(_RouteCase):
         status, _, body = self._raw("/api/session")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"user": _USER, "incognito": False})
+
+    def test_an_expired_session_is_no_session(self) -> None:
+        # The session store expires sessions after 30 minutes: an
+        # expired cookie is worth nothing, so the login page comes back.
+        import time
+
+        from visual.web.backend.session import store_path
+
+        cookie = self.cookie
+        path = store_path(self.root)
+        store = json.loads(path.read_text(encoding="utf-8"))
+        session_id = cookie.split("=", 1)[1]
+        store[session_id]["expires_at"] = time.time() - 1
+        path.write_text(json.dumps(store), encoding="utf-8")
+        status, _, body = self._raw("/api/session", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIsNone(json.loads(body)["user"])
+        status, headers, _ = self._raw("/constituents", cookie=cookie)
+        self.assertEqual(status, 302)
+        self.assertEqual(headers["location"], "/login")
 
     def test_login_rejects_an_unknown_user(self) -> None:
         status, _, body = self._raw(

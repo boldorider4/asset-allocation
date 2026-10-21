@@ -173,7 +173,7 @@ Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you t
 
 **Login.** The login screen asks for a **User** (an account in `users.json` — see [Users file](#users-file)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
 
-The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts and lasts as long as you keep it. **Logout** (top right, next to Edit) drops it; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more.
+The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
 
 `http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 

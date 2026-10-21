@@ -311,6 +311,19 @@ code {
   gap: 0.6rem;
 }
 
+/* The logged-in user, left of the nav buttons. */
+.session-user {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.session-user[hidden] {
+  display: none;
+}
+
 .nav-button {
   --nav-font-size: 0.85rem;
   /* Both the anchors and the buttons are inline-flex with centred

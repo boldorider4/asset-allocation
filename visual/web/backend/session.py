@@ -2,10 +2,11 @@
 """Browser sessions for the visualizer server.
 
 A session is identified by a cookie (``asalloc_sid``) and persisted in
-the server workspace, so it survives restarts and lasts "forever" (the
-cookie has a long max-age, the server never expires it):
+the server workspace, so it survives restarts but not idling: a session
+expires 30 minutes after it was created::
 
-    <workspace>/.sessions.json  ->  {"<sid>": {"user": ..., "incognito": ...}}
+    <workspace>/.sessions.json  ->  {"<sid>": {"user": ..., "incognito": ...,
+                                            "expires_at": ...}}
 
 The session carries the *user* whose holdings and charts are served
 (there is no per-request user parameter any more) and the incognito
@@ -19,6 +20,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -28,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 #: Cookie carrying the session id.
 COOKIE_NAME = "asalloc_sid"
-#: Ten years: the session is meant to last "forever".
-COOKIE_MAX_AGE = 10 * 365 * 24 * 3600
+#: How long a session stays valid: 30 minutes.
+SESSION_TTL_SECONDS = 30 * 60
+#: The cookie dies with the session it points at.
+COOKIE_MAX_AGE = SESSION_TTL_SECONDS
 #: Store file inside the served workspace.
 STORE_FILENAME = ".sessions.json"
 
@@ -42,6 +46,7 @@ class Session:
 
     user: str
     incognito: bool = False
+    expires_at: float = 0.0
 
 
 def store_path(workspace: str | Path) -> Path:
@@ -107,23 +112,48 @@ def session_id_from_cookie(header: str | None) -> str | None:
     return value or None
 
 
+def _is_expired(entry: dict[str, Any], now: float | None = None) -> bool:
+    """True when the session record is past its expiry.
+
+    A record without an expiry predates the timeout: it counts as
+    expired, so upgrading the server ends the old unbounded sessions.
+    """
+    expires_at = entry.get("expires_at")
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+        return True
+    return float(expires_at) <= (time.time() if now is None else now)
+
+
 def read_session(
     workspace: str | Path, cookie_header_value: str | None
 ) -> Session | None:
-    """The session for the given cookie, or None when there is none."""
+    """The session for the given cookie, or None when there is none.
+
+    An expired session counts as no session: the record is dropped and
+    the caller sends the browser to the login page.
+    """
     session_id = session_id_from_cookie(cookie_header_value)
     if not session_id:
         return None
     path = store_path(workspace)
     with _lock:
         store = _read_store(path)
-    entry = store.get(session_id)
-    if not isinstance(entry, dict):
-        return None
+        entry = store.get(session_id)
+        if not isinstance(entry, dict):
+            return None
+        if _is_expired(entry):
+            store.pop(session_id, None)
+            _write_store(path, store)
+            logger.info("session %s expired; dropped it", session_id[:8])
+            return None
     user = str(entry.get("user") or "").strip()
     if not user:
         return None
-    return Session(user=user, incognito=bool(entry.get("incognito")))
+    return Session(
+        user=user,
+        incognito=bool(entry.get("incognito")),
+        expires_at=float(entry.get("expires_at") or 0.0),
+    )
 
 
 def login(
@@ -133,14 +163,21 @@ def login(
     *,
     incognito: bool = False,
 ) -> Session:
-    """Persist a session for ``session_id`` and return it."""
-    session = Session(user=user, incognito=bool(incognito))
+    """Persist a session for ``session_id`` and return it.
+
+    The session expires ``SESSION_TTL_SECONDS`` after this call.
+    """
+    expires_at = time.time() + SESSION_TTL_SECONDS
+    session = Session(
+        user=user, incognito=bool(incognito), expires_at=expires_at
+    )
     path = store_path(workspace)
     with _lock:
         store = _read_store(path)
         store[session_id] = {
             "user": session.user,
             "incognito": session.incognito,
+            "expires_at": expires_at,
         }
         _write_store(path, store)
     return session
