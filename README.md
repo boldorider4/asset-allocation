@@ -86,6 +86,16 @@ cp users.sample.json ~/.local/asalloc/users.json
 
 `users.json` is gitignored (it holds credentials). The store is backend-agnostic: `config.ini` → `[server] backend = postgres` moves it into the `users` table together with the assets.
 
+**Adding users.** Use the script or the CLI command — both write the same store:
+
+```bash
+python scripts/add_users.py ~/.local/asalloc/users.json alice --password secret
+asalloc add-user --config ~/.local/asalloc/config.ini --user alice --password secret
+asalloc add-user --config /path/to/config.ini --user alice    # empty password
+```
+
+The CLI command reads the users file from the given `config.ini` (`[update] users_file`); `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed. The `--backend postgres` path is a stub and does not work yet.
+
 **Login.** The login screen accepts a name that has an account in `users.json` — a name that only appears in `assets.json` is unknown and rejected. A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. Password *authentication* is not implemented yet: the password is stored, not checked (in plaintext — hashing belongs in `storage/records.py::UserRecord` when it lands).
 
 ### Migrating an old holdings file

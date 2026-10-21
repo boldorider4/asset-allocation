@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 import argparse
+import configparser
 import logging
 import os
 import signal
@@ -130,6 +131,41 @@ def cmd_stop(_args: argparse.Namespace) -> None:
             logger.warning("No permission to stop leftover server pid %s.", other)
 
 
+def cmd_add_user(args: argparse.Namespace) -> None:
+    """Add a user account to the users store (the ini names the file)."""
+    from cli.users import add_user_account
+
+    try:
+        cfg = AppConfig.from_ini(args.config)
+    except (FileNotFoundError, ValueError, configparser.Error) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    users_file = cfg.users_file
+    user = str(args.user).strip()
+    if not user:
+        print("error: --user must not be empty", file=sys.stderr)
+        sys.exit(2)
+    password = args.password
+    try:
+        created = add_user_account(
+            users_file,
+            user,
+            password,
+            backend=cfg.server.backend,
+            postgres_dsn=cfg.server.postgres_dsn,
+        )
+    except NotImplementedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if created:
+        print(f"added user {user!r} to {users_file}")
+    else:
+        print(f"user {user!r} already exists in {users_file} (password updated)")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     cfg = load_server_config(getattr(args, "config", None))
     if getattr(args, "config", None) is not None:
@@ -214,15 +250,21 @@ def cmd_serve(args: argparse.Namespace) -> None:
     )
 
 
-def _add_config_flag(parser: argparse.ArgumentParser, *, default=None) -> None:
+def _add_config_flag(
+    parser: argparse.ArgumentParser, *, default=None, required: bool = False
+) -> None:
+    help_text = (
+        "Path to config.ini (overrides $ASALLOC_CONFIG and the built-in "
+        "default). May be given before or after the subcommand."
+    )
+    if required:
+        help_text = "Path to config.ini (required by this command)."
     parser.add_argument(
         "--config",
         type=Path,
         default=default,
-        help=(
-            "Path to config.ini (overrides $ASALLOC_CONFIG and the built-in "
-            "default). May be given before or after the subcommand."
-        ),
+        required=required,
+        help=help_text,
     )
 
 
@@ -389,6 +431,25 @@ def main(argv: list[str] | None = None) -> None:
         help="Users JSON file backing the login (default: users.json next to the package).",
     )
     serve.set_defaults(func=cmd_serve)
+
+    add_user = subparsers.add_parser(
+        "add-user",
+        help="Add a user account to the users store (users.json).",
+    )
+    _add_config_flag(add_user, required=True)
+    add_user.add_argument(
+        "--user",
+        type=str,
+        required=True,
+        help="User name to add (the account key).",
+    )
+    add_user.add_argument(
+        "--password",
+        type=str,
+        default=None,
+        help="Password for the account (default: empty for a new account, kept for an existing one).",
+    )
+    add_user.set_defaults(func=cmd_add_user)
 
     stop_serve = subparsers.add_parser(
         "stop-serve",
