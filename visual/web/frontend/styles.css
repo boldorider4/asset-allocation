@@ -478,15 +478,27 @@ main section h2 {
   margin: 0 0 0.6rem 4rem;
 }
 
-/* The portfolio name, at the very end of the page. */
+/* The portfolio name, at the very end of the page: flush with the
+   page's left edge (no asset-class indent) and on one line with its
+   label. */
 main section.portfolio-name {
-  max-width: 100rem;
-  margin: 1.6rem auto 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.4rem;
+  margin: 1.6rem 0 2rem;
 }
 
-input.portfolio-name-input {
+main section.portfolio-name h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+input.cell-box.editable.portfolio-name-input {
   width: 24rem;
-  max-width: 100%;
+  max-width: 24rem;
+  min-width: 0;
+  flex: 1 1 24rem;
 }
 
 table {

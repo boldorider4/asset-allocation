@@ -309,6 +309,23 @@ class TestPortfolioNameField(unittest.TestCase):
             result = store_portfolio_name(assets, "Renamed")
             self.assertEqual(result["name"], "Renamed")
 
+    def test_the_field_is_left_aligned_and_twice_as_long(self) -> None:
+        css = (
+            Path(__file__).resolve().parent.parent
+            / "visual"
+            / "web"
+            / "frontend"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        # A flex row: the label and the field share one line.
+        self.assertIn("main section.portfolio-name {", css)
+        self.assertIn("display: flex;", css)
+        # The label drops the asset-class indent (no left margin).
+        self.assertIn("main section.portfolio-name h2 {", css)
+        # The field is twice as long as the 24rem it had.
+        self.assertIn("input.cell-box.editable.portfolio-name-input {", css)
+        self.assertIn("width: 24rem;", css)
+
     def test_the_frontend_posts_the_name(self) -> None:
         root = (
             Path(__file__).resolve().parent.parent
