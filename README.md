@@ -62,7 +62,7 @@ The store itself is backend-agnostic: the code above the storage layer only talk
 | `commodity_portfolio` | Commodities |
 | `pension_portfolio` | Pension |
 
-Each bucket is an array of position objects. Typical fields:
+Each asset class is an array of position objects. Typical fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -108,13 +108,23 @@ The CLI command reads the users file from the given `config.ini` (`[update] user
 
 ### Migrating an old holdings file
 
-A pre-user file (buckets directly at the top level) is rejected with a pointer to the migration script. Run it once per file — it backs the original up before writing:
+The current format nests the positions under `"positions"` and names the portfolio. A file in the previous shape (the asset classes directly under the user) is rejected with a validation error — run the migration script once per file:
+
+```bash
+python scripts/migrate_assets_positions.py ~/.local/asalloc/assets.json
+python scripts/migrate_assets_positions.py ~/.local/asalloc/assets.json --portfolio-name "90-10 Equity Portfolio"
+```
+
+The script backs the original up before writing (a `.bak` sibling), touches only the file you pass, and leaves a file that is already current untouched.
+
+A **pre-user** file (the asset classes directly at the top level) needs one more step first — it is rejected with a pointer to its own script:
 
 ```bash
 python scripts/migrate_assets_user.py ~/.local/asalloc/assets.json default
+python scripts/migrate_assets_positions.py ~/.local/asalloc/assets.json
 ```
 
-The script touches only the file you pass (plus its `.bak` sibling), never `config.ini` or anything else in your home directory.
+Neither script ever reads `config.ini` or touches anything else in your home directory.
 
 > The `?user=` selector on the web server is **not authentication**: anyone who can reach the server can read and edit any user's holdings. Keep it on a trusted network.
 
