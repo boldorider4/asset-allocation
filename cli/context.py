@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from cli.common import DEFAULT_USER_NAME
+from storage.records import DEFAULT_PORTFOLIO_NAME
 from storage.wiring import (
     BACKEND_JSON,
     DEFAULT_POSTGRES_DSN,
@@ -316,6 +317,9 @@ class RuntimeContext:
 
     config: AppConfig = field(default_factory=AppConfig)
     portfolio: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # The name of the user's portfolio (the store owns it; the run keeps
+    # it so a write does not drop it).
+    portfolio_name: str = DEFAULT_PORTFOLIO_NAME
     cache: dict[str, Any] = field(default_factory=dict)
     cache_loaded: bool = False
     cache_dirty: bool = False
@@ -395,9 +399,10 @@ class RuntimeContext:
             if path is not None and Path(path) != self.config.assets_file
             else self.asset_repo
         )
-        # The store is the source of truth: read this user's buckets
+        # The store is the source of truth: read this user's positions
         # straight out of it (a malformed store fails loudly here).
         repo.open()
+        self.portfolio_name = repo.portfolio_name
         data = repo.snapshot()
         self.portfolio.clear()
         self.portfolio.update(data)
@@ -421,9 +426,9 @@ class RuntimeContext:
             repo.open()
         else:
             repo = self.asset_repo
-        # Replace this user's buckets wholesale (other users' rows in the
-        # same file stay untouched).
-        repo.restore(self.portfolio)
+        # Replace this user's positions wholesale (other users' rows in the
+        # same file stay untouched); the portfolio name rides along.
+        repo.restore(self.portfolio, portfolio_name=self.portfolio_name)
         repo.persist()
 
     # -- cache (in-memory + flush) --

@@ -104,7 +104,7 @@ class TestWritePortfolioToFile(unittest.TestCase):
             self.assertTrue(out_path.exists())
 
             with out_path.open(encoding="utf-8") as f:
-                written = json.load(f)["default"]
+                written = json.load(f)["default"]["positions"]
 
         self.assertEqual(written["equity_portfolio"][0]["value"], mutated_value)
         self.assertIsNone(written["equity_portfolio"][0]["shares"])

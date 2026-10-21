@@ -114,7 +114,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
             path = Path(tmpdir) / "assets.json"
             write_user_buckets(path, self.ctx.portfolio)
             written = json.loads(path.read_text(encoding="utf-8"))["default"]
-        pos = written[EQUITY_PORTFOLIO][0]
+        pos = written["positions"][EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
         self.assertNotIn("price", pos)

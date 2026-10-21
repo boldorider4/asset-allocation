@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from assets_helpers import user_payload
+
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.update import main as run_update
 
@@ -21,7 +23,7 @@ from cli.update import main as run_update
 def _ctx(tmp: Path, payload: object, user: str = "alice") -> RuntimeContext:
     assets = tmp / "assets.json"
     cache = tmp / "cache.json"
-    assets.write_text(json.dumps({user: payload}), encoding="utf-8")
+    assets.write_text(json.dumps({user: user_payload(payload)}), encoding="utf-8")
     cache.write_text("{}", encoding="utf-8")
     return RuntimeContext(
         config=AppConfig(

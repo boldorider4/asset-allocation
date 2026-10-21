@@ -53,7 +53,12 @@ class TestAssetsStoreShape(unittest.TestCase):
             repo.persist()
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(list(raw), ["foobar"])
-            self.assertEqual(raw["foobar"][BUCKET][0]["ISIN"], "IE00TEST0001")
+            self.assertEqual(
+                raw["foobar"]["portfolio_name"], "Portfolio"
+            )
+            self.assertEqual(
+                raw["foobar"]["positions"][BUCKET][0]["ISIN"], "IE00TEST0001"
+            )
 
     def test_legacy_flat_store_is_rejected_with_migration_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,6 +68,42 @@ class TestAssetsStoreShape(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 repo.open()
             self.assertIn("migrate_assets_user.py", str(ctx.exception))
+
+    def test_old_bucket_payload_is_rejected(self) -> None:
+        # The positions used to sit directly under the user; that shape
+        # is not the current one and fails loudly.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(
+                json.dumps({"default": {BUCKET: [POSITION]}}), encoding="utf-8"
+            )
+            repo = _repo(path, DEFAULT_USER_NAME)
+            with self.assertRaises((KeyError, TypeError, ValueError)):
+                repo.open()
+
+    def test_portfolio_name_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            repo = _repo(path, "foobar")
+            repo.open()
+            self.assertEqual(repo.portfolio_name, "Portfolio")
+            repo.set_portfolio_name("My Portfolio")
+            self.assertEqual(repo.portfolio_name, "My Portfolio")
+            repo.restore({BUCKET: [POSITION]}, portfolio_name=repo.portfolio_name)
+            repo.persist()
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(raw["foobar"]["portfolio_name"], "My Portfolio")
+            # The name rides along with the positions.
+            self.assertEqual(raw["foobar"]["positions"][BUCKET][0]["ISIN"], "IE00TEST0001")
+
+    def test_restore_keeps_the_portfolio_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp) / "assets.json", "foobar")
+            repo.open()
+            repo.set_portfolio_name("Kept")
+            repo.restore({BUCKET: [POSITION]})
+            self.assertEqual(repo.portfolio_name, "Kept")
+
 
     def test_malformed_store_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -92,8 +133,8 @@ class TestUserIsolation(unittest.TestCase):
                 repo.persist()
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(sorted(raw), ["alice", "bob"])
-            self.assertEqual(raw["alice"][BUCKET][0]["value"], 100.0)
-            self.assertEqual(raw["bob"][BUCKET][0]["value"], 1.0)
+            self.assertEqual(raw["alice"]["positions"][BUCKET][0]["value"], 100.0)
+            self.assertEqual(raw["bob"]["positions"][BUCKET][0]["value"], 1.0)
 
     def test_repository_is_user_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,7 +176,9 @@ class TestRuntimeContextUser(unittest.TestCase):
             # Writing bob's (empty) portfolio must not touch alice's.
             bob.persist_portfolio()
             raw = json.loads((root / "assets.json").read_text(encoding="utf-8"))
-            self.assertEqual(raw["alice"][BUCKET][0]["ISIN"], "IE00TEST0001")
+            self.assertEqual(
+                raw["alice"]["positions"][BUCKET][0]["ISIN"], "IE00TEST0001"
+            )
 
     def test_default_user_name(self) -> None:
         self.assertEqual(AppConfig().user, DEFAULT_USER_NAME)
@@ -247,15 +290,97 @@ class TestMigrationScript(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            repo = _repo(path, "foobar")
-            repo.open()
-            self.assertEqual(repo.snapshot()[BUCKET][0]["ISIN"], "IE00TEST0001")
+            # The flat file becomes a user-keyed one...
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(list(raw), ["foobar"])
+            self.assertEqual(raw["foobar"][BUCKET][0]["ISIN"], "IE00TEST0001")
             backup = path.with_name(path.name + ".bak")
             self.assertTrue(backup.is_file())
             # The backup still holds the original flat file.
             self.assertEqual(
                 list(json.loads(backup.read_text(encoding="utf-8"))), [BUCKET]
             )
+
+
+class TestPositionsMigrationScript(unittest.TestCase):
+    """The current format: a named portfolio with nested positions."""
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        script = REPO_ROOT / "scripts" / "migrate_assets_positions.py"
+        self.assertTrue(script.is_file())
+        return subprocess.run(
+            [sys.executable, str(script), *args],
+            capture_output=True,
+            text=True,
+        )
+
+    def test_migrates_the_positions_and_keeps_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(
+                json.dumps({"foobar": {BUCKET: [POSITION]}}), encoding="utf-8"
+            )
+            result = self._run(str(path))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(raw["foobar"]["portfolio_name"], "Portfolio")
+            self.assertEqual(
+                raw["foobar"]["positions"][BUCKET][0]["ISIN"], "IE00TEST0001"
+            )
+            # The migrated file loads through the repository.
+            repo = _repo(path, "foobar")
+            repo.open()
+            self.assertEqual(repo.snapshot()[BUCKET][0]["ISIN"], "IE00TEST0001")
+            self.assertEqual(repo.portfolio_name, "Portfolio")
+            backup = path.with_name(path.name + ".bak")
+            self.assertTrue(backup.is_file())
+            self.assertEqual(
+                list(json.loads(backup.read_text(encoding="utf-8"))), ["foobar"]
+            )
+
+    def test_names_the_portfolio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(
+                json.dumps({"foobar": {BUCKET: [POSITION]}}), encoding="utf-8"
+            )
+            result = self._run(str(path), "--portfolio-name", "90-10 Equity")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(raw["foobar"]["portfolio_name"], "90-10 Equity")
+
+    def test_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(
+                json.dumps({"foobar": {BUCKET: [POSITION]}}), encoding="utf-8"
+            )
+            self.assertEqual(self._run(str(path)).returncode, 0)
+            before = path.read_text(encoding="utf-8")
+            self.assertEqual(self._run(str(path)).returncode, 0)
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_migrates_a_flat_file_in_two_steps(self) -> None:
+        # A pre-user file needs both scripts: the first makes it
+        # user-keyed, the second moves the positions under their name.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(json.dumps({BUCKET: [POSITION]}), encoding="utf-8")
+            first = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts" / "migrate_assets_user.py"),
+                    str(path),
+                    "foobar",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(self._run(str(path)).returncode, 0)
+            repo = _repo(path, "foobar")
+            repo.open()
+            self.assertEqual(repo.snapshot()[BUCKET][0]["ISIN"], "IE00TEST0001")
 
     def test_refuses_non_legacy_file(self) -> None:
         script = REPO_ROOT / "scripts" / "migrate_assets_user.py"

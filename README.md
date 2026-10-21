@@ -23,16 +23,24 @@ Requires Python 3.10+. Dependencies include `numpy`, `matplotlib`, `yfinance`, `
 
 ## Holdings file
 
-The holdings file is keyed by **user**: each top-level key is a user name, and its value holds that user's portfolio buckets.
+The holdings file is keyed by **user**: each top-level key is a user name, and its value holds that user's portfolio — a name and the positions, grouped by asset class.
 
 ```json
 {
   "default": {
-    "equity_portfolio": [ { "ISIN": "IE000BI8OT95", "shares": 220, "value": null } ],
-    "bond_portfolio": []
+    "portfolio_name": "Portfolio",
+    "positions": {
+      "equity_portfolio": [ { "ISIN": "IE000BI8OT95", "shares": 220, "value": null } ],
+      "bond_portfolio": []
+    }
   }
 }
 ```
+
+| Key | Purpose |
+| --- | --- |
+| `portfolio_name` | The name of this user's portfolio (`"Portfolio"` until it is renamed) |
+| `positions` | The positions, grouped by asset class |
 
 The user name comes from `config.ini` (`[update] user = default`) and can be overridden per run with `--user NAME`. Charts are per user too: an update writes to `<output_dir>/<user>/`, and the server serves the selected user's charts.
 

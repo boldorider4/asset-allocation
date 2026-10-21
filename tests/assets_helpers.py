@@ -11,10 +11,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from storage.records import DEFAULT_PORTFOLIO_NAME
 from storage.repositories import AssetRepository
 from storage.wiring import assets_backend
 
-__all__ = ["read_user_buckets", "write_user_buckets"]
+__all__ = ["read_user_buckets", "write_user_buckets", "user_payload"]
+
+
+def user_payload(
+    positions: dict[str, list[dict[str, Any]]],
+    *,
+    portfolio_name: str = DEFAULT_PORTFOLIO_NAME,
+) -> dict[str, Any]:
+    """A user row in the current assets format.
+
+    The store holds ``{user: {"portfolio_name": ..., "positions": {...}}}``;
+    this builds the payload of one user from its positions.
+    """
+    return {
+        "portfolio_name": portfolio_name,
+        "positions": positions,
+    }
 
 
 def read_user_buckets(

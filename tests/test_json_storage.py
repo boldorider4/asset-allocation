@@ -358,7 +358,7 @@ class TestAssetRepositoryComposition(unittest.TestCase):
                     )
                     with self.assertRaises(TypeError):
                         repo.set_positions("bad", ["nope"])  # type: ignore[list-item]
-                    repo.remove_bucket("equity_portfolio")
+                    repo.remove_positions("equity_portfolio")
                     self.assertIsNone(repo.get_positions("equity_portfolio"))
 
     def test_lifecycle_round_trip(self) -> None:
@@ -401,10 +401,14 @@ class TestAssetRepositoryComposition(unittest.TestCase):
             repo.open()
             repo.restore(data)
             repo.persist()
-            # The file is keyed by user; the payload is the user's buckets.
+            # The file is keyed by user; the payload names the portfolio
+            # and nests the positions.
             written = json.loads(actual.read_text(encoding="utf-8"))
             self.assertEqual(list(written), ["default"])
-            self.assertEqual(written["default"], data)
+            self.assertEqual(
+                written["default"],
+                {"portfolio_name": "Portfolio", "positions": data},
+            )
             # Atomic tmp+rename write: indent=2, trailing newline.
             self.assertTrue(actual.read_text(encoding="utf-8").endswith("\n"))
 

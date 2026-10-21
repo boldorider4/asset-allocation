@@ -15,6 +15,7 @@ from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
 from storage.postgres_storage import PostgresStorage
 from storage.records import (
+    DEFAULT_PORTFOLIO_NAME,
     AssetBucket,
     CacheEntry,
     DictRow,
@@ -41,6 +42,7 @@ from storage.wiring import (
 __all__ = [
     "Storage",
     "StorageObject",
+    "DEFAULT_PORTFOLIO_NAME",
     "DictRow",
     "CacheEntry",
     "AssetBucket",

@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from assets_helpers import user_payload
+
 from utils import chart_files, clear_chart_files
 from visual.web.backend.constituents import assets_positions_left
 
@@ -56,16 +58,18 @@ class TestAssetsPositionsLeft(unittest.TestCase):
             assets.write_text(
                 json.dumps(
                     {
-                        "alice": {
-                            "equity_portfolio": [
-                                {"name": "A", "ISIN": "IE00A"},
-                                {"name": "B", "ISIN": "IE00B"},
-                            ],
-                            "bond_portfolio": [
-                                {"name": "C", "ISIN": "IE00C"},
-                            ],
-                        },
-                        "bob": {"equity_portfolio": []},
+                        "alice": user_payload(
+                            {
+                                "equity_portfolio": [
+                                    {"name": "A", "ISIN": "IE00A"},
+                                    {"name": "B", "ISIN": "IE00B"},
+                                ],
+                                "bond_portfolio": [
+                                    {"name": "C", "ISIN": "IE00C"},
+                                ],
+                            }
+                        ),
+                        "bob": user_payload({"equity_portfolio": []}),
                     }
                 ),
                 encoding="utf-8",
@@ -76,7 +80,9 @@ class TestAssetsPositionsLeft(unittest.TestCase):
     def test_unknown_user_has_no_positions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
-            assets.write_text(json.dumps({"alice": {}}), encoding="utf-8")
+            assets.write_text(
+                json.dumps({"alice": user_payload({})}), encoding="utf-8"
+            )
             self.assertEqual(assets_positions_left(assets, "nobody"), 0)
 
 

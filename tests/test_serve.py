@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from assets_helpers import user_payload
+
 from visual.web.backend.serve import DashboardHandler
 
 #: The user the fixtures know about (the assets store is keyed by user).
@@ -74,16 +76,30 @@ class _ServerCase(unittest.TestCase):
                     # Both known users hold a position, so their chart
                     # files are legitimate (a user without positions has
                     # no charts - the server clears them).
-                    _USER: {
-                        "equity_portfolio": [
-                            {"name": "A", "ISIN": "IE00A", "shares": 1, "value": 10}
-                        ]
-                    },
-                    _OTHER_USER: {
-                        "equity_portfolio": [
-                            {"name": "B", "ISIN": "IE00B", "shares": 2, "value": 20}
-                        ]
-                    },
+                    _USER: user_payload(
+                        {
+                            "equity_portfolio": [
+                                {
+                                    "name": "A",
+                                    "ISIN": "IE00A",
+                                    "shares": 1,
+                                    "value": 10,
+                                }
+                            ]
+                        }
+                    ),
+                    _OTHER_USER: user_payload(
+                        {
+                            "equity_portfolio": [
+                                {
+                                    "name": "B",
+                                    "ISIN": "IE00B",
+                                    "shares": 2,
+                                    "value": 20,
+                                }
+                            ]
+                        }
+                    ),
                 }
             ),
             encoding="utf-8",
@@ -265,7 +281,7 @@ class TestDashboardEndpoint(_ServerCase):
         stale = self.data_root / empty / "01-complete-portfolio.raw"
         stale.write_text("STALE", encoding="utf-8")
         assets = json.loads(self.assets.read_text(encoding="utf-8"))
-        assets[empty] = {"equity_portfolio": []}
+        assets[empty] = user_payload({"equity_portfolio": []})
         self.assets.write_text(json.dumps(assets), encoding="utf-8")
         users = json.loads(self.users.read_text(encoding="utf-8"))
         users[empty] = {"password": ""}
@@ -388,7 +404,7 @@ class TestUsersStoreLogin(_ServerCase):
         # The assets store gained the user with an empty portfolio.
         stored = json.loads(self.assets.read_text(encoding="utf-8"))
         self.assertIn(fresh, stored)
-        self.assertEqual(stored[fresh], {})
+        self.assertEqual(stored[fresh], user_payload({}))
         # ...and the pages behave as they do for an empty portfolio.
         status, body = self._get("/constituents", cookie=cookie)
         self.assertEqual(status, 200)

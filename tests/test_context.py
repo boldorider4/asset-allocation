@@ -342,14 +342,28 @@ class TestRuntimeContextCache(unittest.TestCase):
             ctx = self._ctx(Path(tmp))
             bad = Path(tmp) / "assets.json"
             bad.write_text(
-                _json.dumps({"default": {"equity_portfolio": [{"ISIN": "X"}]}}),
+                _json.dumps(
+                    {
+                        "default": {
+                            "portfolio_name": "Portfolio",
+                            "positions": {"equity_portfolio": [{"ISIN": "X"}]},
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
             ctx.load_portfolio()
             self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
             # A bucket that is not a list is a type error.
             bad.write_text(
-                _json.dumps({"default": {"equity_portfolio": "nope"}}),
+                _json.dumps(
+                    {
+                        "default": {
+                            "portfolio_name": "Portfolio",
+                            "positions": {"equity_portfolio": "nope"},
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
             ctx2 = self._ctx(Path(tmp))

@@ -20,6 +20,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from assets_helpers import user_payload
+
 from cli.common import DEFAULT_USER_NAME
 from visual.web.backend.constituents import (
     add_constituent,
@@ -76,11 +78,16 @@ _CACHE = {
 }
 
 
+def _positions(path: Path, user: str = "default") -> dict:
+    """The positions of one user, read from the assets file."""
+    row = json.loads(path.read_text(encoding="utf-8"))[user]
+    return row["positions"]
+
 def _write_files(tmp: Path) -> tuple[Path, Path]:
     assets = tmp / "assets.json"
     cache = tmp / "cache.json"
     # The assets file is keyed by user: {"<user>": {"<bucket>": [...]}}.
-    assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+    assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
     cache.write_text(json.dumps(_CACHE), encoding="utf-8")
     return assets, cache
 
@@ -192,7 +199,7 @@ class TestLoadConstituents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
             cache = Path(tmp) / "cache.json"
-            assets.write_text(json.dumps({"default": buckets}), encoding="utf-8")
+            assets.write_text(json.dumps({"default": user_payload(buckets)}), encoding="utf-8")
             cache.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets, cache)
         self.assertEqual(
@@ -230,7 +237,7 @@ class TestLoadConstituents(unittest.TestCase):
     def test_missing_cache_file_means_no_prices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
-            assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+            assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
             sections = load_constituents(assets, Path(tmp) / "nope.json")
         equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertIsNone(equity[0]["price"])
@@ -306,7 +313,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         equity = dict((label, rows) for _, label, rows in sections)["Equity"]
@@ -450,7 +457,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         self.assertEqual(
@@ -507,7 +514,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text(json.dumps(cache), encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         by_label = dict((label, rows) for _, label, rows in sections)
@@ -1136,11 +1143,11 @@ class TestRenderConstituentsPage(unittest.TestCase):
 class TestStoreConstituentValue(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
         assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
         return assets
 
     def _read(self, assets: Path):
-        return json.loads(assets.read_text(encoding="utf-8"))["default"]
+        return _positions(assets, "default")
 
     def test_valid_shares_edit_persists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1328,11 +1335,11 @@ class TestStoreConstituentValue(unittest.TestCase):
 class TestReorderConstituents(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
         assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
         return assets
 
     def _names(self, assets: Path, bucket: str = "equity_portfolio") -> list:
-        data = json.loads(assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(assets, "default")
         return [row["name"] for row in data[bucket]]
 
     def test_permute_persists_and_echoes(self) -> None:
@@ -1344,18 +1351,18 @@ class TestReorderConstituents(unittest.TestCase):
                 self._names(assets), ["Trade Republic ETF", "Amundi Core"]
             )
             # Other buckets are untouched.
-            data = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            data = _positions(assets, "default")
             self.assertEqual(data["cash_portfolio"][0]["name"], "Tagesgeld")
             json.loads(assets.read_text(encoding="utf-8"))
 
     def test_identity_order_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            before = _positions(assets, "default")
             result = reorder_constituents(assets, "equity_portfolio", [0, 1])
             self.assertEqual(result, {"order": [0, 1]})
             self.assertEqual(
-                json.loads(assets.read_text(encoding="utf-8"))["default"], before
+                _positions(assets, "default"), before
             )
 
     def test_rejects_bad_orders_and_leaves_file_untouched(self) -> None:
@@ -1383,7 +1390,7 @@ class TestReorderConstituents(unittest.TestCase):
     def test_rejects_non_list_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
-            assets.write_text(json.dumps({"default": {"equity_portfolio": {"a": 1}}}))
+            assets.write_text(json.dumps({"default": user_payload({"equity_portfolio": {"a": 1}})}))
             # The store rejects the malformed bucket while loading it.
             with self.assertRaises((TypeError, ValueError)):
                 reorder_constituents(assets, "equity_portfolio", [0])
@@ -1444,8 +1451,8 @@ class TestFreshUserSections(unittest.TestCase):
             assets.write_text(
                 json.dumps(
                     {
-                        "alice": {},
-                        "bob": {"crypto_portfolio": [{"name": "C"}]},
+                        "alice": user_payload({}),
+                        "bob": user_payload({"crypto_portfolio": [{"name": "C"}]}),
                     }
                 ),
                 encoding="utf-8",
@@ -1474,7 +1481,7 @@ class TestFreshUserSections(unittest.TestCase):
 class TestAddConstituent(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
         assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
         return assets
 
     def test_full_row_appends_and_reports_display(self) -> None:
@@ -1498,7 +1505,7 @@ class TestAddConstituent(unittest.TestCase):
             self.assertTrue(display["editable_shares"])
             self.assertTrue(display["editable_value"])
             self.assertFalse(display["no_quote"])
-            data = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            data = _positions(assets, "default")
             stored = data["equity_portfolio"][2]
             self.assertEqual(stored["name"], "New Fund")
             self.assertEqual(stored["ISIN"], "IE000BI8OT95")
@@ -1542,14 +1549,14 @@ class TestAddConstituent(unittest.TestCase):
             # ...while an unknown bucket is created, so the first row of a
             # class the user does not hold yet can be added.
             add_constituent(assets, "nope", name="X", broker="scalable")
-            stored = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            stored = _positions(assets, "default")
             self.assertEqual([row["name"] for row in stored["nope"]], ["X"])
 
 
 class TestDeleteConstituent(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
         assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": _ASSETS}), encoding="utf-8")
+        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
         return assets
 
     def test_delete_removes_row_and_reports(self) -> None:
@@ -1557,7 +1564,7 @@ class TestDeleteConstituent(unittest.TestCase):
             assets = self._assets(Path(tmp))
             result = delete_constituent(assets, "equity_portfolio", 0)
             self.assertEqual(result, {"deleted": True, "rows": 1})
-            data = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            data = _positions(assets, "default")
             self.assertEqual(
                 [row["name"] for row in data["equity_portfolio"]],
                 ["Trade Republic ETF"],
@@ -1570,11 +1577,11 @@ class TestDeleteConstituent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets = Path(tmp) / "assets.json"
             assets.write_text(
-                json.dumps({"default": {"equity_portfolio": [{"name": "Solo"}]}})
+                json.dumps({"default": user_payload({"equity_portfolio": [{"name": "Solo"}]})})
             )
             result = delete_constituent(assets, "equity_portfolio", 0)
             self.assertEqual(result, {"deleted": True, "rows": 0})
-            data = json.loads(assets.read_text(encoding="utf-8"))["default"]
+            data = _positions(assets, "default")
             self.assertEqual(data["equity_portfolio"], [])
 
     def test_rejects_bad_address_and_leaves_file_untouched(self) -> None:
@@ -1612,7 +1619,7 @@ class TestNumberFormatting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text(json.dumps(cache), encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         return render_constituents_page(sections)
@@ -1667,7 +1674,7 @@ class TestNumberFormatting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         page = render_constituents_page(sections)
@@ -1688,7 +1695,7 @@ class TestNumberFormatting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             assets_path = Path(tmp) / "assets.json"
             cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": assets}), encoding="utf-8")
+            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
             cache_path.write_text("{}", encoding="utf-8")
             sections = load_constituents(assets_path, cache_path)
         page = render_constituents_page(sections)
@@ -1901,17 +1908,19 @@ class TestConstituentsRoute(_RouteCase):
     def test_constituents_shows_the_session_users_portfolio(self) -> None:
         # The store knows a second user: their session shows their rows.
         data = json.loads(self.assets.read_text(encoding="utf-8"))
-        data["alice"] = {
-            "equity_portfolio": [
-                {
-                    "name": "Alice Fund",
-                    "shares": 1,
-                    "value": 2,
-                    "broker": "scalable",
-                    "ISIN": None,
-                }
-            ]
-        }
+        data["alice"] = user_payload(
+            {
+                "equity_portfolio": [
+                    {
+                        "name": "Alice Fund",
+                        "shares": 1,
+                        "value": 2,
+                        "broker": "scalable",
+                        "ISIN": None,
+                    }
+                ]
+            }
+        )
         self.assets.write_text(json.dumps(data), encoding="utf-8")
         # Logging in needs an account in the users store.
         accounts = json.loads(self.users.read_text(encoding="utf-8"))
@@ -2058,7 +2067,7 @@ class TestConstituentsRoute(_RouteCase):
         self.assertEqual(payload["shares"], 230.5)
         self.assertAlmostEqual(payload["value"], 230.5 * 81.25)
         self.assertTrue(payload["recomputed"])
-        data = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(self.assets, "default")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
         self.assertAlmostEqual(data["equity_portfolio"][0]["value"], 230.5 * 81.25)
 
@@ -2085,7 +2094,7 @@ class TestConstituentsRoute(_RouteCase):
         payload = json.loads(body)
         self.assertEqual(payload["short_name"], "Amundi")
         self.assertTrue(payload["recomputed"])
-        data = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(self.assets, "default")
         self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
 
@@ -2095,7 +2104,7 @@ class TestConstituentsRoute(_RouteCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"order": [1, 0]})
-        data = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(self.assets, "default")
         self.assertEqual(
             [row["name"] for row in data["equity_portfolio"]],
             ["Trade Republic ETF", "Amundi Core"],
@@ -2121,7 +2130,7 @@ class TestConstituentsRoute(_RouteCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"deleted": True, "rows": 1})
-        data = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(self.assets, "default")
         self.assertEqual(
             [row["name"] for row in data["equity_portfolio"]],
             ["Trade Republic ETF"],
@@ -2159,7 +2168,7 @@ class TestConstituentsRoute(_RouteCase):
         self.assertIn("<tr ", payload["row"])
         self.assertIn("New Fund", payload["row"])
         self.assertIn('data-index="2"', payload["row"])
-        data = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        data = _positions(self.assets, "default")
         self.assertEqual(data["equity_portfolio"][2]["name"], "New Fund")
         self.assertEqual(data["equity_portfolio"][2]["ISIN"], "IE000BI8OT95")
 
@@ -2182,7 +2191,7 @@ class TestConstituentsRoute(_RouteCase):
         # can add a row to a class they hold nothing in yet.
         status, _ = self._post_add({"bucket": "nope", "name": "X", "broker": "scalable"})
         self.assertEqual(status, 200)
-        stored = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
+        stored = _positions(self.assets, "default")
         self.assertEqual([row["name"] for row in stored["nope"]], ["X"])
 
     def test_get_brokers_lists_marks(self) -> None:

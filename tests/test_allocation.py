@@ -39,20 +39,23 @@ def _seed_files(tmp: Path) -> tuple[Path, Path, Path]:
         json.dumps(
             {
                 "default": {
-                "equity_portfolio": [
-                    {
-                        "name": "Unknown",
-                        "ISIN": ISIN,
-                        "shares": 2,
-                        "value": 20.0,
-                        "broker": "scalable",
-                    }
-                ],
-                "fixed_maturity_bond_portfolio": [],
-                "cash_portfolio": [],
-                "bond_portfolio": [],
-                "commodity_portfolio": [],
-                "pension_portfolio": [],
+                    "portfolio_name": "Portfolio",
+                    "positions": {
+                        "equity_portfolio": [
+                            {
+                                "name": "Unknown",
+                                "ISIN": ISIN,
+                                "shares": 2,
+                                "value": 20.0,
+                                "broker": "scalable",
+                            }
+                        ],
+                        "fixed_maturity_bond_portfolio": [],
+                        "cash_portfolio": [],
+                        "bond_portfolio": [],
+                        "commodity_portfolio": [],
+                        "pension_portfolio": [],
+                    },
                 }
             }
         ),

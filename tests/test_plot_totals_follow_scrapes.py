@@ -52,16 +52,19 @@ def _seed_files(tmp: Path, *, broker: str, shares) -> tuple[Path, Path, Path]:
         json.dumps(
             {
                 "default": {
-                "equity_portfolio": [
-                    {
-                        "name": "Totals",
-                        "ISIN": ISIN,
-                        "shares": shares,
-                        "value": OLD_VALUE,
-                        "broker": broker,
-                    }
-                ],
-                **EMPTY_BUCKETS,
+                    "portfolio_name": "Portfolio",
+                    "positions": {
+                        "equity_portfolio": [
+                            {
+                                "name": "Totals",
+                                "ISIN": ISIN,
+                                "shares": shares,
+                                "value": OLD_VALUE,
+                                "broker": broker,
+                            }
+                        ],
+                        **EMPTY_BUCKETS,
+                    },
                 }
             }
         ),
@@ -132,8 +135,8 @@ class TestScalablePlotTotals(PlotTotalsTestBase):
                 fetch={"fetch_scalable": True},
             )
         # JSON is fresh ...
-        self.assertEqual(stored["default"]["equity_portfolio"][0]["value"], NEW_VALUE)
-        self.assertEqual(stored["default"]["equity_portfolio"][0]["shares"], 4)
+        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["value"], NEW_VALUE)
+        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["shares"], 4)
         # ... and so are the plotted totals.
         self.assertIn(f"Total Value: {NEW_VALUE:.2f}", raw_text)
         self.assertIn(f"Net Worth: {NEW_VALUE:.2f}", raw_text)
@@ -167,10 +170,10 @@ class TestOskarPlotTotals(PlotTotalsTestBase):
                 shares=None,
                 fetch={"fetch_oskar": True, "fetch_prices": True},
             )
-        self.assertEqual(stored["default"]["equity_portfolio"][0]["value"], NEW_VALUE)
+        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["value"], NEW_VALUE)
         # Shares estimated as value/price from a JustETF position quote.
         self.assertEqual(
-            stored["default"]["equity_portfolio"][0]["shares"], NEW_VALUE / CACHED_PRICE
+            stored["default"]["positions"]["equity_portfolio"][0]["shares"], NEW_VALUE / CACHED_PRICE
         )
         self.assertIn(f"Total Value: {NEW_VALUE:.2f}", raw_text)
         self.assertIn(f"Net Worth: {NEW_VALUE:.2f}", raw_text)

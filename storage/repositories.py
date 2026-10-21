@@ -19,6 +19,7 @@ import logging
 from typing import Any
 
 from storage.records import (
+    DEFAULT_PORTFOLIO_NAME,
     AssetBucket,
     CacheEntry,
     IsinRecord,
@@ -168,12 +169,12 @@ class CacheRepository:
 
 
 class AssetRepository:
-    """One user's portfolio buckets over any backend.
+    """One user's portfolio (name + positions) over any backend.
 
     The backend holds one row per user (a :class:`UserAssets` row); this
     repository is scoped to a single user and speaks in that user's
-    buckets (``{bucket: [positions]}``). Other users' rows are never
-    read or written.
+    positions (``{asset class: [positions]}``) plus the name of the
+    portfolio. Other users' rows are never read or written.
     """
 
     def __init__(self, user: str, backend: Storage[UserAssets]) -> None:
@@ -212,33 +213,45 @@ class AssetRepository:
             raise UnknownUser(self._user)
         return row
 
-    def get(self, bucket: str) -> list[dict[str, Any]] | None:
-        """One bucket's positions, or None when the user has no such bucket."""
+    @property
+    def portfolio_name(self) -> str:
+        """The name of this user's portfolio."""
         row = self._row()
-        return None if row is None else row.buckets().get(str(bucket))
+        return DEFAULT_PORTFOLIO_NAME if row is None else row.portfolio_name
 
-    def __contains__(self, bucket: object) -> bool:
+    def set_portfolio_name(self, name: str) -> None:
+        """Rename this user's portfolio (creates the row when missing)."""
+        row = self._backend.get_or_create(self._user)
+        row.set_portfolio_name(name)
+        self._backend.put(row)
+
+    def get(self, asset_class: str) -> list[dict[str, Any]] | None:
+        """One asset class's positions, or None when the user has none."""
         row = self._row()
-        return row is not None and str(bucket) in row.buckets()
+        return None if row is None else row.positions().get(str(asset_class))
 
-    def get_positions(self, bucket: str) -> list[dict[str, Any]] | None:
-        return self.get(bucket)
+    def __contains__(self, asset_class: object) -> bool:
+        row = self._row()
+        return row is not None and str(asset_class) in row.positions()
+
+    def get_positions(self, asset_class: str) -> list[dict[str, Any]] | None:
+        return self.get(asset_class)
 
     def set_positions(
-        self, bucket: str, positions: list[dict[str, Any]]
+        self, asset_class: str, positions: list[dict[str, Any]]
     ) -> UserAssets:
-        """Replace a bucket wholesale (validated list-of-dicts)."""
+        """Replace an asset class wholesale (validated list-of-dicts)."""
         row = self._backend.get_or_create(self._user)
-        row.set_bucket(str(bucket), positions)
+        row.set_positions(str(asset_class), positions)
         self._backend.put(row)
         return row
 
-    def remove_bucket(self, bucket: str) -> None:
-        """Drop one bucket of this user (no-op when absent)."""
+    def remove_positions(self, asset_class: str) -> None:
+        """Drop one asset class of this user (no-op when absent)."""
         row = self._row()
         if row is None:
             return
-        if row.remove_bucket(str(bucket)):
+        if row.remove_positions(str(asset_class)):
             self._backend.put(row)
 
     # -- backend-neutral lifecycle (delegated, works on every backend) --
@@ -248,21 +261,24 @@ class AssetRepository:
         return self
 
     def snapshot(self) -> dict[str, Any]:
-        """This user's buckets as plain ``{bucket: [positions]}``."""
+        """This user's positions as plain ``{asset class: [positions]}``."""
         row = self._row()
-        return {} if row is None else row.to_dict()
+        return {} if row is None else row.positions()
 
-    def restore(self, rows: dict[str, Any]) -> int:
-        """Replace this user's buckets with ``rows`` (validated).
+    def restore(
+        self, positions: dict[str, Any], *, portfolio_name: str | None = None
+    ) -> int:
+        """Replace this user's positions with ``positions`` (validated).
 
-        Bad buckets are skipped with a warning (the historical lenient
-        behavior); the rest replace this user's buckets wholesale. Other
-        users' rows stay untouched.
+        Bad asset classes are skipped with a warning (the historical
+        lenient behavior); the rest replace this user's positions
+        wholesale. The portfolio name is kept unless ``portfolio_name``
+        is given. Other users' rows stay untouched.
 
-        Returns the number of buckets restored.
+        Returns the number of asset classes restored.
         """
         good: dict[str, Any] = {}
-        for key, raw in rows.items():
+        for key, raw in positions.items():
             try:
                 AssetBucket.from_dict(str(key), raw)
             except (TypeError, ValueError, KeyError) as exc:
@@ -270,7 +286,7 @@ class AssetRepository:
                 continue
             good[str(key)] = raw
         row = self._backend.get_or_create(self._user)
-        row.replace_all(good)
+        row.replace_all(good, portfolio_name=portfolio_name)
         self._backend.put(row)
         return len(good)
 

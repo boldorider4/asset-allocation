@@ -14,6 +14,8 @@ in-memory) can persist them without knowing their fields:
   dicts. Note ``to_dict()`` returns a *list*, not a dict — backends
   must accept any JSON-encodable payload (JSON object values, JSONB
   columns, ...).
+* :class:`UserAssets` — one user's portfolio: the name of the portfolio
+  plus its positions, grouped by asset class.
 * :class:`IsinRecord` — one registry row: which issuer handler owns an
   ISIN, which portfolio bucket it lives in, plus an optional vendor
   product ref (iShares product id / SSGA slug).
@@ -32,6 +34,7 @@ from typing import Any
 from storage.storage import StorageObject
 
 __all__ = [
+    "DEFAULT_PORTFOLIO_NAME",
     "DictRow",
     "CacheEntry",
     "AssetBucket",
@@ -39,6 +42,9 @@ __all__ = [
     "IsinRecord",
     "UserRecord",
 ]
+
+#: Name a user's portfolio carries until they rename it.
+DEFAULT_PORTFOLIO_NAME = "Portfolio"
 
 
 class DictRow(StorageObject):
@@ -248,13 +254,23 @@ class CacheEntry(DictRow):
 
 
 class UserAssets(StorageObject):
-    """One user's whole portfolio: ``{bucket: [positions]}``.
+    """One user's portfolio: a name and its positions.
 
-    Keyed by user name; the payload is that user's portfolio buckets, so
-    the assets file serialises as ``{"<user>": {"<bucket>": [...]}}``.
-    Buckets are validated through :class:`AssetBucket`, keeping the
-    per-bucket rules in one place.
+    Keyed by user name; the payload is that user's portfolio::
+
+        {"portfolio_name": "Portfolio", "positions": {"<class>": [rows]}}
+
+    The positions are grouped by asset class (the keys the composition
+    and the web views use) and validated through :class:`AssetBucket`,
+    keeping the per-class rules in one place.
+
+    The payload is strict: unknown keys raise, so a file in another
+    shape fails loudly instead of silently loading as empty.
     """
+
+    PORTFOLIO_NAME = "portfolio_name"
+    POSITIONS = "positions"
+    ALLOWED_KEYS: frozenset[str] = frozenset({PORTFOLIO_NAME, POSITIONS})
 
     def __init__(
         self, key: str, data: dict[str, Any] | None = None
@@ -262,14 +278,27 @@ class UserAssets(StorageObject):
         self._key = str(key)
         # _coerce defines what a user payload may be (None = a user listed
         # without any assets yet); one place, so every path agrees.
-        self._buckets = self._coerce(data, key=self._key)
+        self._portfolio_name, self._positions = self._coerce(data, key=self._key)
         self.validate()
 
     @staticmethod
-    def _coerce(data: Any, *, key: str) -> dict[str, list[dict[str, Any]]]:
+    def _coerce_positions(
+        data: Any, *, key: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """The position map: ``{asset class: [rows]}`` (validated)."""
+        if not isinstance(data, dict):
+            raise TypeError(f"user {key!r} field 'positions' must be a JSON object")
+        out: dict[str, list[dict[str, Any]]] = {}
+        for asset_class, positions in data.items():
+            row = AssetBucket.from_dict(str(asset_class), positions)
+            out[str(asset_class)] = row.positions
+        return out
+
+    @staticmethod
+    def _coerce(data: Any, *, key: str) -> tuple[str, dict[str, list[dict[str, Any]]]]:
         if data is None:
             # A user listed without any assets yet: an empty portfolio.
-            return {}
+            return DEFAULT_PORTFOLIO_NAME, {}
         if isinstance(data, list):
             # A pre-user file stored the buckets directly at the top
             # level, so a list payload means the file predates users.
@@ -280,70 +309,130 @@ class UserAssets(StorageObject):
             )
         if not isinstance(data, dict):
             raise TypeError(f"user {key!r} assets must be a JSON object")
-        out: dict[str, list[dict[str, Any]]] = {}
-        for bucket, positions in data.items():
-            row = AssetBucket.from_dict(str(bucket), positions)
-            out[str(bucket)] = row.positions
-        return out
+        unknown = set(data) - set(UserAssets.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(
+                f"user {key!r} assets has unknown keys: {sorted(unknown)}"
+            )
+        name = data.get(UserAssets.PORTFOLIO_NAME)
+        if name is None:
+            name = DEFAULT_PORTFOLIO_NAME
+        if not isinstance(name, str):
+            raise TypeError(
+                f"user {key!r} field 'portfolio_name' must be a string"
+            )
+        positions = data.get(UserAssets.POSITIONS)
+        if positions is None:
+            positions = {}
+        return name, UserAssets._coerce_positions(positions, key=key)
 
     @property
     def key(self) -> str:
         return self._key
 
-    def buckets(self) -> dict[str, list[dict[str, Any]]]:
-        """The user's buckets as plain ``{bucket: [positions]}``."""
-        return {b: [dict(p) for p in positions] for b, positions in self._buckets.items()}
+    @property
+    def portfolio_name(self) -> str:
+        """The name of the user's portfolio."""
+        return self._portfolio_name
 
-    def set_bucket(self, bucket: str, positions: list[dict[str, Any]]) -> None:
-        """Replace one bucket wholesale (validating its positions)."""
-        row = AssetBucket.from_dict(str(bucket), positions)
-        self._buckets[str(bucket)] = row.positions
+    def set_portfolio_name(self, name: str) -> None:
+        """Rename the portfolio."""
+        if not isinstance(name, str):
+            raise TypeError(
+                f"user {self._key!r} field 'portfolio_name' must be a string"
+            )
+        self._portfolio_name = name
 
-    def remove_bucket(self, bucket: str) -> bool:
-        """Drop one bucket; True when anything was removed."""
-        return self._buckets.pop(str(bucket), None) is not None
+    def positions(self) -> dict[str, list[dict[str, Any]]]:
+        """The user's positions as plain ``{asset class: [rows]}``."""
+        return {
+            asset_class: [dict(p) for p in rows]
+            for asset_class, rows in self._positions.items()
+        }
 
-    def replace_all(self, buckets: dict[str, Any]) -> None:
-        """Replace the whole bucket map (the user's complete portfolio)."""
-        self._buckets = self._coerce(buckets, key=self._key)
+    def set_positions(
+        self, asset_class: str, positions: list[dict[str, Any]]
+    ) -> None:
+        """Replace one asset class's positions wholesale (validated)."""
+        row = AssetBucket.from_dict(str(asset_class), positions)
+        self._positions[str(asset_class)] = row.positions
 
-    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
-        return self.buckets()
+    def remove_positions(self, asset_class: str) -> bool:
+        """Drop one asset class; True when anything was removed."""
+        return self._positions.pop(str(asset_class), None) is not None
+
+    def replace_all(
+        self, positions: dict[str, Any], *, portfolio_name: str | None = None
+    ) -> None:
+        """Replace the whole position map (the user's complete portfolio).
+
+        The portfolio name is kept unless ``portfolio_name`` is given.
+        """
+        self._positions = self._coerce_positions(positions, key=self._key)
+        if portfolio_name is not None:
+            self.set_portfolio_name(portfolio_name)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            self.PORTFOLIO_NAME: self._portfolio_name,
+            self.POSITIONS: self.positions(),
+        }
 
     @classmethod
     def from_dict(cls, key: str, raw: Any) -> UserAssets:
         return cls(str(key), raw)
 
     def merge(self, partial: dict[str, Any]) -> None:
-        """Replace the buckets named in ``partial`` (others are kept).
+        """Apply a partial update to the portfolio.
 
-        Matches the historical bucket semantics: a bucket is replaced
-        wholesale, never merged row by row.
+        ``"positions"`` replaces the asset classes it names (the others
+        are kept), ``"portfolio_name"`` renames the portfolio. A bucket
+        is replaced wholesale, never merged row by row.
         """
         if not isinstance(partial, dict):
             raise TypeError(
-                f"partial update for {self._key!r} must be a dict of buckets"
+                f"partial update for {self._key!r} must be a dict"
             )
-        coerced = self._coerce(partial, key=self._key)
-        self._buckets.update(coerced)
+        unknown = set(partial) - set(self.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(
+                f"partial update for {self._key!r} has unknown keys: "
+                f"{sorted(unknown)}"
+            )
+        old_name, old_positions = self._portfolio_name, self._positions
+        try:
+            if self.PORTFOLIO_NAME in partial:
+                self.set_portfolio_name(partial[self.PORTFOLIO_NAME])
+            if self.POSITIONS in partial:
+                coerced = self._coerce_positions(partial[self.POSITIONS], key=self._key)
+                self._positions.update(coerced)
+        except Exception:
+            self._portfolio_name, self._positions = old_name, old_positions
+            raise
 
     def validate(self) -> None:
         if not self._key.strip():
             raise ValueError("user key must be a non-empty string")
-        for bucket, positions in self._buckets.items():
-            AssetBucket.from_dict(bucket, positions)
+        if not isinstance(self._portfolio_name, str):
+            raise TypeError(
+                f"user {self._key!r} field 'portfolio_name' must be a string"
+            )
+        for asset_class, positions in self._positions.items():
+            AssetBucket.from_dict(asset_class, positions)
 
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, UserAssets)
             and other._key == self._key
-            and other._buckets == self._buckets
+            and other._portfolio_name == self._portfolio_name
+            and other._positions == self._positions
         )
 
     def __repr__(self) -> str:
         return (
             f"UserAssets(key={self._key!r}, "
-            f"buckets={sorted(self._buckets)!r})"
+            f"portfolio_name={self._portfolio_name!r}, "
+            f"positions={sorted(self._positions)!r})"
         )
 
 
