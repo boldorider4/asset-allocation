@@ -3,13 +3,14 @@
  * The incognito toggle mirrors the dashboard's: a glyph button whose
  * pressed state is the state, plus a plain ON/OFF read-out. It decides
  * the ?incognito= flag the server puts on the dashboard URL we land on.
+ * Incognito starts engaged: the figures are hidden until you say so.
  * The user name is validated by the server (unknown users are
  * rejected), so a typo never looks like an empty portfolio.
  */
 (function () {
   "use strict";
 
-  var state = { incognito: false, busy: false };
+  var state = { incognito: true, busy: false };
 
   // Failed logins highlight the field instead of showing a banner: a red
   // outline that stays until the next attempt, plus a one-shot flare

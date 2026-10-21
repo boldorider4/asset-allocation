@@ -822,11 +822,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(">User</label>", login_html)
         self.assertIn('id="login-user"', login_html)
         self.assertIn(">Log In</button>", login_html)
-        # ...the incognito toggle and its ON/OFF read-out.
+        # ...the incognito toggle and its ON/OFF read-out. Incognito
+        # starts engaged, so the read-out is ON before any click.
         self.assertIn('id="incognito-link"', login_html)
-        self.assertIn('aria-pressed="false"', login_html)
+        self.assertIn('aria-pressed="true"', login_html)
         self.assertIn('id="incognito-state"', login_html)
-        self.assertIn(">OFF</span>", login_html)
+        self.assertIn(">ON</span>", login_html)
         # The dashboard's bottom banner, minus the "Updated at ..." part.
         self.assertIn('class="site-footer"', login_html)
         self.assertIn("asalloc v__ASALLOC_VERSION__", login_html)
@@ -836,6 +837,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("/api/login", login_js)
         self.assertIn('"ON"', login_js)
         self.assertIn('"OFF"', login_js)
+        # Incognito starts engaged.
+        self.assertIn("incognito: true", login_js)
         # A failed login highlights the field (outline + one-shot flare)
         # instead of showing a banner.
         self.assertIn("login-error", login_js)
