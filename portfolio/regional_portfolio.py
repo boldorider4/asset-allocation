@@ -25,9 +25,10 @@ class LabeledPositionGroup:
     positions: list[Position]
 
 
-# Geosplit region keys shared by grouped and ungrouped wedges; grouped
-# wedges append ": <short_name>".
-_REGIONS = ("Equity US", "Equity Ex-US", "Equity Emrg. Markets")
+# Geosplit regions shared by grouped and ungrouped wedges. The wedge
+# label is "<portfolio name> <region>" (the name the portfolio was
+# created with); grouped wedges append ": <short_name>".
+_REGIONS = ("US", "Ex-US", "Emrg. Markets")
 
 # Wedges below this portfolio-total fraction are dropped from the chart.
 _GEOSPLIT_MIN_WEIGHT = 0.007
@@ -36,6 +37,12 @@ _GEOSPLIT_MIN_WEIGHT = 0.007
 class RegionalPortfolio(Portfolio):
     def __init__(self, name: str, positions: list[dict], ctx: RuntimeContext | None = None):
         super().__init__(name, positions, ctx=ctx)
+
+        # The wedge labels of the geo split are "<name> <region>": the
+        # name the portfolio was created with is the prefix. It is
+        # frozen here, so a merge keeps the base portfolio's regions
+        # (its name only grows for display).
+        self._region_prefix = name
 
         if self._value <= 0 and self._positions:
             logger.warning(
@@ -91,16 +98,17 @@ class RegionalPortfolio(Portfolio):
         """Region → portfolio-total fraction, split by Group afterwards.
 
         Each labeled group is decomposed into regions first (from its own
-        positions' dmem/usavn), then emitted under ``"Equity <R>: <group>"``
+        positions' dmem/usavn), then emitted under ``"<prefix> <R>: <group>"``
         keys scaled by its share of the total; group wedges below
         ``_GEOSPLIT_MIN_WEIGHT`` fold into their parent plain region wedge
         instead (25% ``Equity Ex-US`` + 0.5% ``Equity Ex-US: G`` renders as
         25.5% ``Equity Ex-US``). Ungrouped positions feed the plain region
-        keys. Keys come out region-major (plain wedge first, then groups
-        alphabetically); a region whose folded total still falls below the
-        floor is dropped. Folding guarantees a non-empty chart whenever
-        the total is positive: all positive mass lands in some region
-        total, so one of them always clears the floor.
+        keys. ``<prefix>`` is the portfolio name the regions belong to
+        (e.g. "Equity" → "Equity US"). Keys come out region-major (plain
+        wedge first, then groups alphabetically); a region whose folded
+        total still falls below the floor is dropped. Folding guarantees a
+        non-empty chart whenever the total is positive: all positive mass
+        lands in some region total, so one of them always clears the floor.
         """
         if total <= 0:
             return {}
@@ -115,6 +123,7 @@ class RegionalPortfolio(Portfolio):
         plain_amounts = self._regional_absolute_values(regional_positions)
         data: dict[str, float] = {}
         for index, region in enumerate(_REGIONS):
+            label = f"{self._region_prefix} {region}"
             plain = plain_amounts[index] / total if plain_amounts[index] > 0 else 0.0
             smalls = 0.0
             bigs: list[tuple[str, float]] = []
@@ -128,9 +137,9 @@ class RegionalPortfolio(Portfolio):
                     smalls += wedge
             region_total = plain + smalls
             if region_total >= _GEOSPLIT_MIN_WEIGHT:
-                data[region] = region_total
+                data[label] = region_total
             for short_name, wedge in bigs:
-                data[f"{region}: {short_name}"] = wedge
+                data[f"{label}: {short_name}"] = wedge
         return data
 
     def _build_geo_visualizers(self) -> None:
@@ -207,6 +216,9 @@ class RegionalPortfolio(Portfolio):
         merged = object.__new__(RegionalPortfolio)
         merged._ctx = self._ctx
         merged._name = f"{self._name} + {other._name}"
+        # The regions belong to the base portfolio: the merged name is
+        # only for display, the wedge labels keep the base prefix.
+        merged._region_prefix = self._region_prefix
         merged._positions = self._positions + other._positions
         merged._value = self._value + other._value
 

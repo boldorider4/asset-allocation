@@ -42,7 +42,7 @@ def _regional(name, stubs) -> RegionalPortfolio:
 class TestUngroupedKeysUnchanged(unittest.TestCase):
     def test_plain_keys_and_zero_dropped(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=1.0, usavn=1.0),
                 _stub(value=100.0, dmem=0.0, usavn=0.0),
@@ -54,7 +54,7 @@ class TestUngroupedKeysUnchanged(unittest.TestCase):
 
     def test_sums_to_one(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=1.0, usavn=0.5),
                 _stub(value=300.0, dmem=0.5, usavn=0.25),
@@ -66,7 +66,7 @@ class TestUngroupedKeysUnchanged(unittest.TestCase):
 class TestGroupedSplit(unittest.TestCase):
     def test_single_group_splits_by_region(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=1.0, usavn=1.0, short_name="World"),
                 _stub(value=100.0, dmem=0.0, usavn=0.0, short_name="World"),
@@ -81,7 +81,7 @@ class TestGroupedSplit(unittest.TestCase):
         # The EM-only group must not inherit the global US share: regions
         # come from each group's own positions, groups only label them.
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=0.0, usavn=0.0, short_name="G"),
                 _stub(value=100.0, dmem=1.0, usavn=1.0),
@@ -94,7 +94,7 @@ class TestGroupedSplit(unittest.TestCase):
 
     def test_mixed_grouped_and_ungrouped_sum_to_one(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=1.0, usavn=0.0, short_name="G"),
                 _stub(value=100.0, dmem=1.0, usavn=1.0, short_name="H"),
@@ -113,7 +113,7 @@ class TestGroupedSplit(unittest.TestCase):
 
     def test_zero_value_group_emits_nothing(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=0.0, dmem=1.0, usavn=1.0, short_name="Zero"),
                 _stub(value=100.0, dmem=1.0, usavn=1.0),
@@ -125,7 +125,7 @@ class TestGroupedSplit(unittest.TestCase):
 class TestKeyOrdering(unittest.TestCase):
     def test_region_major_with_plain_first(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=100.0, dmem=1.0, usavn=1.0),
                 _stub(value=100.0, dmem=1.0, usavn=1.0, short_name="Zebra"),
@@ -145,7 +145,7 @@ class TestKeyOrdering(unittest.TestCase):
 class TestMinWeightFloor(unittest.TestCase):
     def test_wedges_below_floor_dropped(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=9930.0, dmem=1.0, usavn=1.0),
                 _stub(value=60.0, dmem=0.0, usavn=0.0, short_name="Tiny"),
@@ -159,7 +159,7 @@ class TestMinWeightFloor(unittest.TestCase):
 
     def test_wedge_at_floor_kept(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=9930.0, dmem=1.0, usavn=1.0),
                 _stub(value=70.0, dmem=0.0, usavn=0.0, short_name="Edge"),
@@ -172,7 +172,7 @@ class TestMinWeightFloor(unittest.TestCase):
 
     def test_subfloor_groups_fold_into_parent(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=745.0, dmem=1.0, usavn=1.0),
                 _stub(value=250.0, dmem=1.0, usavn=0.0),
@@ -188,7 +188,7 @@ class TestMinWeightFloor(unittest.TestCase):
 
     def test_folded_smalls_can_clear_floor_without_plain(self) -> None:
         port = _regional(
-            "R",
+            "Equity",
             [
                 _stub(value=992.0, dmem=1.0, usavn=1.0),
                 _stub(value=4.0, dmem=0.0, usavn=0.0, short_name="A"),
@@ -209,7 +209,7 @@ class TestMinWeightFloor(unittest.TestCase):
             _stub(value=1.0, dmem=1.0, usavn=1.0, short_name=f"G{i:03d}")
             for i in range(150)
         ]
-        port = _regional("R", stubs)
+        port = _regional("Equity", stubs)
         # Every wedge is 1/150 < 0.007: all fold into the parent key.
         self.assertEqual(list(port._geosplit_data.keys()), ["Equity US"])
         self.assertAlmostEqual(port._geosplit_data["Equity US"], 1.0)
@@ -218,10 +218,10 @@ class TestMinWeightFloor(unittest.TestCase):
 class TestGroupedMerge(unittest.TestCase):
     def test_shared_group_label_sums(self) -> None:
         left = _regional(
-            "L", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
+            "Equity", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
         )
         right = _regional(
-            "R", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
+            "Other", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
         )
         merged = left + right
         self.assertIsInstance(merged, RegionalPortfolio)
@@ -229,16 +229,51 @@ class TestGroupedMerge(unittest.TestCase):
 
     def test_distinct_groups_union(self) -> None:
         left = _regional(
-            "L", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
+            "Equity", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
         )
         right = _regional(
-            "R", [_stub(value=100.0, dmem=0.0, usavn=0.0, short_name="H")]
+            "Other", [_stub(value=100.0, dmem=0.0, usavn=0.0, short_name="H")]
         )
         merged = left + right
         self.assertEqual(
             merged._geosplit_data,
             {"Equity US: G": 0.5, "Equity Emrg. Markets: H": 0.5},
         )
+
+
+class TestRegionPrefix(unittest.TestCase):
+    def test_prefix_comes_from_the_portfolio_name(self) -> None:
+        port = _regional(
+            "Bonds",
+            [
+                _stub(value=100.0, dmem=1.0, usavn=1.0),
+                _stub(value=100.0, dmem=0.0, usavn=0.0),
+            ],
+        )
+        self.assertEqual(
+            port._geosplit_data,
+            {"Bonds US": 0.5, "Bonds Emrg. Markets": 0.5},
+        )
+
+    def test_grouped_wedges_carry_the_prefix_too(self) -> None:
+        port = _regional(
+            "Bonds",
+            [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")],
+        )
+        self.assertEqual(port._geosplit_data, {"Bonds US: G": 1.0})
+
+    def test_merge_keeps_the_base_prefix(self) -> None:
+        # The merged name is only for display: the wedge labels keep the
+        # prefix of the base portfolio.
+        left = _regional(
+            "Equity", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
+        )
+        right = _regional(
+            "Other", [_stub(value=100.0, dmem=1.0, usavn=1.0, short_name="G")]
+        )
+        merged = left + right
+        self.assertEqual(merged._name, "Equity + Other")
+        self.assertEqual(merged._geosplit_data, {"Equity US: G": 1.0})
 
 
 if __name__ == "__main__":
