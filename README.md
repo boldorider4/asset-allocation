@@ -106,6 +106,8 @@ The CLI command reads the users file from the given `config.ini` (`[update] user
 
 **Login.** The login screen asks for a **User** and a **Password**: the name must have an account in `users.json` (a name that only appears in `assets.json` is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
 
+**Reset password.** The "Reset password" link under the password box turns the form into a reset (the password box becomes "Old Password", a "New Password" box appears, the button becomes "Reset" and the incognito toggle goes away — still on the login page). The old password must match; an empty new password is allowed. On success the login form comes back and the new password is the one that logs in.
+
 ### Migrating an old holdings file
 
 The current format nests the positions under `"positions"` and names the portfolio. A file in the previous shape (the asset classes directly under the user) is rejected with a validation error — run the migration script once per file:

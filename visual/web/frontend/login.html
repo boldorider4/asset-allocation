@@ -23,7 +23,7 @@
         <circle class="login-donut-ring gold" cx="160" cy="160" r="120" />
       </svg>
       <form class="login-form" id="login-form" autocomplete="off">
-        <label class="login-label" for="login-user">User</label>
+        <label class="login-label" id="login-user-label" for="login-user">User</label>
         <input
           class="login-input"
           id="login-user"
@@ -33,7 +33,7 @@
           autocapitalize="none"
           spellcheck="false"
         />
-        <label class="login-label" for="login-password">Password</label>
+        <label class="login-label" id="login-password-label" for="login-password">Password</label>
         <input
           class="login-input"
           id="login-password"
@@ -41,9 +41,19 @@
           type="password"
           autocomplete="current-password"
         />
+        <label class="login-label" id="login-new-password-label" for="login-new-password" hidden>New Password</label>
+        <input
+          class="login-input"
+          id="login-new-password"
+          name="new_password"
+          type="password"
+          autocomplete="new-password"
+          hidden
+        />
+        <a class="login-reset-link" id="reset-password-link" href="#">Reset password</a>
         <div class="login-actions">
           <button class="nav-button" id="login-submit" type="submit">Log In</button>
-          <span class="login-toggle">
+          <span class="login-toggle" id="login-toggle">
             <button
               class="nav-button icon-button"
               id="incognito-link"
@@ -59,6 +69,7 @@
           </span>
         </div>
       </form>
+      <p class="login-message" id="login-message" hidden></p>
       <p class="sr-only" id="login-status" role="status" aria-live="polite"></p>
       <p class="login-hint">
         No portfolio yet? Ask admin to create a new user.

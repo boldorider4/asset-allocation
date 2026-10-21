@@ -416,6 +416,74 @@ class TestSessionApi(_ServerCase):
         self.assertIn("user", body)
 
 
+class TestPasswordReset(_ServerCase):
+    """The password reset: the old password must match."""
+
+    def _post_reset(self, payload: dict) -> tuple[int, str]:
+        """POST a reset; returns (status, body)."""
+        status, _, body = self._post_json("/api/reset-password", payload)
+        return status, body
+
+    def test_the_old_password_must_match(self) -> None:
+        status, body = self._post_reset(
+            {
+                "user": _OTHER_USER,
+                "old_password": "wrong",
+                "new_password": "new-pw",
+            }
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("unknown user", body)
+        # The stored password is untouched.
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        self.assertEqual(accounts[_OTHER_USER]["password"], _OTHER_PASSWORD)
+
+    def test_the_right_old_password_sets_the_new_one(self) -> None:
+        status, body = self._post_reset(
+            {
+                "user": _OTHER_USER,
+                "old_password": _OTHER_PASSWORD,
+                "new_password": "new-pw",
+            }
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        self.assertEqual(accounts[_OTHER_USER]["password"], "new-pw")
+        # The new password is the one that logs in now.
+        status, _, _ = self._post_json(
+            "/api/login", {"user": _OTHER_USER, "password": "new-pw"}
+        )
+        self.assertEqual(status, 200)
+        status, _, _ = self._post_json(
+            "/api/login", {"user": _OTHER_USER, "password": _OTHER_PASSWORD}
+        )
+        self.assertEqual(status, 404)
+
+    def test_an_empty_new_password_is_allowed(self) -> None:
+        status, _ = self._post_reset(
+            {
+                "user": _USER,
+                "old_password": "",
+                "new_password": "",
+            }
+        )
+        self.assertEqual(status, 200)
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        self.assertEqual(accounts[_USER]["password"], "")
+
+    def test_an_unknown_user_is_refused(self) -> None:
+        status, body = self._post_reset(
+            {"user": "nobody", "old_password": "x", "new_password": "y"}
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("unknown user", body)
+
+    def test_the_user_name_is_required(self) -> None:
+        status, _ = self._post_reset({"old_password": "x", "new_password": "y"})
+        self.assertEqual(status, 400)
+
+
 class TestUsersStoreLogin(_ServerCase):
     """The login asks the users store, not the assets store."""
 

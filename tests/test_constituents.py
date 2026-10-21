@@ -932,6 +932,39 @@ class TestRenderConstituentsPage(unittest.TestCase):
         css = (root / "styles.css").read_text(encoding="utf-8")
         self.assertIn(".session-user {", css)
 
+    def test_login_page_has_the_reset_password_flow(self) -> None:
+        root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
+        login_html = (root / "login.html").read_text(encoding="utf-8")
+        # The reset link sits under the password box...
+        self.assertIn('id="reset-password-link"', login_html)
+        self.assertIn(">Reset password</a>", login_html)
+        self.assertGreater(
+            login_html.index('id="reset-password-link"'),
+            login_html.index('id="login-password"'),
+        )
+        # ...and the third box (the new password) is there, hidden.
+        self.assertIn('id="login-new-password"', login_html)
+        self.assertIn('id="login-new-password-label"', login_html)
+        self.assertIn(">New Password</label>", login_html)
+        # A visible note reports a successful reset.
+        self.assertIn('id="login-message"', login_html)
+        login_js = (root / "login.js").read_text(encoding="utf-8")
+        # The two shapes of the form, described in one place.
+        self.assertIn("MODES", login_js)
+        self.assertIn('login: {', login_js)
+        self.assertIn('reset: {', login_js)
+        self.assertIn('label: "Old Password"', login_js)
+        self.assertIn('label: "New Password"', login_js)
+        self.assertIn('submit: "Reset"', login_js)
+        self.assertIn('submit: "Log In"', login_js)
+        # The mode switch drives the labels, the button and the toggle.
+        self.assertIn("applyMode", login_js)
+        self.assertIn('getElementById("login-toggle")', login_js)
+        # The reset posts to its own endpoint.
+        self.assertIn("/api/reset-password", login_js)
+        self.assertIn("old_password", login_js)
+        self.assertIn("new_password", login_js)
+
     def test_dashboard_has_a_logout_button(self) -> None:
         root = Path(__file__).resolve().parent.parent / "visual" / "web" / "frontend"
         index = (root / "index.html").read_text(encoding="utf-8")

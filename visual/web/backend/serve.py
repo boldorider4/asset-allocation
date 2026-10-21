@@ -440,6 +440,56 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
         return True
 
+    def _reset_password(self) -> bool:
+        """Handle ``POST /api/reset-password``; plain-text statuses on failure.
+
+        The old password is checked against the users store; a new one
+        replaces it. A wrong old password is refused exactly like an
+        unknown user, so the reset cannot be used to probe for names.
+        """
+        from .users import reset_user_password
+
+        if urlsplit(self.path).path != "/api/reset-password":
+            return False
+        payload = self._read_json_body()
+        if payload is None:
+            return True
+        user = str(payload.get("user") or "").strip()
+        if not user:
+            self._plain_status(400, "user must not be empty")
+            return True
+        if not self._users_file:
+            logger.warning("no users file configured; refusing the reset")
+            self._plain_status(503, "no users store configured")
+            return True
+        try:
+            changed = reset_user_password(
+                self._users_file,
+                user,
+                str(payload.get("old_password") or ""),
+                str(payload.get("new_password") or ""),
+                self._backend,
+                self._postgres_dsn,
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("password reset failed: %s", exc)
+            self._plain_status(502, f"users store unavailable: {exc}")
+            return True
+        except ValueError as exc:
+            self._plain_status(400, str(exc))
+            return True
+        if not changed:
+            self._plain_status(404, f"unknown user: {user}")
+            return True
+        logger.info("Password updated for %r", user)
+        body = json.dumps({"ok": True, "user": user}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _login(self) -> bool:
         """Handle ``POST /api/login``: start a session for a known user.
 
@@ -1151,6 +1201,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         if not (
             self._login()
+            or self._reset_password()
             or self._logout()
             or self._store_constituent()
             or self._store_portfolio_name()

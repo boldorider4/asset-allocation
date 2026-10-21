@@ -970,6 +970,12 @@ input.cell-box.editable.stale-flash {
   gap: 0.5rem;
 }
 
+/* The toggle disappears while resetting a password (the author rule
+ * above would otherwise beat the UA's [hidden] rule). */
+.login-toggle[hidden] {
+  display: none;
+}
+
 .login-toggle-label {
   color: var(--muted);
   font-size: 0.85rem;
@@ -988,4 +994,28 @@ input.cell-box.editable.stale-flash {
   margin: 0;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+/* The reset link sits under the password box, to the right. */
+.login-reset-link {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.login-reset-link:hover {
+  color: var(--text);
+}
+
+/* The visible note under the form (a successful password reset). */
+.login-message {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.login-message[hidden] {
+  display: none;
 }
