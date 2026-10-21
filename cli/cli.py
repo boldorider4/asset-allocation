@@ -131,8 +131,6 @@ def cmd_stop(_args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
-
     cfg = load_server_config(getattr(args, "config", None))
     if getattr(args, "config", None) is not None:
         # Propagate to the server child (and its update workers), which
@@ -155,8 +153,13 @@ def cmd_serve(args: argparse.Namespace) -> None:
             ", ".join(str(pid) for pid in already),
         )
         sys.exit(1)
-    assets_file = Path(args.assets_file) if args.assets_file else DEFAULT_ASSETS_PATH
-    cache_file = Path(args.cache_file) if args.cache_file else DEFAULT_CACHE_PATH
+    # The stores come from the ini (config.ini [update] section); an
+    # explicit flag always wins.
+    assets_file = Path(args.assets_file) if args.assets_file else ini_cfg.assets_file
+    cache_file = Path(args.cache_file) if args.cache_file else ini_cfg.cache_file
+    users_file = (
+        Path(args.users_file) if getattr(args, "users_file", None) else ini_cfg.users_file
+    )
     user = getattr(args, "user", None) or ini_cfg.user
     proc = subprocess.Popen(
         [
@@ -173,6 +176,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
             str(assets_file),
             "--cache-file",
             str(cache_file),
+            "--users-file",
+            str(users_file),
             "--user",
             str(user),
             "--backend",
@@ -375,6 +380,13 @@ def main(argv: list[str] | None = None) -> None:
         dest="cache_file",
         default=None,
         help="Cache JSON file backing /constituents prices (default: cache.json next to the package).",
+    )
+    serve.add_argument(
+        "--users-file",
+        type=Path,
+        dest="users_file",
+        default=None,
+        help="Users JSON file backing the login (default: users.json next to the package).",
     )
     serve.set_defaults(func=cmd_serve)
 

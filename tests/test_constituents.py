@@ -85,6 +85,16 @@ def _write_files(tmp: Path) -> tuple[Path, Path]:
     return assets, cache
 
 
+def _write_users(tmp: Path, users: dict[str, dict[str, str]] | None = None) -> Path:
+    """The accounts that may log in (the users store, not the assets)."""
+    path = tmp / "users.json"
+    path.write_text(
+        json.dumps(users if users is not None else {"default": {"password": ""}}),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
     """Log in over HTTP; returns the session cookie (``asalloc_sid=...``).
 
@@ -1751,6 +1761,7 @@ class _RouteCase(unittest.TestCase):
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
         (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
+        self.users = _write_users(tmp)
         # Updates run in stubbed child processes (threads), so
         # ``cli.update.main`` patches apply and no real worker spawns.
         del _SPAWNED_STUBS[:]
@@ -1772,6 +1783,7 @@ class _RouteCase(unittest.TestCase):
             directory=str(self.root),
             assets_file=str(self.assets),
             cache_file=str(self.cache),
+            users_file=str(self.users),
         )
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -1901,6 +1913,10 @@ class TestConstituentsRoute(_RouteCase):
             ]
         }
         self.assets.write_text(json.dumps(data), encoding="utf-8")
+        # Logging in needs an account in the users store.
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        accounts["alice"] = {"password": ""}
+        self.users.write_text(json.dumps(accounts), encoding="utf-8")
         cookie = self._login("alice")
         status, body = self._get("/constituents", cookie=cookie)
         self.assertEqual(status, 200)

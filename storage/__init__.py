@@ -20,12 +20,14 @@ from storage.records import (
     DictRow,
     IsinRecord,
     UserAssets,
+    UserRecord,
 )
 from storage.repositories import (
     AssetRepository,
     CacheRepository,
     IsinRegistry,
     UnknownUser,
+    UsersRepository,
 )
 from storage.storage import Storage, StorageObject
 from storage.wiring import (
@@ -33,6 +35,7 @@ from storage.wiring import (
     BACKEND_POSTGRES,
     assets_backend,
     normalize_backend,
+    users_backend,
 )
 
 __all__ = [
@@ -43,14 +46,17 @@ __all__ = [
     "AssetBucket",
     "UserAssets",
     "IsinRecord",
+    "UserRecord",
     "JsonStorage",
     "MemoryStorage",
     "PostgresStorage",
     "CacheRepository",
     "AssetRepository",
     "IsinRegistry",
+    "UsersRepository",
     "UnknownUser",
     "assets_backend",
+    "users_backend",
     "normalize_backend",
     "BACKEND_JSON",
     "BACKEND_POSTGRES",

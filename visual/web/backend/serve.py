@@ -327,6 +327,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         *args,
         assets_file=None,
         cache_file=None,
+        users_file=None,
         data_dirname=None,
         user=None,
         backend=None,
@@ -335,6 +336,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     ):
         self._assets_file = assets_file
         self._cache_file = cache_file
+        # The user accounts (the login asks this store, not the assets).
+        self._users_file = users_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
         # Fallback user when no session is active (login page default).
@@ -438,7 +441,16 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def _login(self) -> bool:
-        """Handle ``POST /api/login``: start a session for a known user."""
+        """Handle ``POST /api/login``: start a session for a known user.
+
+        The user must have an account in the users store (users.json) —
+        a name that only exists in the assets store is unknown here and
+        is rejected like any other unknown user. Passwords are stored
+        but not checked yet.
+
+        A known user without a portfolio gets an empty one, so a fresh
+        account lands on an empty dashboard.
+        """
         if urlsplit(self.path).path != "/api/login":
             return False
         payload = self._read_json_body()
@@ -452,6 +464,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not self._user_exists(user):
             self._plain_status(404, f"unknown user: {user}")
             return True
+        if self._ensure_assets_user(user):
+            logger.info("Created an empty portfolio for %r", user)
         session_id = new_session_id()
         start_session(self.directory, session_id, user, incognito=incognito)
         body = json.dumps(
@@ -488,12 +502,38 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def _user_exists(self, user: str) -> bool:
-        """True when the assets store holds a portfolio for ``user``."""
-        from .constituents import assets_user_exists
+        """True when the users store holds an account for ``user``."""
+        from .users import users_user_exists
 
-        return assets_user_exists(
-            self._assets_file, user, self._backend, self._postgres_dsn
-        )
+        if not self._users_file:
+            # No accounts store configured: nobody can log in.
+            logger.warning("no users file configured; refusing the login")
+            return False
+        try:
+            return users_user_exists(
+                self._users_file, user, self._backend, self._postgres_dsn
+            )
+        except Exception as exc:
+            # A broken accounts store must not drop the connection: the
+            # login is refused and the reason is in the log.
+            logger.error("could not read the users store: %s", exc)
+            return False
+
+    def _ensure_assets_user(self, user: str) -> bool:
+        """Give a known user an (empty) portfolio row; True when created."""
+        from .constituents import ensure_assets_user
+
+        if not self._assets_file:
+            return False
+        try:
+            return ensure_assets_user(
+                self._assets_file, user, self._backend, self._postgres_dsn
+            )
+        except Exception as exc:
+            # A failed write must not block the login: the dashboard then
+            # shows the "no portfolio" state instead of an empty one.
+            logger.warning("could not create a portfolio for %r: %s", user, exc)
+            return False
 
     def _serve_update_status(self) -> bool:
         """Serve ``GET /api/update`` with the run state for the sync button."""
@@ -1090,6 +1130,7 @@ def serve_forever(
     directory: str,
     assets_file: str | None = None,
     cache_file: str | None = None,
+    users_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
@@ -1101,6 +1142,7 @@ def serve_forever(
         directory=directory,
         assets_file=assets_file,
         cache_file=cache_file,
+        users_file=users_file,
         data_dirname=data_dirname,
         user=user,
         backend=backend,
@@ -1118,6 +1160,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--directory", required=True, help="Visualizer directory to serve.")
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
+    parser.add_argument("--users-file", default=None, help="Users JSON file holding the accounts that may log in.")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
     parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | postgres).")
     parser.add_argument("--postgres-dsn", default=DEFAULT_POSTGRES_DSN, help="Postgres connection string for the postgres backend.")
@@ -1130,6 +1173,7 @@ def main(argv: list[str] | None = None) -> None:
         directory=args.directory,
         assets_file=args.assets_file,
         cache_file=args.cache_file,
+        users_file=args.users_file,
         data_dirname=args.plotter_data_dir,
         user=args.user,
         backend=args.backend,

@@ -87,7 +87,7 @@ class TestFromCli(unittest.TestCase):
         self.assertEqual(config.server.port, 8765)
 
     def test_defaults_point_at_repo_files(self) -> None:
-        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH, DEFAULT_USERS_PATH
 
         with tempfile.TemporaryDirectory() as tmp:
             ini = Path(tmp) / "config.ini"
@@ -95,6 +95,7 @@ class TestFromCli(unittest.TestCase):
             config = AppConfig.from_cli(_update_ns(), ini_path=ini)
         self.assertEqual(config.assets_file, DEFAULT_ASSETS_PATH)
         self.assertEqual(config.cache_file, DEFAULT_CACHE_PATH)
+        self.assertEqual(config.users_file, DEFAULT_USERS_PATH)
         self.assertEqual(config.position_source, "justetf")
 
     def test_invalid_source_raises(self) -> None:
@@ -119,7 +120,8 @@ class TestUpdateFromIni(unittest.TestCase):
                 "[server]\nport = 8765\n"
                 "[update]\nfetch_prices = True\nfetch_geosplit = yes\n"
                 "fetch_sectorsplit = on\n"
-                "log_level = DEBUG\nassets_file = a.json\ncache_file = sub/c.json\n",
+                "log_level = DEBUG\nassets_file = a.json\ncache_file = sub/c.json\n"
+                "users_file = sub/u.json\n",
             )
             values = AppConfig._update_from_ini(path)
         self.assertTrue(values["fetch_prices"])
@@ -128,9 +130,10 @@ class TestUpdateFromIni(unittest.TestCase):
         self.assertEqual(values["log_level"], "DEBUG")
         self.assertEqual(values["assets_file"], Path(tmp) / "a.json")
         self.assertEqual(values["cache_file"], Path(tmp) / "sub" / "c.json")
+        self.assertEqual(values["users_file"], Path(tmp) / "sub" / "u.json")
 
     def test_missing_section_gives_defaults(self) -> None:
-        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH
+        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH, DEFAULT_USERS_PATH
 
         with tempfile.TemporaryDirectory() as tmp:
             values = AppConfig._update_from_ini(
@@ -140,6 +143,7 @@ class TestUpdateFromIni(unittest.TestCase):
         self.assertEqual(values["log_level"], "INFO")
         self.assertEqual(values["assets_file"], DEFAULT_ASSETS_PATH)
         self.assertEqual(values["cache_file"], DEFAULT_CACHE_PATH)
+        self.assertEqual(values["users_file"], DEFAULT_USERS_PATH)
 
     def test_missing_file_gives_defaults(self) -> None:
         values = AppConfig._update_from_ini(Path("/nonexistent-dir-xyz/config.ini"))

@@ -44,6 +44,7 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config.ini"
 DEFAULT_ASSETS_PATH = REPO_ROOT / "assets.json"
 DEFAULT_CACHE_PATH = REPO_ROOT / "cache.json"
 DEFAULT_ISIN_PATH = REPO_ROOT / "isin.json"
+DEFAULT_USERS_PATH = REPO_ROOT / "users.json"
 
 PositionSource = Literal["justetf", "yfinance"]
 PlotterKind = Literal["web", "pie-chart"]
@@ -92,6 +93,7 @@ class AppConfig:
     assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
     cache_file: Path = field(default_factory=lambda: DEFAULT_CACHE_PATH)
     isin_file: Path = field(default_factory=lambda: DEFAULT_ISIN_PATH)
+    users_file: Path = field(default_factory=lambda: DEFAULT_USERS_PATH)
     server: ServerConfig = field(
         default_factory=lambda: ServerConfig(
             port=8765,
@@ -181,6 +183,7 @@ class AppConfig:
             "assets_file": DEFAULT_ASSETS_PATH,
             "cache_file": DEFAULT_CACHE_PATH,
             "isin_file": DEFAULT_ISIN_PATH,
+            "users_file": DEFAULT_USERS_PATH,
         }
         try:
             cfg_path, parser = cls._ini_parser(path)
@@ -217,6 +220,11 @@ class AppConfig:
             cfg_path,
             parser.get("update", "isin_file", fallback=None),
             DEFAULT_ISIN_PATH,
+        )
+        values["users_file"] = cls._resolve_ini_path(
+            cfg_path,
+            parser.get("update", "users_file", fallback=None),
+            DEFAULT_USERS_PATH,
         )
         return values
 
@@ -280,6 +288,7 @@ class AppConfig:
         assets = getattr(args, "assets_file", None)
         cache = getattr(args, "cache_file", None)
         isin = getattr(args, "isin_file", None)
+        users = getattr(args, "users_file", None)
         return cls(
             fetch_prices=bool(pick(getattr(args, "fetch_prices", None), ini_update["fetch_prices"])),
             fetch_geosplit=bool(pick(getattr(args, "fetch_geosplit", None), ini_update["fetch_geosplit"])),
@@ -294,6 +303,7 @@ class AppConfig:
             assets_file=Path(assets) if assets else ini_update["assets_file"],
             cache_file=Path(cache) if cache else ini_update["cache_file"],
             isin_file=Path(isin) if isin else ini_update["isin_file"],
+            users_file=Path(users) if users else ini_update["users_file"],
             server=server,
             plotter_config=ini_plotter,
             log_level=log_level,

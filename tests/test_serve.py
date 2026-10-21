@@ -88,10 +88,23 @@ class _ServerCase(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        # The accounts that may log in (the users store, not the assets).
+        self.users = tmp / "users.json"
+        self.users.write_text(
+            json.dumps(
+                {_USER: {"password": ""}, _OTHER_USER: {"password": "other-pw"}}
+            ),
+            encoding="utf-8",
+        )
+        # The shared price cache the constituents page reads.
+        self.cache = tmp / "cache.json"
+        self.cache.write_text("{}", encoding="utf-8")
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
             assets_file=str(self.assets),
+            cache_file=str(self.cache),
+            users_file=str(self.users),
             data_dirname=self.data_dirname,
         )
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -254,6 +267,9 @@ class TestDashboardEndpoint(_ServerCase):
         assets = json.loads(self.assets.read_text(encoding="utf-8"))
         assets[empty] = {"equity_portfolio": []}
         self.assets.write_text(json.dumps(assets), encoding="utf-8")
+        users = json.loads(self.users.read_text(encoding="utf-8"))
+        users[empty] = {"password": ""}
+        self.users.write_text(json.dumps(users), encoding="utf-8")
 
         cookie = self.login(empty)
         # The dashboard shell heals the charts on the way in...
@@ -340,6 +356,51 @@ class TestSessionApi(_ServerCase):
         status, _, body = self._post_json("/api/login", {"user": "   "})
         self.assertEqual(status, 400)
         self.assertIn("user", body)
+
+
+class TestUsersStoreLogin(_ServerCase):
+    """The login asks the users store, not the assets store."""
+
+    def test_user_in_assets_but_not_in_users_is_rejected(self) -> None:
+        # The assets store knows them, the users store does not: unknown.
+        self.assertIn(_USER, json.loads(self.assets.read_text(encoding="utf-8")))
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        accounts.pop(_USER, None)
+        self.users.write_text(json.dumps(accounts), encoding="utf-8")
+        status, _, body = self._post_json("/api/login", {"user": _USER})
+        self.assertEqual(status, 404)
+        self.assertIn("unknown user", body)
+
+    def test_user_in_users_but_not_in_assets_gets_a_portfolio(self) -> None:
+        # A known account with no portfolio yet: the login creates an
+        # empty one, so the dashboard shows the empty state.
+        fresh = "fresh_user"
+        accounts = json.loads(self.users.read_text(encoding="utf-8"))
+        accounts[fresh] = {"password": ""}
+        self.users.write_text(json.dumps(accounts), encoding="utf-8")
+        self.assertNotIn(
+            fresh, json.loads(self.assets.read_text(encoding="utf-8"))
+        )
+        status, headers, body = self._post_json("/api/login", {"user": fresh})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        cookie = headers["set-cookie"].split(";", 1)[0]
+        # The assets store gained the user with an empty portfolio.
+        stored = json.loads(self.assets.read_text(encoding="utf-8"))
+        self.assertIn(fresh, stored)
+        self.assertEqual(stored[fresh], {})
+        # ...and the pages behave as they do for an empty portfolio.
+        status, body = self._get("/constituents", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("Equity", body)
+
+    def test_login_does_not_touch_an_existing_portfolio(self) -> None:
+        before = json.loads(self.assets.read_text(encoding="utf-8"))
+        status, _, _ = self._post_json("/api/login", {"user": _USER})
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            json.loads(self.assets.read_text(encoding="utf-8")), before
+        )
 
     def test_session_reports_the_logged_in_user(self) -> None:
         status, _, body = self._raw("/api/session")

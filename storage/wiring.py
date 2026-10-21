@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from storage.json_storage import JsonStorage
 from storage.postgres_storage import PostgresStorage
-from storage.records import UserAssets
+from storage.records import UserAssets, UserRecord
 
 if TYPE_CHECKING:
     from storage.storage import Storage
@@ -34,9 +34,11 @@ __all__ = [
     "BACKEND_POSTGRES",
     "DEFAULT_POSTGRES_DSN",
     "POSTGRES_TABLE",
+    "POSTGRES_USERS_TABLE",
     "SUPPORTED_BACKENDS",
     "assets_backend",
     "normalize_backend",
+    "users_backend",
 ]
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,8 @@ SUPPORTED_BACKENDS: tuple[str, ...] = (BACKEND_JSON, BACKEND_POSTGRES)
 
 #: Where the Postgres backend will keep its rows.
 POSTGRES_TABLE = "user_assets"
+#: Where the Postgres backend will keep the user accounts.
+POSTGRES_USERS_TABLE = "users"
 #: Connection string used when the configuration does not carry one.
 DEFAULT_POSTGRES_DSN = "postgresql://localhost/asalloc"
 
@@ -93,3 +97,32 @@ def assets_backend(
         )
         return PostgresStorage(dsn, POSTGRES_TABLE, UserAssets)
     return JsonStorage(path, UserAssets, strict=True)
+
+
+def users_backend(
+    path: str | Path,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> "Storage[UserRecord]":
+    """Backend for the user accounts (one row per user name).
+
+    Same backend selector as the assets store, so moving the accounts
+    to Postgres is one config line. The row key is the user name (the
+    primary key of the future table), the payload is the password.
+
+    The JSON backend is strict: a malformed account raises instead of
+    being skipped, so a broken users file fails loudly instead of
+    quietly locking everybody out.
+    """
+    name = normalize_backend(backend)
+    if name == BACKEND_POSTGRES:
+        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
+        logger.error(
+            "users backend %r is selected but not implemented yet; the "
+            "store will fail to open (dsn=%s, table=%s)",
+            name,
+            dsn,
+            POSTGRES_USERS_TABLE,
+        )
+        return PostgresStorage(dsn, POSTGRES_USERS_TABLE, UserRecord)
+    return JsonStorage(path, UserRecord, strict=True)

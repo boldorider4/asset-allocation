@@ -3,6 +3,7 @@ __pycache__/
 assets.json
 cache.json
 isin.json
+users.json
 .vscode/
 .DS_Store
 _visualizer/

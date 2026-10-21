@@ -18,10 +18,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from storage.records import AssetBucket, CacheEntry, IsinRecord, UserAssets
+from storage.records import (
+    AssetBucket,
+    CacheEntry,
+    IsinRecord,
+    UserAssets,
+    UserRecord,
+)
 from storage.storage import Storage
 
-__all__ = ["CacheRepository", "AssetRepository", "IsinRegistry"]
+__all__ = [
+    "CacheRepository",
+    "AssetRepository",
+    "IsinRegistry",
+    "UsersRepository",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +273,95 @@ class AssetRepository:
         row.replace_all(good)
         self._backend.put(row)
         return len(good)
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()
+
+
+class UsersRepository:
+    """User accounts (name + password) over any backend.
+
+    The backend holds one row per account; the key is the user name
+    (the primary key a database table would carry) and the payload is
+    the password. Password *authentication* is not implemented yet —
+    this repository only knows whether an account exists.
+    """
+
+    def __init__(self, backend: Storage[UserRecord]) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Storage[UserRecord]:
+        return self._backend
+
+    def get(self, user: str) -> UserRecord | None:
+        """The account for ``user``, or None when there is none."""
+        return self._backend.get(str(user))
+
+    def __contains__(self, user: object) -> bool:
+        return str(user) in self._backend
+
+    def exists(self, user: str) -> bool:
+        """True when the store holds an account for ``user``."""
+        return str(user) in self._backend
+
+    def list_users(self) -> list[str]:
+        """Every account name in the store (bulk read, sorted).
+
+        Bulk-only (a full scan on DB backends): callers use it on the
+        error path or for listings, not on the hot path.
+        """
+        return sorted(str(key) for key in self._backend.snapshot())
+
+    def add_user(self, user: str, password: str = "") -> UserRecord:
+        """Create the account for ``user``; returns its record.
+
+        An existing account keeps its password (use
+        :meth:`set_password` to change it) — adding is a no-op then.
+        """
+        key = str(user)
+        existing = self._backend.get(key)
+        if existing is not None:
+            return existing
+        record = UserRecord(key, {UserRecord.PASSWORD: str(password)})
+        self._backend.add(record)
+        return record
+
+    def set_password(self, user: str, password: str) -> UserRecord:
+        """Set the password of ``user``; creates the account if needed."""
+        key = str(user)
+        record = self._backend.get(key)
+        if record is None:
+            record = UserRecord(key, {UserRecord.PASSWORD: str(password)})
+            self._backend.add(record)
+            return record
+        if record.password != str(password):
+            record.password = str(password)
+            self._backend.put(record)
+        return record
+
+    def remove_user(self, user: str) -> bool:
+        """Drop the account for ``user``; True when one was removed."""
+        key = str(user)
+        if key not in self._backend:
+            return False
+        self._backend.remove(key)
+        return True
+
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> UsersRepository:
+        """Prepare the backend for use (idempotent)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{user: row}`` (bulk-only)."""
+        return self._backend.snapshot()
 
     def persist(self) -> None:
         """Make staged writes durable (save / commit / no-op by backend)."""

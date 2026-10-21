@@ -78,6 +78,17 @@ class TestConfigFlag(unittest.TestCase):
         )
         return path
 
+    def _ini_with_stores(self, tmp: Path) -> Path:
+        """An ini that points at the three stores."""
+        path = tmp / "stores.ini"
+        path.write_text(
+            "[server]\nport = 8765\ndirectory = vis\n"
+            "[update]\nassets_file = a.json\ncache_file = c.json\n"
+            "users_file = u.json\n",
+            encoding="utf-8",
+        )
+        return path
+
     def _update_ns(self, tmp: Path, config) -> argparse.Namespace:
         return argparse.Namespace(
             fetch_prices=None,
@@ -162,6 +173,84 @@ class TestConfigFlag(unittest.TestCase):
             self.assertEqual(calls["env"], str(ini))
             self.assertEqual(calls["cmd"][calls["cmd"].index("--plotter-data-dir") + 1], "data")
             self.assertNotIn("--plotter-clear-dir", calls["cmd"])
+
+    def test_serve_follows_the_ini_paths(self) -> None:
+        import cli.cli as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_stores(Path(tmp))
+            calls: dict = {}
+            prev = os.environ.get("ASALLOC_CONFIG")
+
+            def fake_popen(cmd, **kwargs):
+                calls["cmd"] = list(cmd)
+                raise RuntimeError("stop here")
+
+            try:
+                with patch("cli.cli._find_server_pids", return_value=[]), patch(
+                    "cli.cli.subprocess.Popen", side_effect=fake_popen
+                ):
+                    with self.assertRaises(RuntimeError):
+                        cmd_serve(
+                            argparse.Namespace(
+                                assets_file=None,
+                                cache_file=None,
+                                users_file=None,
+                                config=ini,
+                            )
+                        )
+            finally:
+                if prev is None:
+                    os.environ.pop("ASALLOC_CONFIG", None)
+                else:
+                    os.environ["ASALLOC_CONFIG"] = prev
+            cmd = calls["cmd"]
+            # The ini decides where the stores live...
+            self.assertEqual(
+                cmd[cmd.index("--assets-file") + 1], str(Path(tmp) / "a.json")
+            )
+            self.assertEqual(
+                cmd[cmd.index("--cache-file") + 1], str(Path(tmp) / "c.json")
+            )
+            self.assertEqual(
+                cmd[cmd.index("--users-file") + 1], str(Path(tmp) / "u.json")
+            )
+
+    def test_serve_flags_win_over_the_ini(self) -> None:
+        import cli.cli as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_stores(Path(tmp))
+            calls: dict = {}
+            prev = os.environ.get("ASALLOC_CONFIG")
+
+            def fake_popen(cmd, **kwargs):
+                calls["cmd"] = list(cmd)
+                raise RuntimeError("stop here")
+
+            try:
+                with patch("cli.cli._find_server_pids", return_value=[]), patch(
+                    "cli.cli.subprocess.Popen", side_effect=fake_popen
+                ):
+                    with self.assertRaises(RuntimeError):
+                        cmd_serve(
+                            argparse.Namespace(
+                                assets_file=Path(tmp) / "flag-assets.json",
+                                cache_file=None,
+                                users_file=None,
+                                config=ini,
+                            )
+                        )
+            finally:
+                if prev is None:
+                    os.environ.pop("ASALLOC_CONFIG", None)
+                else:
+                    os.environ["ASALLOC_CONFIG"] = prev
+            cmd = calls["cmd"]
+            self.assertEqual(
+                cmd[cmd.index("--assets-file") + 1],
+                str(Path(tmp) / "flag-assets.json"),
+            )
 
     def test_config_flag_parses_before_and_after_subcommand(self) -> None:
         seen: list = []

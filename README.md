@@ -68,6 +68,26 @@ Each bucket is an array of position objects. Typical fields:
 
 `assets.json` is listed in `.gitignore` so you can keep real balances private; `assets.sample.json` is a redacted starting point (it ships with the `default` user).
 
+### Users file
+
+The accounts that may log in live in their own store, `users.json` (path from `config.ini` → `[update] users_file`). It is keyed by user name — the same key a database table would use — and holds the password:
+
+```json
+{
+  "default": { "password": "" }
+}
+```
+
+Passwords may be empty (the account exists, it just has no secret yet). Copy `users.sample.json` to the configured path and add your users:
+
+```bash
+cp users.sample.json ~/.local/asalloc/users.json
+```
+
+`users.json` is gitignored (it holds credentials). The store is backend-agnostic: `config.ini` → `[server] backend = postgres` moves it into the `users` table together with the assets.
+
+**Login.** The login screen accepts a name that has an account in `users.json` — a name that only appears in `assets.json` is unknown and rejected. A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. Password *authentication* is not implemented yet: the password is stored, not checked (in plaintext — hashing belongs in `storage/records.py::UserRecord` when it lands).
+
 ### Migrating an old holdings file
 
 A pre-user file (buckets directly at the top level) is rejected with a pointer to the migration script. Run it once per file — it backs the original up before writing:
@@ -123,13 +143,13 @@ asalloc serve
 
 Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you to the login page.
 
-**Login.** The login screen asks for a **User** (your portfolio name in the assets file) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no portfolio, no session).
+**Login.** The login screen asks for a **User** (an account in `users.json` — see [Users file](#users-file)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
 
 The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts and lasts as long as you keep it. **Logout** (top right, next to Edit) drops it; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more.
 
 `http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 
-`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH` to point the endpoint at other files.
+`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH --users-file PATH` to point the endpoint at other files (without the flags, the paths come from `config.ini`).
 
 Clicking Dashboard runs a lite refresh first — but only if a cell was edited since the page loaded, in which case it navigates to the dashboard once the refresh completes (`POST /api/update`: no scraping flags, log level ERROR). With no edits it navigates straight to the dashboard.
 

@@ -17,6 +17,8 @@ in-memory) can persist them without knowing their fields:
 * :class:`IsinRecord` — one registry row: which issuer handler owns an
   ISIN, which portfolio bucket it lives in, plus an optional vendor
   product ref (iShares product id / SSGA slug).
+* :class:`UserRecord` — one user account: the account key *is* the
+  user name (the future primary key), the payload holds the password.
 
 Nothing here touches I/O; loading leniency (skip bad rows) is a
 backend concern, while these classes are strict (bad keys/values raise).
@@ -35,6 +37,7 @@ __all__ = [
     "AssetBucket",
     "UserAssets",
     "IsinRecord",
+    "UserRecord",
 ]
 
 
@@ -474,3 +477,61 @@ class IsinRecord(DictRow):
     def product_ref(self) -> str | None:
         ref = self._data.get(self.PRODUCT_REF)
         return None if ref is None else str(ref)
+
+
+class UserRecord(DictRow):
+    """One user account: the password (the key is the user name).
+
+    The key is the user name — non-negotiable, it is the primary key a
+    database table would carry. The payload holds only the password;
+    an empty password is allowed (the account exists, it just has no
+    secret yet).
+
+    The password is stored as given (plaintext): password *login* is
+    not implemented yet, and hashing belongs here when it is — this
+    class is the single place that would change.
+    """
+
+    PASSWORD = "password"
+    ALLOWED_KEYS: frozenset[str] = frozenset({PASSWORD})
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        password: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if password is not None:
+            payload[self.PASSWORD] = password
+        super().__init__(key, payload)
+
+    def validate(self) -> None:
+        super().validate()
+        if not str(self._key).strip():
+            raise ValueError("user key (the user name) must be a non-empty string")
+        password = self._data.get(self.PASSWORD)
+        if password is not None and not isinstance(password, str):
+            raise TypeError(
+                f"row {self._key!r} field 'password' must be a string"
+            )
+
+    @property
+    def user(self) -> str:
+        """The user name (the row key)."""
+        return str(self._key)
+
+    @property
+    def password(self) -> str:
+        """The account password ("" when the account has none)."""
+        value = self._data.get(self.PASSWORD)
+        return "" if value is None else str(value)
+
+    @password.setter
+    def password(self, value: str) -> None:
+        self.merge({self.PASSWORD: str(value)})
+
+    def to_dict(self) -> dict[str, Any]:
+        # The user name stays in the key; the payload is the password.
+        return {self.PASSWORD: self.password}

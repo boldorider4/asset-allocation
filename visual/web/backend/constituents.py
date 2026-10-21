@@ -167,18 +167,6 @@ def _assets_repo(
     )
 
 
-def assets_user_exists(
-    assets_path: str | Path,
-    user: str,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> bool:
-    """True when the assets store holds a portfolio for ``user``."""
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
-    repo.open()
-    return repo.exists()
-
-
 def assets_positions_left(
     assets_path: str | Path,
     user: str,
@@ -193,6 +181,31 @@ def assets_positions_left(
         for rows in repo.snapshot().values()
         if isinstance(rows, list)
     )
+
+
+def ensure_assets_user(
+    assets_path: str | Path,
+    user: str,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> bool:
+    """Make sure the assets store holds a row for ``user``.
+
+    Returns True when a row was created. A user who logs in for the
+    first time gets an empty portfolio row, so the dashboard and the
+    constituents page behave as they do for any empty portfolio.
+
+    An existing portfolio is never touched: the row is only created
+    when the user has none yet.
+    """
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo.open()
+    if repo.exists():
+        return False
+    # No buckets yet: restore() creates the (empty) row for this user.
+    repo.restore({})
+    repo.persist()
+    return True
 
 
 def load_constituents(
