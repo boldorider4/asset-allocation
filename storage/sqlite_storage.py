@@ -36,6 +36,56 @@ T = TypeVar("T", bound=StorageObject)
 #: How long a statement waits for a lock before giving up (seconds).
 BUSY_TIMEOUT_SECONDS = 5.0
 
+#: The open connections, one per database file.
+#:
+#: Every table of a database *shares* one connection: a second
+#: connection would deadlock against the first one's write transaction
+#: (SQLite's busy handler cannot break that deadlock, it only times
+#: out). One connection per process, one transaction, no surprises.
+_CONNECTIONS: dict[str, tuple[sqlite3.Connection, int]] = {}
+
+
+def _shared_connection(path: Path) -> sqlite3.Connection:
+    """The connection for a database file (one per process)."""
+    key = str(path)
+    entry = _CONNECTIONS.get(key)
+    if entry is not None:
+        conn, refs = entry
+        _CONNECTIONS[key] = (conn, refs + 1)
+        return conn
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(
+        path,
+        timeout=BUSY_TIMEOUT_SECONDS,
+        isolation_level="DEFERRED",
+        # The web server is multi-threaded and the connection is shared
+        # per process: sqlite3 serializes the statements on the
+        # connection itself, so this is safe.
+        check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    # Readers keep working while a writer is active; a writer-writer
+    # collision waits for the lock instead of failing outright.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_SECONDS * 1000)}")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    _CONNECTIONS[key] = (conn, 1)
+    return conn
+
+
+def _release_connection(path: Path) -> None:
+    """Give back one reference; the last one closes the connection."""
+    key = str(path)
+    entry = _CONNECTIONS.get(key)
+    if entry is None:
+        return
+    conn, refs = entry
+    if refs > 1:
+        _CONNECTIONS[key] = (conn, refs - 1)
+        return
+    del _CONNECTIONS[key]
+    conn.close()
+
 
 class SqliteStorage(Storage[T]):
     """Transactional SQLite store."""
@@ -66,22 +116,15 @@ class SqliteStorage(Storage[T]):
     def connect(self) -> SqliteStorage[T]:
         """Open the connection and tune the file (WAL, busy timeout).
 
-        Idempotent: an open connection is kept as it is, so the
-        per-process holder can call it on every use.
+        The connection is shared with the other stores of the same
+        database file (one connection per process). Idempotent: an open
+        connection is kept as it is, so the per-process holder can call
+        it on every use.
         """
         if self._conn is not None:
             return self
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(
-            self._path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level="DEFERRED"
-        )
-        conn.row_factory = sqlite3.Row
-        # Readers keep working while a writer is active; a writer-writer
-        # collision waits for the lock instead of failing outright.
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_SECONDS * 1000)}")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn = conn
+        self._conn = _shared_connection(self._path)
+        self._ensure_table()
         return self
 
     def commit(self) -> None:
@@ -98,7 +141,6 @@ class SqliteStorage(Storage[T]):
     def open(self) -> SqliteStorage[T]:
         """Connect + ensure the table (idempotent)."""
         self.connect()
-        self._ensure_table()
         return self
 
     def snapshot(self) -> dict[str, Any]:
@@ -114,10 +156,14 @@ class SqliteStorage(Storage[T]):
         self.commit()
 
     def close(self) -> None:
-        """Release the connection *without* committing."""
+        """Release the connection *without* committing.
+
+        The connection is shared with the other stores of the same
+        database file: the last store to close it closes it for good.
+        """
         if self._conn is not None:
-            self._conn.close()
             self._conn = None
+            _release_connection(self._path)
 
     def __enter__(self) -> SqliteStorage[T]:
         self.connect()
@@ -132,11 +178,15 @@ class SqliteStorage(Storage[T]):
 
     # -- point access (Storage ABC) -------------------------------------
     def _require_conn(self) -> sqlite3.Connection:
+        """The connection, opened on first use.
+
+        The JSON backend loads its file on demand ✅ — the database
+        backend opens its connection the same way, so a caller that
+        forgot :meth:`open` still works.
+        """
         if self._conn is None:
-            raise RuntimeError(
-                "SqliteStorage: call connect() (or use it as a context "
-                "manager) before issuing queries"
-            )
+            self.connect()
+        assert self._conn is not None
         return self._conn
 
     def _quoted_table(self) -> str:

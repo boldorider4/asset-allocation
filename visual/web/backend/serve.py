@@ -721,13 +721,14 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 raise RuntimeError("assets file not configured")
             cache: dict[str, Any] = {}
             if self._cache_file:
-                try:
-                    with open(self._cache_file, encoding="utf-8") as f:
-                        loaded = json.load(f)
-                    if isinstance(loaded, dict):
-                        cache = loaded
-                except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
-                    logger.warning("constituents cache unreadable: %s", exc)
+                from .constituents import cache_lookup
+
+                cache = cache_lookup(
+                    self._cache_file,
+                    self._backend,
+                    self._postgres_dsn,
+                    self._db_file,
+                )
             result = store_constituent_value(
                 self._assets_file,
                 payload.get("bucket"),
@@ -1197,13 +1198,14 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 raise RuntimeError("assets file not configured")
             cache: dict[str, Any] = {}
             if self._cache_file:
-                try:
-                    with open(self._cache_file, encoding="utf-8") as f:
-                        loaded = json.load(f)
-                    if isinstance(loaded, dict):
-                        cache = loaded
-                except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
-                    logger.warning("constituents cache unreadable: %s", exc)
+                from .constituents import cache_lookup
+
+                cache = cache_lookup(
+                    self._cache_file,
+                    self._backend,
+                    self._postgres_dsn,
+                    self._db_file,
+                )
             display = add_constituent(
                 self._assets_file,
                 payload.get("bucket"),

@@ -5,7 +5,8 @@
 Usage::
 
     python scripts/add_users.py <users.json> <user> [--password PW]
-                                [--backend json|postgres] [--postgres-dsn DSN]
+                                [--backend json|sqlite|postgres] [--db-file DB]
+                                [--postgres-dsn DSN]
 
 The store is keyed by user name — the same key a database table would
 use — and holds the password::
@@ -16,8 +17,10 @@ An account that already exists keeps its password unless a new one is
 given; a new account gets an empty password when none is given.
 
 The backend decides how the account is written: ``json`` (the default)
-modifies the file, ``postgres`` is a stub that does not work yet (the
-intended statement is in ``cli/users.py::add_user_postgres``).
+modifies the file, ``sqlite`` writes to the ``users`` table of the
+database given by ``--db-file``, ``postgres`` is a stub that does not
+work yet (the intended statement is in
+``cli/users.py::add_user_postgres``).
 
 The script touches **only** the file you pass.
 """
@@ -58,6 +61,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Store backend (default: json; postgres is a stub that does not work yet).",
     )
     parser.add_argument(
+        "--db-file",
+        type=Path,
+        default=None,
+        help="SQLite database file (only used by the sqlite backend).",
+    )
+    parser.add_argument(
         "--postgres-dsn",
         default=DEFAULT_POSTGRES_DSN,
         help="Postgres connection string (only used by the postgres backend).",
@@ -75,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             args.password,
             backend=args.backend,
             postgres_dsn=args.postgres_dsn,
+            db_file=args.db_file,
         )
     except NotImplementedError as exc:
         print(f"error: {exc}", file=sys.stderr)

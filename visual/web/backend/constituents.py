@@ -10,7 +10,7 @@ always fresh after an update. Nothing here persists anything anywhere.
 from __future__ import annotations
 
 import html
-import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -29,7 +29,14 @@ from cli.common import (
     VALUE,
 )
 from storage.repositories import AssetRepository, UnknownUser
-from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN, assets_backend
+from storage.wiring import (
+    BACKEND_JSON,
+    DEFAULT_POSTGRES_DSN,
+    assets_backend,
+    cache_backend,
+)
+
+logger = logging.getLogger(__name__)
 
 # Canonical section order with display labels; unknown bucket keys are
 # appended after these, prettified.
@@ -254,6 +261,31 @@ def store_portfolio_name(
     return {"name": text}
 
 
+def cache_lookup(
+    cache_path: str | Path,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
+) -> dict[str, Any]:
+    """The cache as a plain ``{isin: row}`` map (price, countries, sectors).
+
+    Read through the repository, so every backend works: the JSON file
+    and the SQLite table alike. A missing or broken store yields an
+    empty map — the page then shows no prices instead of failing.
+    """
+    from storage.repositories import CacheRepository
+
+    try:
+        repo = CacheRepository(
+            cache_backend(cache_path, backend, postgres_dsn, db_file)
+        )
+        repo.open()
+        return repo.snapshot()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("cache %s unreadable (%s); showing no prices", cache_path, exc)
+        return {}
+
+
 def load_constituents(
     assets_path: str | Path,
     cache_path: str | Path,
@@ -280,13 +312,7 @@ def load_constituents(
             )
         raise UnknownUser(user)
     assets = repo.snapshot()
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            cache = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        cache = {}
-    if not isinstance(cache, dict):
-        cache = {}
+    cache = cache_lookup(cache_path, backend, postgres_dsn, db_file)
 
     known = {key for key, _ in SECTION_ORDER}
     # Canonical classes first (always, even when empty), then any extra

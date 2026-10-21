@@ -80,11 +80,20 @@ def migrate(
             continue
         backend = SqliteStorage(db_file, table, row_type)
         backend.open()
+        count = 0
         for key, payload in raw.items():
-            backend.put(row_type.from_dict(str(key), payload))
+            try:
+                row = row_type.from_dict(str(key), payload)
+            except (TypeError, ValueError, KeyError) as exc:
+                # A bad row is skipped (like the lenient JSON loader),
+                # so one broken record cannot abort the whole import.
+                print(f"warning: skipping bad row {key!r} in {filename} ({exc})")
+                continue
+            backend.put(row)
+            count += 1
         backend.persist()
         backend.close()
-        imported.append((table, len(raw)))
+        imported.append((table, count))
     return imported
 
 

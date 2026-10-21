@@ -48,10 +48,21 @@ The store itself is backend-agnostic: the code above the storage layer only talk
 
 | `[server] backend` | Meaning |
 | --- | --- |
-| `json` (default) | Holdings in the JSON file named by `[update] assets_file` |
+| `json` (default) | Every store in its own JSON file (`assets.json`, `cache.json`, `isin.json`, `users.json`, `.sessions.json`) |
+| `sqlite` | Every store in one SQLite database (`[server] db_file`), one table per store |
 | `postgres` | Not implemented yet: the wiring logs an error and the store fails to open |
 
-`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default).
+`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default). `[server] db_file` names the SQLite database (`~/.local/asalloc/asalloc.db` by default).
+
+**SQLite.** The database runs *inside* the process: no server, no idle load, nothing to supervise — which is what a 24/7 Raspberry Pi wants. WAL mode lets the web server read while the update writes, and every table of a database shares one connection (two connections would deadlock against each other's write transaction). The tables are `user_assets`, `cache`, `isin_registry`, `users` and `sessions`; the payload of a row is its JSON form, so a row written by one backend reads back identically in the other.
+
+To move an existing installation over, import the JSON stores once and flip the backend:
+
+```bash
+python scripts/migrate_json_to_sqlite.py --db-file ~/.local/asalloc/asalloc.db
+```
+
+The script leaves the JSON files untouched (they stay the fallback until you delete them), skips a broken row with a warning and is idempotent. After that, `config.ini` → `[server] backend = sqlite` is the only change — the server, the update and `asalloc add-user` all read it.
 
 | Key | Purpose |
 | --- | --- |

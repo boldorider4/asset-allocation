@@ -13,6 +13,7 @@ import time
 import unittest
 from pathlib import Path
 
+from storage.wiring import BACKEND_JSON, BACKEND_SQLITE
 from visual.web.backend.session import (
     COOKIE_NAME,
     SESSION_TTL_SECONDS,
@@ -79,6 +80,90 @@ class TestSessionStore(unittest.TestCase):
             self.assertLessEqual(
                 session.expires_at - time.time(), SESSION_TTL_SECONDS + 1
             )
+
+
+class TestSessionStoreBackends(unittest.TestCase):
+    """The session store works the same on every backend."""
+
+    def _store_args(self, tmp: str, backend: str) -> tuple[str, Path | None]:
+        """The store arguments for a backend (the db file for SQLite)."""
+        if backend == BACKEND_SQLITE:
+            return backend, Path(tmp) / "sessions.db"
+        return backend, None
+
+    def test_a_session_round_trips_on_every_backend(self) -> None:
+        for backend in (BACKEND_JSON, BACKEND_SQLITE):
+            with self.subTest(backend=backend):
+                with tempfile.TemporaryDirectory() as tmp:
+                    name, db_file = self._store_args(tmp, backend)
+                    login(
+                        tmp,
+                        "sid",
+                        "alice",
+                        incognito=True,
+                        backend=name,
+                        db_file=db_file,
+                    )
+                    session = read_session(
+                        tmp,
+                        _cookie("sid"),
+                        backend=name,
+                        db_file=db_file,
+                    )
+                    assert session is not None
+                    self.assertEqual(session.user, "alice")
+                    self.assertTrue(session.incognito)
+
+    def test_logout_ends_the_session_on_every_backend(self) -> None:
+        for backend in (BACKEND_JSON, BACKEND_SQLITE):
+            with self.subTest(backend=backend):
+                with tempfile.TemporaryDirectory() as tmp:
+                    name, db_file = self._store_args(tmp, backend)
+                    login(tmp, "sid", "alice", backend=name, db_file=db_file)
+                    logout(tmp, "sid", backend=name, db_file=db_file)
+                    self.assertIsNone(
+                        read_session(
+                            tmp, _cookie("sid"), backend=name, db_file=db_file
+                        )
+                    )
+
+    def test_an_expired_session_is_gone_on_every_backend(self) -> None:
+        for backend in (BACKEND_JSON, BACKEND_SQLITE):
+            with self.subTest(backend=backend):
+                with tempfile.TemporaryDirectory() as tmp:
+                    name, db_file = self._store_args(tmp, backend)
+                    login(tmp, "sid", "alice", backend=name, db_file=db_file)
+                    # The expiry is in the past: the session is over.
+                    expired = time.time() - 1
+                    if backend == BACKEND_JSON:
+                        path = store_path(tmp)
+                        store = json.loads(path.read_text(encoding="utf-8"))
+                        store["sid"]["expires_at"] = expired
+                        path.write_text(json.dumps(store), encoding="utf-8")
+                    else:
+                        import sqlite3
+
+                        conn = sqlite3.connect(db_file)
+                        conn.execute(
+                            "UPDATE sessions SET payload = ? WHERE key = ?",
+                            (
+                                json.dumps(
+                                    {
+                                        "user": "alice",
+                                        "incognito": False,
+                                        "expires_at": expired,
+                                    }
+                                ),
+                                "sid",
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                    self.assertIsNone(
+                        read_session(
+                            tmp, _cookie("sid"), backend=name, db_file=db_file
+                        )
+                    )
 
 
 if __name__ == "__main__":

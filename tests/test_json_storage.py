@@ -36,6 +36,7 @@ from storage import (  # noqa: E402
     MemoryStorage,
     PostgresStorage,
 )
+from storage.sqlite_storage import SqliteStorage  # noqa: E402
 from storage.storage import Storage  # noqa: E402
 
 
@@ -343,6 +344,12 @@ class TestAssetRepositoryComposition(unittest.TestCase):
             backends: list[tuple[str, Storage[AssetBucket]]] = [
                 ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
                 ("memory", MemoryStorage(UserAssets)),
+                (
+                    "sqlite",
+                    SqliteStorage(
+                        Path(tmp) / "assets.db", "user_assets", UserAssets
+                    ),
+                ),
             ]
             for name, backend in backends:
                 with self.subTest(backend=name):
@@ -367,6 +374,12 @@ class TestAssetRepositoryComposition(unittest.TestCase):
             backends: list[tuple[str, Storage[AssetBucket]]] = [
                 ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
                 ("memory", MemoryStorage(UserAssets)),
+                (
+                    "sqlite",
+                    SqliteStorage(
+                        Path(tmp) / "assets.db", "user_assets", UserAssets
+                    ),
+                ),
             ]
             for name, backend in backends:
                 with self.subTest(backend=name):
