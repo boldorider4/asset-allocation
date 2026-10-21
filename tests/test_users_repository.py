@@ -125,6 +125,43 @@ class TestUsersRepository(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {})
 
 
+class TestCheckCredentials(unittest.TestCase):
+    def _repo(self, path: Path) -> UsersRepository:
+        return UsersRepository(users_backend(path)).open()
+
+    def test_the_right_password_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "users.json"
+            path.write_text(
+                json.dumps({"alice": {"password": "s3cret"}}), encoding="utf-8"
+            )
+            repo = self._repo(path)
+            self.assertTrue(repo.check_credentials("alice", "s3cret"))
+            self.assertFalse(repo.check_credentials("alice", "wrong"))
+            self.assertFalse(repo.check_credentials("alice", ""))
+            self.assertFalse(repo.check_credentials("bob", "s3cret"))
+
+    def test_an_empty_password_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "users.json"
+            path.write_text(
+                json.dumps({"alice": {"password": ""}}), encoding="utf-8"
+            )
+            repo = self._repo(path)
+            self.assertTrue(repo.check_credentials("alice", ""))
+            self.assertFalse(repo.check_credentials("alice", "something"))
+
+    def test_a_non_ascii_password_works(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "users.json"
+            path.write_text(
+                json.dumps({"alice": {"password": "pässwörd€"}}), encoding="utf-8"
+            )
+            repo = self._repo(path)
+            self.assertTrue(repo.check_credentials("alice", "pässwörd€"))
+            self.assertFalse(repo.check_credentials("alice", "passwörd"))
+
+
 class TestUsersBackendWiring(unittest.TestCase):
     def test_json_backend_reads_the_configured_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

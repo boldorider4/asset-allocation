@@ -16,6 +16,7 @@ or in callers, which drive durability through ``persist()`` alone.
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import Any
 
 from storage.records import (
@@ -304,8 +305,8 @@ class UsersRepository:
 
     The backend holds one row per account; the key is the user name
     (the primary key a database table would carry) and the payload is
-    the password. Password *authentication* is not implemented yet —
-    this repository only knows whether an account exists.
+    the password. Passwords are stored as given (plaintext) — hashing
+    belongs in :class:`~storage.records.UserRecord` when it lands.
     """
 
     def __init__(self, backend: Storage[UserRecord]) -> None:
@@ -333,6 +334,21 @@ class UsersRepository:
         error path or for listings, not on the hot path.
         """
         return sorted(str(key) for key in self._backend.snapshot())
+
+    def check_credentials(self, user: str, password: str) -> bool:
+        """True when the account exists and the password matches.
+
+        The comparison is constant-time and always runs (an unknown
+        user is compared against an empty password), so the answer
+        never leaks whether the account exists. Empty passwords are
+        allowed: an account with no password matches an empty one.
+        """
+        record = self.get(user)
+        expected = record.password if record is not None else ""
+        matched = secrets.compare_digest(
+            expected.encode("utf-8"), str(password).encode("utf-8")
+        )
+        return record is not None and matched
 
     def add_user(self, user: str, password: str = "") -> UserRecord:
         """Create the account for ``user``; returns its record.

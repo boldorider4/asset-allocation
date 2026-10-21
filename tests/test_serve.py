@@ -27,11 +27,18 @@ from visual.web.backend.serve import DashboardHandler
 _USER = "default"
 #: A second known user: the store holds a portfolio for them, too.
 _OTHER_USER = "alice"
+#: That user's password (the first one has none).
+_OTHER_PASSWORD = "other-pw"
 #: Sentinel for "the session cookie of this test"; ``None`` sends none.
 _SESSION = object()
 
 
-def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
+def _login_cookie(
+    port: int,
+    user: str = _USER,
+    incognito: bool = False,
+    password: str = "",
+) -> str:
     """Log in over HTTP; returns the session cookie (``asalloc_sid=...``).
 
     The cookie is the credential every protected route needs from now
@@ -39,7 +46,9 @@ def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
     """
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/login",
-        data=json.dumps({"user": user, "incognito": incognito}).encode("utf-8"),
+        data=json.dumps(
+            {"user": user, "password": password, "incognito": incognito}
+        ).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -108,7 +117,7 @@ class _ServerCase(unittest.TestCase):
         self.users = tmp / "users.json"
         self.users.write_text(
             json.dumps(
-                {_USER: {"password": ""}, _OTHER_USER: {"password": "other-pw"}}
+                {_USER: {"password": ""}, _OTHER_USER: {"password": _OTHER_PASSWORD}}
             ),
             encoding="utf-8",
         )
@@ -138,9 +147,11 @@ class _ServerCase(unittest.TestCase):
     def _dashboard(self, query: str = "") -> str:
         return f"http://127.0.0.1:{self.port}/dashboard{query}"
 
-    def login(self, user: str = _USER, incognito: bool = False) -> str:
+    def login(
+        self, user: str = _USER, incognito: bool = False, password: str = ""
+    ) -> str:
         """Log in over HTTP; returns the session cookie."""
-        return _login_cookie(self.port, user, incognito)
+        return _login_cookie(self.port, user, incognito, password)
 
     def _get(
         self,
@@ -308,7 +319,7 @@ class TestDashboardEndpoint(_ServerCase):
         # Charts are per user: the session decides whose dir is served.
         status, body = self._get("/data/01-a.raw")
         self.assertEqual((status, body), (200, "PLAIN"))
-        other = self.login(_OTHER_USER)
+        other = self.login(_OTHER_USER, password=_OTHER_PASSWORD)
         status, body = self._get("/data/01-a.raw", cookie=other)
         self.assertEqual((status, body), (200, "OTHER"))
 
@@ -342,6 +353,37 @@ class TestSessionApi(_ServerCase):
         status, _, body = self._post_json("/api/login", {"user": "nobody"})
         self.assertEqual(status, 404)
         self.assertIn("unknown user: nobody", body)
+
+    def test_login_rejects_a_wrong_password(self) -> None:
+        # A wrong password looks exactly like an unknown user.
+        status, _, body = self._post_json(
+            "/api/login", {"user": _OTHER_USER, "password": "wrong"}
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("unknown user", body)
+
+    def test_login_accepts_the_right_password(self) -> None:
+        status, headers, body = self._post_json(
+            "/api/login", {"user": _OTHER_USER, "password": _OTHER_PASSWORD}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertIn("asalloc_sid=", headers["set-cookie"])
+
+    def test_login_accepts_an_empty_password(self) -> None:
+        # The first user has no password: an empty field logs in.
+        status, _, body = self._post_json(
+            "/api/login", {"user": _USER, "password": ""}
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+
+    def test_login_without_a_password_field_needs_an_empty_one(self) -> None:
+        status, _, _ = self._post_json("/api/login", {"user": _USER})
+        self.assertEqual(status, 200)
+        # ...and the other user needs its password.
+        status, _, _ = self._post_json("/api/login", {"user": _OTHER_USER})
+        self.assertEqual(status, 404)
 
     def test_login_accepts_a_known_user(self) -> None:
         status, headers, body = self._post_json("/api/login", {"user": _USER})
@@ -444,7 +486,7 @@ class TestUsersStoreLogin(_ServerCase):
 
     def test_login_page_reaches_the_dashboard_after_a_login(self) -> None:
         # The round trip a browser makes: login, then land on the app.
-        cookie = self.login(_OTHER_USER)
+        cookie = self.login(_OTHER_USER, password=_OTHER_PASSWORD)
         status, body = self._get("/dashboard", cookie=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(body, "DASHBOARD")

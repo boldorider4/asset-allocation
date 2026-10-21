@@ -14,7 +14,7 @@ from pathlib import Path
 from storage.repositories import UsersRepository
 from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN, users_backend
 
-__all__ = ["users_user_exists", "users_repo"]
+__all__ = ["users_credentials_ok", "users_repo"]
 
 
 def users_repo(
@@ -26,13 +26,19 @@ def users_repo(
     return UsersRepository(users_backend(users_path, backend, postgres_dsn))
 
 
-def users_user_exists(
+def users_credentials_ok(
     users_path: str | Path,
     user: str,
+    password: str = "",
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> bool:
-    """True when the users store holds an account for ``user``."""
+    """True when the account exists and the password matches.
+
+    An unknown account and a wrong password are the same answer, so
+    the login cannot be used to probe for user names. Empty passwords
+    are allowed.
+    """
     repo = users_repo(users_path, backend, postgres_dsn)
     repo.open()
-    return repo.exists(user)
+    return repo.check_credentials(user, password)

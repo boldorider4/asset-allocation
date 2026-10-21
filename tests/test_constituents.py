@@ -104,7 +104,12 @@ def _write_users(tmp: Path, users: dict[str, dict[str, str]] | None = None) -> P
     return path
 
 
-def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
+def _login_cookie(
+    port: int,
+    user: str = _USER,
+    incognito: bool = False,
+    password: str = "",
+) -> str:
     """Log in over HTTP; returns the session cookie (``asalloc_sid=...``).
 
     The cookie is the credential every protected route needs from now
@@ -112,7 +117,9 @@ def _login_cookie(port: int, user: str = _USER, incognito: bool = False) -> str:
     """
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/login",
-        data=json.dumps({"user": user, "incognito": incognito}).encode("utf-8"),
+        data=json.dumps(
+            {"user": user, "password": password, "incognito": incognito}
+        ).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -927,6 +934,14 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn(">User</label>", login_html)
         self.assertIn('id="login-user"', login_html)
         self.assertIn(">Log In</button>", login_html)
+        # ...and the password field right below the user one.
+        self.assertIn(">Password</label>", login_html)
+        self.assertIn('id="login-password"', login_html)
+        self.assertIn('type="password"', login_html)
+        self.assertGreater(
+            login_html.index('id="login-password"'),
+            login_html.index('id="login-user"'),
+        )
         # ...the incognito toggle and its ON/OFF read-out. Incognito
         # starts engaged, so the read-out is ON before any click.
         self.assertIn('id="incognito-link"', login_html)
@@ -944,11 +959,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn('"OFF"', login_js)
         # Incognito starts engaged.
         self.assertIn("incognito: true", login_js)
-        # A failed login highlights the field (outline + one-shot flare)
+        # A failed login highlights the fields (outline + one-shot flare)
         # instead of showing a banner.
         self.assertIn("login-error", login_js)
         self.assertIn("login-flare", login_js)
         self.assertIn("clearFieldError", login_js)
+        # Both boxes are marked, and the password travels with the login.
+        self.assertIn("loginFields", login_js)
+        self.assertIn('getElementById("login-password")', login_js)
+        self.assertIn("password: password", login_js)
         css = (root / "styles.css").read_text(encoding="utf-8")
         self.assertIn(".login-body", css)
         self.assertIn(".login-form", css)
@@ -1894,9 +1913,11 @@ class _RouteCase(unittest.TestCase):
     def _url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
 
-    def _login(self, user: str = _USER, incognito: bool = False) -> str:
+    def _login(
+        self, user: str = _USER, incognito: bool = False, password: str = ""
+    ) -> str:
         """Log in over HTTP; returns the session cookie."""
-        return _login_cookie(self.port, user, incognito)
+        return _login_cookie(self.port, user, incognito, password)
 
     def _get(
         self, path: str, cookie: str | None | object = _SESSION

@@ -443,10 +443,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def _login(self) -> bool:
         """Handle ``POST /api/login``: start a session for a known user.
 
-        The user must have an account in the users store (users.json) —
-        a name that only exists in the assets store is unknown here and
-        is rejected like any other unknown user. Passwords are stored
-        but not checked yet.
+        The user must have an account in the users store (users.json)
+        *and* the posted password must match it. A name that only
+        exists in the assets store is unknown here and is rejected like
+        any other unknown user — and a wrong password is refused the
+        same way, so the login cannot be used to probe for user names.
 
         A known user without a portfolio gets an empty one, so a fresh
         account lands on an empty dashboard.
@@ -461,7 +462,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "user must not be empty")
             return True
         incognito = bool(payload.get("incognito"))
-        if not self._user_exists(user):
+        if not self._credentials_ok(user, payload.get("password")):
             self._plain_status(404, f"unknown user: {user}")
             return True
         if self._ensure_assets_user(user):
@@ -501,17 +502,21 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
-    def _user_exists(self, user: str) -> bool:
-        """True when the users store holds an account for ``user``."""
-        from .users import users_user_exists
+    def _credentials_ok(self, user: str, password: Any) -> bool:
+        """True when the account exists and the password matches."""
+        from .users import users_credentials_ok
 
         if not self._users_file:
             # No accounts store configured: nobody can log in.
             logger.warning("no users file configured; refusing the login")
             return False
         try:
-            return users_user_exists(
-                self._users_file, user, self._backend, self._postgres_dsn
+            return users_credentials_ok(
+                self._users_file,
+                user,
+                "" if password is None else str(password),
+                self._backend,
+                self._postgres_dsn,
             )
         except Exception as exc:
             # A broken accounts store must not drop the connection: the

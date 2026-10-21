@@ -4,18 +4,21 @@
  * pressed state is the state, plus a plain ON/OFF read-out. It decides
  * the ?incognito= flag the server puts on the dashboard URL we land on.
  * Incognito starts engaged: the figures are hidden until you say so.
- * The user name is validated by the server (unknown users are
- * rejected), so a typo never looks like an empty portfolio.
+ * The credentials are validated by the server (an unknown user and a
+ * wrong password are refused the same way), so a typo never looks like
+ * an empty portfolio. Empty passwords are allowed.
  */
 (function () {
   "use strict";
 
   var state = { incognito: true, busy: false };
 
-  // Failed logins highlight the field instead of showing a banner: a red
-  // outline that stays until the next attempt, plus a one-shot flare
-  // (like the constituents' saved/stale flash). The message still goes
-  // to the screen-reader-only status line.
+  // Failed logins highlight the fields instead of showing a banner: a
+  // red outline that stays until the next attempt, plus a one-shot flare
+  // (like the constituents' saved/stale flash). Both the user and the
+  // password box are marked — a wrong password is as much a failure as
+  // an unknown user. The message still goes to the screen-reader-only
+  // status line.
   function announce(text) {
     var status = document.getElementById("login-status");
     if (status) {
@@ -23,26 +26,36 @@
     }
   }
 
+  function loginFields() {
+    return [
+      document.getElementById("login-user"),
+      document.getElementById("login-password"),
+    ].filter(function (field) {
+      return !!field;
+    });
+  }
+
   function fieldError(text) {
-    var input = document.getElementById("login-user");
-    if (input) {
+    var fields = loginFields();
+    fields.forEach(function (input) {
       input.classList.add("login-error");
       input.classList.add("login-flare");
       input.setAttribute("aria-invalid", "true");
-      window.setTimeout(function () {
+    });
+    window.setTimeout(function () {
+      fields.forEach(function (input) {
         input.classList.remove("login-flare");
-      }, 900);
-    }
+      });
+    }, 900);
     announce(text);
   }
 
   function clearFieldError() {
-    var input = document.getElementById("login-user");
-    if (input) {
+    loginFields().forEach(function (input) {
       input.classList.remove("login-error");
       input.classList.remove("login-flare");
       input.removeAttribute("aria-invalid");
-    }
+    });
     announce("");
   }
 
@@ -81,12 +94,20 @@
       }
       return;
     }
+    // The password is sent verbatim (no trimming: it may contain
+    // spaces). Empty passwords are allowed.
+    var passwordInput = document.getElementById("login-password");
+    var password = passwordInput ? String(passwordInput.value || "") : "";
     state.busy = true;
     try {
       var response = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user: user, incognito: state.incognito }),
+        body: JSON.stringify({
+          user: user,
+          password: password,
+          incognito: state.incognito,
+        }),
       });
       var data = {};
       try {

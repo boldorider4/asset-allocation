@@ -104,7 +104,7 @@ asalloc add-user --config /path/to/config.ini --user alice    # empty password
 
 The CLI command reads the users file from the given `config.ini` (`[update] users_file`); `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed. The `--backend postgres` path is a stub and does not work yet.
 
-**Login.** The login screen accepts a name that has an account in `users.json` — a name that only appears in `assets.json` is unknown and rejected. A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. Password *authentication* is not implemented yet: the password is stored, not checked (in plaintext — hashing belongs in `storage/records.py::UserRecord` when it lands).
+**Login.** The login screen asks for a **User** and a **Password**: the name must have an account in `users.json` (a name that only appears in `assets.json` is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
 
 ### Migrating an old holdings file
 
