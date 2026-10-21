@@ -143,14 +143,17 @@ def main(ctx: RuntimeContext) -> None:
         if cleared:
             logger.info("Cleared %d stale chart file(s) in %s", cleared, output_dir)
     logger.info("Writing charts to %s", output_dir)
+    # The charts are titled with the portfolio's own name (the store owns
+    # it); the default only shows up when the user never named it.
+    portfolio_name = ctx.portfolio_name or "Portfolio"
     total_growth_portfolio.plot_geosplit(
-        title="90-10 Equity Portfolio: Geo Breakdown",
+        title=f"{portfolio_name}: Geo Breakdown",
         closing_title="Total Value: {tot_value}",
         label_fontsize=7,
         autopct_fontsize=7,
     )
     total_growth_portfolio.plot_sectors(
-        title="90-10 Equity Portfolio: Sector Breakdown",
+        title=f"{portfolio_name}: Sector Breakdown",
         label_fontsize=7,
         autopct_fontsize=7,
     )

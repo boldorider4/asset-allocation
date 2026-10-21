@@ -150,5 +150,70 @@ class TestSinglePassWritesFlatDir(unittest.TestCase):
         self.assertEqual(payload["factor"], {"value": 100.0, "unit": "Euro"})
 
 
+class TestChartTitlesCarryThePortfolioName(unittest.TestCase):
+    """The charts are titled with the name the store holds."""
+
+    def _run(self, name: str) -> list[dict]:
+        from cli.update import main as run_update
+
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        tmp = Path(holder.name)
+        server = tmp / "visualizer"
+        assets = tmp / "assets.json"
+        assets.write_text(
+            json.dumps(
+                {
+                    "default": {
+                        "portfolio_name": name,
+                        "positions": {
+                            "equity_portfolio": [
+                                {
+                                    "name": "ETF",
+                                    "ISIN": "IE00TEST0001",
+                                    "shares": 1,
+                                    "value": 100.0,
+                                }
+                            ]
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        ctx = RuntimeContext(
+            config=AppConfig(
+                user="default",
+                cache_file=tmp / "cache.json",
+                assets_file=assets,
+                isin_file=tmp / "isin.json",
+                plotter="web",
+                server=ServerConfig(
+                    port=8765, address="localhost", directory=server
+                ),
+            )
+        )
+        run_update(ctx)
+        chart_dir = server / "data" / "default"
+        return [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(chart_dir.glob("*.raw"))
+        ]
+
+    def test_the_growth_charts_are_titled_with_the_name(self) -> None:
+        payloads = self._run("My Fund")
+        titles = [payload["name"] for payload in payloads]
+        self.assertIn("My Fund: Geo Breakdown", titles)
+        self.assertIn("My Fund: Sector Breakdown", titles)
+        self.assertNotIn(
+            "90-10 Equity Portfolio: Geo Breakdown", titles
+        )
+
+    def test_the_default_name_is_used_when_unnamed(self) -> None:
+        payloads = self._run("Portfolio")
+        titles = [payload["name"] for payload in payloads]
+        self.assertIn("Portfolio: Geo Breakdown", titles)
+
+
 if __name__ == "__main__":
     unittest.main()
