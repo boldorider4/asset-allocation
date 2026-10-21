@@ -177,6 +177,8 @@ The session lives in a cookie (`asalloc_sid`) and is persisted server-side in th
 
 `http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 
+The charts are titled with the **portfolio name** from the store: the growth charts read "<Portfolio Name>: Geo Breakdown" and "<Portfolio Name>: Sector Breakdown" (the name is edited at the end of the constituents page; the next Dashboard click runs the lite update that re-titles them), while the whole-net-worth chart stays "Complete Portfolio".
+
 `http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH --users-file PATH` to point the endpoint at other files (without the flags, the paths come from `config.ini`).
 
 The last block of the page edits the **Portfolio Name** (the field at the end of the page). It persists via `POST /api/constituents/name` and stages an update like the other edits, so the next **Dashboard** click runs the lite update that puts the name into the charts.
