@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from typing import Any
 
 from storage.records import (
@@ -24,6 +25,7 @@ from storage.records import (
     AssetBucket,
     CacheEntry,
     IsinRecord,
+    SessionRecord,
     UserAssets,
     UserRecord,
 )
@@ -34,6 +36,7 @@ __all__ = [
     "AssetRepository",
     "IsinRegistry",
     "UsersRepository",
+    "SessionsRepository",
 ]
 
 logger = logging.getLogger(__name__)
@@ -393,6 +396,93 @@ class UsersRepository:
 
     def snapshot(self) -> dict[str, Any]:
         """Whole store as plain ``{user: row}`` (bulk-only)."""
+        return self._backend.snapshot()
+
+    def persist(self) -> None:
+        """Make staged writes durable (save / commit / no-op by backend)."""
+        self._backend.persist()
+
+    def close(self) -> None:
+        """Backend-defined teardown (see :meth:`Storage.close`)."""
+        self._backend.close()
+
+
+class SessionsRepository:
+    """Browser sessions over any backend.
+
+    The backend holds one row per session id (the value of the
+    ``asalloc_sid`` cookie); the payload is the user, the incognito
+    state and the expiry. An expired session reads as *no* session, so
+    the caller never has to think about the timeout.
+    """
+
+    def __init__(self, backend: Storage[SessionRecord]) -> None:
+        self._backend = backend
+
+    @property
+    def backend(self) -> Storage[SessionRecord]:
+        return self._backend
+
+    def get(self, session_id: str) -> SessionRecord | None:
+        """The live session for ``session_id``, or None when there is none."""
+        record = self._backend.get(str(session_id))
+        if record is None or record.expired():
+            return None
+        return record
+
+    def start(
+        self,
+        session_id: str,
+        user: str,
+        *,
+        incognito: bool = False,
+        ttl_seconds: float = 0.0,
+    ) -> SessionRecord:
+        """Start (or replace) the session for ``session_id``.
+
+        ``ttl_seconds`` of 0 (or less) means "expires now" — the
+        timeout is the caller's business.
+        """
+        expires_at = time.time() + ttl_seconds if ttl_seconds > 0 else 0.0
+        record = SessionRecord(
+            str(session_id),
+            {
+                SessionRecord.USER: str(user),
+                SessionRecord.INCOGNITO: bool(incognito),
+                SessionRecord.EXPIRES_AT: expires_at,
+            },
+        )
+        self._backend.put(record)
+        return record
+
+    def drop(self, session_id: str) -> bool:
+        """Drop the session for ``session_id``; True when one was removed."""
+        key = str(session_id)
+        if key not in self._backend:
+            return False
+        self._backend.remove(key)
+        return True
+
+    def purge_expired(self) -> int:
+        """Remove the expired sessions; returns how many were dropped."""
+        expired = [
+            key
+            for key, record in self._backend.snapshot().items()
+            if isinstance(record, dict)
+            and SessionRecord.from_dict(str(key), record).expired()
+        ]
+        for key in expired:
+            self._backend.remove(key)
+        return len(expired)
+
+    # -- backend-neutral lifecycle (delegated, works on every backend) --
+    def open(self) -> SessionsRepository:
+        """Prepare the backend for use (idempotent)."""
+        self._backend.open()
+        return self
+
+    def snapshot(self) -> dict[str, Any]:
+        """Whole store as plain ``{session id: row}`` (bulk-only)."""
         return self._backend.snapshot()
 
     def persist(self) -> None:

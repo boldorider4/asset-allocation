@@ -32,6 +32,8 @@ from storage.wiring import (
     BACKEND_JSON,
     DEFAULT_POSTGRES_DSN,
     assets_backend,
+    cache_backend,
+    isin_backend,
     normalize_backend,
 )
 
@@ -46,6 +48,7 @@ DEFAULT_ASSETS_PATH = REPO_ROOT / "assets.json"
 DEFAULT_CACHE_PATH = REPO_ROOT / "cache.json"
 DEFAULT_ISIN_PATH = REPO_ROOT / "isin.json"
 DEFAULT_USERS_PATH = REPO_ROOT / "users.json"
+DEFAULT_DB_PATH = REPO_ROOT / "asalloc.db"
 
 PositionSource = Literal["justetf", "yfinance"]
 PlotterKind = Literal["web", "pie-chart"]
@@ -64,11 +67,13 @@ class ServerConfig:
     # Kept separate from the plotter output dir on purpose: one instance
     # may serve what another one wrote.
     data_dir: str = "data"
-    # Which backend stores the assets (``json`` today, ``postgres`` when
-    # it lands). Resolved in ``storage.wiring``.
+    # Which backend stores the data (``json`` today, ``sqlite`` and
+    # ``postgres`` when they land). Resolved in ``storage.wiring``.
     backend: str = BACKEND_JSON
     # Connection string for the postgres backend.
     postgres_dsn: str = DEFAULT_POSTGRES_DSN
+    # The SQLite database file (one file, one table per store).
+    db_file: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
 
 @dataclass
@@ -163,6 +168,12 @@ class AppConfig:
             parser.get("server", "postgres_dsn", fallback=DEFAULT_POSTGRES_DSN).strip()
             or DEFAULT_POSTGRES_DSN
         )
+        db_file = DEFAULT_DB_PATH
+        raw_db = parser.get("server", "db_file", fallback=None)
+        if raw_db and raw_db.strip():
+            db_file = Path(raw_db.strip()).expanduser()
+            if not db_file.is_absolute():
+                db_file = (cfg_path.parent / db_file).resolve()
         return ServerConfig(
             port=port,
             address=address,
@@ -170,6 +181,7 @@ class AppConfig:
             data_dir=data_dir,
             backend=backend,
             postgres_dsn=postgres_dsn,
+            db_file=db_file,
         )
 
     @classmethod
@@ -369,25 +381,31 @@ class RuntimeContext:
                     self.config.assets_file,
                     self.config.server.backend,
                     self.config.server.postgres_dsn,
+                    self.config.server.db_file,
                 ),
             )
         return self._asset_repo
 
     @property
     def isin_registry(self):  # type: ignore[no-untyped-def]
-        """ISIN registry: ``IsinRegistry`` over ``JsonStorage``.
+        """ISIN registry: ``IsinRegistry`` over the configured backend.
 
         Lazily built against ``config.isin_file`` and opened eagerly.
         Factory probe hits and broker bucket mappings stage writes here;
         they become durable only via :meth:`flush_isin_registry` (callers
         own durability — no backend nouns leak past ``persist()``).
         """
-        from storage.json_storage import JsonStorage
-        from storage.records import IsinRecord
         from storage.repositories import IsinRegistry
 
         if self._isin_repo is None:
-            repo = IsinRegistry(JsonStorage(self.config.isin_file, IsinRecord))
+            repo = IsinRegistry(
+                isin_backend(
+                    self.config.isin_file,
+                    self.config.server.backend,
+                    self.config.server.postgres_dsn,
+                    self.config.server.db_file,
+                )
+            )
             repo.open()
             self._isin_repo = repo
         return self._isin_repo
@@ -417,6 +435,7 @@ class RuntimeContext:
                 Path(path),
                 self.config.server.backend,
                 self.config.server.postgres_dsn,
+                self.config.server.db_file,
             ),
         )
 
@@ -434,19 +453,22 @@ class RuntimeContext:
     # -- cache (in-memory + flush) --
     @property
     def cache_repo(self):  # type: ignore[no-untyped-def]
-        """Validated cache access: ``CacheRepository`` over ``JsonStorage``.
+        """Validated cache access: ``CacheRepository`` over the backend.
 
         Lazily built against ``config.cache_file``. All cache writes in
         the update path go through here; the plain ``cache`` dict remains
         the in-memory read model (mirrored on every write).
         """
-        from storage.json_storage import JsonStorage
-        from storage.records import CacheEntry
         from storage.repositories import CacheRepository
 
         if self._cache_repo is None:
             self._cache_repo = CacheRepository(
-                JsonStorage(self.config.cache_file, CacheEntry)
+                cache_backend(
+                    self.config.cache_file,
+                    self.config.server.backend,
+                    self.config.server.postgres_dsn,
+                    self.config.server.db_file,
+                )
             )
         return self._cache_repo
 

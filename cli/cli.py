@@ -153,6 +153,7 @@ def cmd_add_user(args: argparse.Namespace) -> None:
             password,
             backend=cfg.server.backend,
             postgres_dsn=cfg.server.postgres_dsn,
+            db_file=cfg.server.db_file,
         )
     except NotImplementedError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -196,6 +197,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
     users_file = (
         Path(args.users_file) if getattr(args, "users_file", None) else ini_cfg.users_file
     )
+    db_file = (
+        Path(args.db_file) if getattr(args, "db_file", None) else ini_cfg.server.db_file
+    )
     user = getattr(args, "user", None) or ini_cfg.user
     proc = subprocess.Popen(
         [
@@ -214,6 +218,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
             str(cache_file),
             "--users-file",
             str(users_file),
+            "--db-file",
+            str(db_file),
             "--user",
             str(user),
             "--backend",
@@ -429,6 +435,13 @@ def main(argv: list[str] | None = None) -> None:
         dest="users_file",
         default=None,
         help="Users JSON file backing the login (default: users.json next to the package).",
+    )
+    serve.add_argument(
+        "--db-file",
+        type=Path,
+        dest="db_file",
+        default=None,
+        help="SQLite database file (default: from config.ini [server] db_file).",
     )
     serve.set_defaults(func=cmd_serve)
 

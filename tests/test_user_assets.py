@@ -207,10 +207,10 @@ class TestBackendSelection(unittest.TestCase):
 
     def test_unknown_backend_falls_back_to_json(self) -> None:
         with self.assertLogs("storage.wiring", level="WARNING"):
-            self.assertEqual(normalize_backend("sqlite"), "json")
+            self.assertEqual(normalize_backend("mongodb"), "json")
         with tempfile.TemporaryDirectory() as store:
             backend = assets_backend(
-                Path(store) / "assets.json", "sqlite"
+                Path(store) / "assets.json", "mongodb"
             )
         self.assertIsInstance(backend, JsonStorage)
 

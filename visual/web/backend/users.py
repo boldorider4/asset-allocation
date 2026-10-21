@@ -21,9 +21,12 @@ def users_repo(
     users_path: str | Path,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> UsersRepository:
     """Repository over the user accounts, scoped to no single user."""
-    return UsersRepository(users_backend(users_path, backend, postgres_dsn))
+    return UsersRepository(
+        users_backend(users_path, backend, postgres_dsn, db_file)
+    )
 
 
 def users_credentials_ok(
@@ -32,6 +35,7 @@ def users_credentials_ok(
     password: str = "",
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> bool:
     """True when the account exists and the password matches.
 
@@ -39,7 +43,7 @@ def users_credentials_ok(
     the login cannot be used to probe for user names. Empty passwords
     are allowed.
     """
-    repo = users_repo(users_path, backend, postgres_dsn)
+    repo = users_repo(users_path, backend, postgres_dsn, db_file)
     repo.open()
     return repo.check_credentials(user, password)
 
@@ -51,6 +55,7 @@ def reset_user_password(
     new_password: str,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> bool:
     """Set a new password after checking the old one.
 
@@ -58,7 +63,7 @@ def reset_user_password(
     not exist) — the two are the same answer, so the reset cannot be
     used to probe for user names. An empty new password is allowed.
     """
-    repo = users_repo(users_path, backend, postgres_dsn)
+    repo = users_repo(users_path, backend, postgres_dsn, db_file)
     repo.open()
     if not repo.check_credentials(user, old_password):
         return False

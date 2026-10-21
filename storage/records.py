@@ -21,6 +21,8 @@ in-memory) can persist them without knowing their fields:
   product ref (iShares product id / SSGA slug).
 * :class:`UserRecord` — one user account: the account key *is* the
   user name (the future primary key), the payload holds the password.
+* :class:`SessionRecord` — one browser session: the user, the
+  incognito state and the expiry.
 
 Nothing here touches I/O; loading leniency (skip bad rows) is a
 backend concern, while these classes are strict (bad keys/values raise).
@@ -29,6 +31,7 @@ backend concern, while these classes are strict (bad keys/values raise).
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 from storage.storage import StorageObject
@@ -41,6 +44,7 @@ __all__ = [
     "UserAssets",
     "IsinRecord",
     "UserRecord",
+    "SessionRecord",
 ]
 
 #: Name a user's portfolio carries until they rename it.
@@ -624,3 +628,90 @@ class UserRecord(DictRow):
     def to_dict(self) -> dict[str, Any]:
         # The user name stays in the key; the payload is the password.
         return {self.PASSWORD: self.password}
+
+
+class SessionRecord(DictRow):
+    """One browser session: the user, the incognito state, the expiry.
+
+    The key is the session id (the value of the ``asalloc_sid``
+    cookie); the payload carries who is logged in, the incognito state
+    they last chose, and when the session dies (``expires_at``, a
+    POSIX timestamp).
+
+    Every field is optional: a half-written row (a session that was
+    only started) is valid, the repository fills the rest.
+    """
+
+    USER = "user"
+    INCOGNITO = "incognito"
+    EXPIRES_AT = "expires_at"
+    ALLOWED_KEYS: frozenset[str] = frozenset({USER, INCOGNITO, EXPIRES_AT})
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        user: str | None = None,
+        incognito: bool | None = None,
+        expires_at: float | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if user is not None:
+            payload[self.USER] = user
+        if incognito is not None:
+            payload[self.INCOGNITO] = incognito
+        if expires_at is not None:
+            payload[self.EXPIRES_AT] = expires_at
+        super().__init__(key, payload)
+
+    def validate(self) -> None:
+        super().validate()
+        user = self._data.get(self.USER)
+        if user is not None and not isinstance(user, str):
+            raise TypeError(f"row {self._key!r} field 'user' must be a string")
+        incognito = self._data.get(self.INCOGNITO)
+        if incognito is not None and not isinstance(incognito, bool):
+            raise TypeError(
+                f"row {self._key!r} field 'incognito' must be a boolean"
+            )
+        expires_at = self._data.get(self.EXPIRES_AT)
+        if expires_at is not None:
+            if isinstance(expires_at, bool) or not isinstance(
+                expires_at, (int, float)
+            ):
+                raise TypeError(
+                    f"row {self._key!r} field 'expires_at' must be a number"
+                )
+            if not math.isfinite(float(expires_at)):
+                raise ValueError(
+                    f"row {self._key!r} field 'expires_at' must be finite"
+                )
+
+    @property
+    def user(self) -> str:
+        """The logged-in user ("" when the row carries none)."""
+        value = self._data.get(self.USER)
+        return "" if value is None else str(value)
+
+    @property
+    def incognito(self) -> bool:
+        """Whether the user chose incognito mode."""
+        return bool(self._data.get(self.INCOGNITO))
+
+    @property
+    def expires_at(self) -> float:
+        """When the session dies (0.0 when it never expires)."""
+        value = self._data.get(self.EXPIRES_AT)
+        return 0.0 if value is None else float(value)
+
+    def expired(self, now: float | None = None) -> bool:
+        """True when the session is past its expiry.
+
+        A row without an expiry counts as expired: the timeout is
+        always set, so such a row predates it and must not linger.
+        """
+        expires_at = self.expires_at
+        if expires_at <= 0.0:
+            return True
+        return expires_at <= (now if now is not None else time.time())

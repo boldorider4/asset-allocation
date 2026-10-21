@@ -162,10 +162,11 @@ def _assets_repo(
     user: str,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> AssetRepository:
     """Repository over the assets store, scoped to one user."""
     return AssetRepository(
-        user, assets_backend(assets_path, backend, postgres_dsn)
+        user, assets_backend(assets_path, backend, postgres_dsn, db_file)
     )
 
 
@@ -174,9 +175,10 @@ def assets_positions_left(
     user: str,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> int:
     """How many positions the user still holds (0 = empty portfolio)."""
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     return sum(
         len(rows)
@@ -190,6 +192,7 @@ def ensure_assets_user(
     user: str,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> bool:
     """Make sure the assets store holds a row for ``user``.
 
@@ -200,7 +203,7 @@ def ensure_assets_user(
     An existing portfolio is never touched: the row is only created
     when the user has none yet.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     if repo.exists():
         return False
@@ -215,9 +218,10 @@ def assets_portfolio_name(
     user: str,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> str:
     """The name of the user's portfolio (the charts are titled with it)."""
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     return repo.portfolio_name
 
@@ -228,6 +232,7 @@ def store_portfolio_name(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Persist the name of the user's portfolio (atomic write).
 
@@ -242,7 +247,7 @@ def store_portfolio_name(
         raise ValueError(
             f"portfolio name must be at most {_PORTFOLIO_NAME_MAXLEN} characters"
         )
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     repo.set_portfolio_name(text)
     repo.persist()
@@ -255,6 +260,7 @@ def load_constituents(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> list[tuple[str, str, list[dict[str, Any]]]]:
     """Read one user's assets + the shared cache into display sections.
 
@@ -263,7 +269,7 @@ def load_constituents(
     a fresh user can add rows to any class; extra buckets the user has
     (outside the canonical set) are appended after them.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     if not repo.exists():
         if repo.store_is_empty():
@@ -403,6 +409,7 @@ def store_constituent_value(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Persist one editable cell into the assets file (atomic write).
 
@@ -421,7 +428,7 @@ def store_constituent_value(
     """
     if field not in ("shares", "value", "short_name"):
         raise ValueError(f"field must be shares, value or short_name, got {field!r}")
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -467,6 +474,7 @@ def reorder_constituents(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Persist a new row order for one bucket (atomic write).
 
@@ -484,7 +492,7 @@ def reorder_constituents(
         or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
     ):
         raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -505,6 +513,7 @@ def delete_constituent(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Delete one row from a bucket (atomic write).
 
@@ -513,7 +522,7 @@ def delete_constituent(
 
     Returns ``{"deleted": True, "rows": n}`` with the remaining row count.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -553,6 +562,7 @@ def add_constituent(
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Append a new row to a bucket (atomic write).
 
@@ -576,7 +586,7 @@ def add_constituent(
     parsed_value = None if value is None else _parse_stored_value(value)
     parsed_shares = None if shares is None else _parse_stored_value(shares)
     clean_short = _parse_stored_text("" if short_name is None else short_name)
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn, db_file)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)

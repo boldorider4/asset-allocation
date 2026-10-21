@@ -40,6 +40,7 @@ from .session import (
     session_id_from_cookie,
 )
 from cli.common import DEFAULT_USER_NAME
+from cli.context import DEFAULT_DB_PATH
 from storage.repositories import UnknownUser
 from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN
 from utils import clear_chart_files
@@ -183,6 +184,7 @@ def _update_worker(
     user: str,
     backend: str,
     postgres_dsn: str,
+    db_file: str | None,
     result_conn,
     cancel_event,
 ) -> None:
@@ -231,6 +233,7 @@ def _update_worker(
             directory=Path(directory),
             backend=backend,
             postgres_dsn=postgres_dsn,
+            db_file=Path(db_file) if db_file else DEFAULT_DB_PATH,
         ),
         plotter_config=ini_plotter,
     )
@@ -328,6 +331,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         assets_file=None,
         cache_file=None,
         users_file=None,
+        db_file=None,
         data_dirname=None,
         user=None,
         backend=None,
@@ -338,6 +342,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._cache_file = cache_file
         # The user accounts (the login asks this store, not the assets).
         self._users_file = users_file
+        # The SQLite database file (one file, one table per store).
+        self._db_file = db_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
         # Fallback user when no session is active (login page default).
@@ -350,7 +356,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def _session(self) -> Session | None:
         """The session of this browser, if it is logged in."""
         return read_session(
-            self.directory, self.headers.get("Cookie")
+            self.directory,
+            self.headers.get("Cookie"),
+            backend=self._backend,
+            postgres_dsn=self._postgres_dsn,
+            db_file=self._db_file,
         )
 
     def _session_user(self) -> str | None:
@@ -391,7 +401,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return
         try:
             left = assets_positions_left(
-                self._assets_file, user, self._backend, self._postgres_dsn
+                self._assets_file,
+                user,
+                self._backend,
+                self._postgres_dsn,
+                self._db_file,
             )
         except Exception as exc:
             logger.warning("could not count positions for %s: %s", user, exc)
@@ -470,6 +484,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 str(payload.get("new_password") or ""),
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("password reset failed: %s", exc)
@@ -518,7 +533,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if self._ensure_assets_user(user):
             logger.info("Created an empty portfolio for %r", user)
         session_id = new_session_id()
-        start_session(self.directory, session_id, user, incognito=incognito)
+        start_session(
+            self.directory,
+            session_id,
+            user,
+            incognito=incognito,
+            backend=self._backend,
+            postgres_dsn=self._postgres_dsn,
+            db_file=self._db_file,
+        )
         body = json.dumps(
             {
                 "ok": True,
@@ -542,7 +565,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return False
         session_id = session_id_from_cookie(self.headers.get("Cookie"))
         if session_id:
-            end_session(self.directory, session_id)
+            end_session(
+                self.directory,
+                session_id,
+                backend=self._backend,
+                postgres_dsn=self._postgres_dsn,
+                db_file=self._db_file,
+            )
         body = json.dumps({"ok": True, "redirect": "/login"}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -567,6 +596,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 "" if password is None else str(password),
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
         except Exception as exc:
             # A broken accounts store must not drop the connection: the
@@ -582,7 +612,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return False
         try:
             return ensure_assets_user(
-                self._assets_file, user, self._backend, self._postgres_dsn
+                self._assets_file,
+                user,
+                self._backend,
+                self._postgres_dsn,
+                self._db_file,
             )
         except Exception as exc:
             # A failed write must not block the login: the dashboard then
@@ -626,6 +660,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 session.user,
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
             from .constituents import assets_portfolio_name
 
@@ -637,6 +672,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     session.user,
                     self._backend,
                     self._postgres_dsn,
+                    self._db_file,
                 ),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
@@ -754,6 +790,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 session.user,
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -807,6 +844,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 session.user,
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -860,6 +898,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 session.user,
                 self._backend,
                 self._postgres_dsn,
+                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -997,6 +1036,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     session.user,
                     self._backend,
                     self._postgres_dsn,
+                    str(self._db_file) if self._db_file else None,
                     send_conn,
                     cancel_event,
                 ),
@@ -1248,6 +1288,7 @@ def serve_forever(
     assets_file: str | None = None,
     cache_file: str | None = None,
     users_file: str | None = None,
+    db_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
@@ -1260,6 +1301,7 @@ def serve_forever(
         assets_file=assets_file,
         cache_file=cache_file,
         users_file=users_file,
+        db_file=db_file,
         data_dirname=data_dirname,
         user=user,
         backend=backend,
@@ -1278,6 +1320,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
     parser.add_argument("--users-file", default=None, help="Users JSON file holding the accounts that may log in.")
+    parser.add_argument("--db-file", default=None, help="SQLite database file (one file, one table per store).")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
     parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | postgres).")
     parser.add_argument("--postgres-dsn", default=DEFAULT_POSTGRES_DSN, help="Postgres connection string for the postgres backend.")
@@ -1291,6 +1334,7 @@ def main(argv: list[str] | None = None) -> None:
         assets_file=args.assets_file,
         cache_file=args.cache_file,
         users_file=args.users_file,
+        db_file=args.db_file,
         data_dirname=args.plotter_data_dir,
         user=args.user,
         backend=args.backend,

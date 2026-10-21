@@ -2,9 +2,10 @@
 """Managing the user accounts (the users store).
 
 The accounts live in their own repository (``users.json`` today, a
-Postgres table when that backend lands). This module is the single
-place that writes them, so the script (``scripts/add_users.py``) and
-the CLI command (``asalloc add-user``) behave identically.
+table of the SQLite database when that backend is selected). This
+module is the single place that writes them, so the script
+(``scripts/add_users.py``) and the CLI command (``asalloc add-user``)
+behave identically.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ def add_user_account(
     *,
     backend: str = BACKEND_JSON,
     postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
 ) -> bool:
     """Add the account ``user`` to the users store.
 
@@ -71,7 +73,9 @@ def add_user_account(
     if normalize_backend(backend) == BACKEND_POSTGRES:
         return add_user_postgres(postgres_dsn, name, password)
 
-    repo = UsersRepository(users_backend(users_file, BACKEND_JSON, postgres_dsn))
+    repo = UsersRepository(
+        users_backend(users_file, backend, postgres_dsn, db_file)
+    )
     repo.open()
     created = not repo.exists(name)
     if created:
