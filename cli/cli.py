@@ -230,8 +230,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
             ini_data_dir,
         ],
         cwd=cfg.directory,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        # The server (and the update workers it spawns) inherit our
+        # stdout/stderr: under systemd that is the journal, so a failed
+        # request is visible instead of vanishing into /dev/null.
         start_new_session=True,
     )
     # Fail fast when the server dies immediately (busy port, bad config,

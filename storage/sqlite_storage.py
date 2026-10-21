@@ -57,7 +57,15 @@ def _shared_connection(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(
         path,
         timeout=BUSY_TIMEOUT_SECONDS,
-        isolation_level="DEFERRED",
+        # Autocommit: every statement is its own transaction. A
+        # long-lived read transaction would hold a *snapshot* of the
+        # database, and a write on top of a stale snapshot fails
+        # outright with SQLITE_BUSY_SNAPSHOT ("database is locked") —
+        # the busy handler cannot break that one. That is what made
+        # the server's writes (edits, sessions) fail next to the
+        # update process. The context manager still groups statements
+        # in an explicit transaction (see __enter__).
+        isolation_level=None,
         # The web server is multi-threaded and the connection is shared
         # per process: sqlite3 serializes the statements on the
         # connection itself, so this is safe.
@@ -128,13 +136,13 @@ class SqliteStorage(Storage[T]):
         return self
 
     def commit(self) -> None:
-        """Commit the open transaction."""
-        if self._conn is not None:
+        """Commit the open transaction (a no-op without one)."""
+        if self._conn is not None and self._conn.in_transaction:
             self._conn.commit()
 
     def rollback(self) -> None:
-        """Roll the open transaction back."""
-        if self._conn is not None:
+        """Roll the open transaction back (a no-op without one)."""
+        if self._conn is not None and self._conn.in_transaction:
             self._conn.rollback()
 
     # -- backend-neutral lifecycle (Storage ABC) ------------------------
@@ -152,14 +160,20 @@ class SqliteStorage(Storage[T]):
         return {row["key"]: json.loads(row["payload"]) for row in rows}
 
     def persist(self) -> None:
-        """Commit staged writes."""
+        """Make the staged writes durable.
+
+        Autocommit already wrote them; this only closes an explicit
+        transaction (the context manager's).
+        """
         self.commit()
 
     def close(self) -> None:
-        """Release the connection *without* committing.
+        """Release the connection.
 
-        The connection is shared with the other stores of the same
-        database file: the last store to close it closes it for good.
+        Nothing is lost: the connection is in autocommit mode, so the
+        writes are already durable. The connection is shared with the
+        other stores of the same database file: the last store to close
+        it closes it for good.
         """
         if self._conn is not None:
             self._conn = None
@@ -167,13 +181,15 @@ class SqliteStorage(Storage[T]):
 
     def __enter__(self) -> SqliteStorage[T]:
         self.connect()
+        # The context manager is the one place that groups statements:
+        # an explicit transaction (autocommit is on, so it is ours).
+        self._require_conn().execute("BEGIN")
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if exc_type is None:
-            self.commit()
-        else:
-            self.rollback()
+        conn = self._conn
+        if conn is not None and conn.in_transaction:
+            conn.execute("COMMIT" if exc_type is None else "ROLLBACK")
         self.close()
 
     # -- point access (Storage ABC) -------------------------------------

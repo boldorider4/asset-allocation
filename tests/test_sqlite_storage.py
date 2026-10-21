@@ -11,6 +11,8 @@ from __future__ import annotations
 import inspect
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -142,16 +144,17 @@ class TestLifecycle(unittest.TestCase):
         other.open()
         self.assertIsNotNone(other.get("alice"))
 
-    def test_close_releases_without_committing(self) -> None:
+    def test_a_write_is_durable_without_an_explicit_commit(self) -> None:
+        # Autocommit: the write is durable on its own (the Postgres
+        # stub would keep it in its transaction until commit).
         store = _store(self.path)
         store.open()
         store.put(UserRecord("alice", {"password": "x"}))
         store.close()
         self.assertFalse(store.connected)
-        # The row was never committed, so it is gone.
         other = _store(self.path)
         other.open()
-        self.assertIsNone(other.get("alice"))
+        self.assertIsNotNone(other.get("alice"))
 
     def test_the_context_manager_commits(self) -> None:
         with _store(self.path) as store:
@@ -193,6 +196,75 @@ class TestLifecycle(unittest.TestCase):
         assert record is not None
         self.assertEqual(record.portfolio_name, "Fund")
         self.assertEqual(record.positions(), {"equity_portfolio": []})
+
+
+class TestConcurrency(unittest.TestCase):
+    """A write must not be poisoned by a stale read snapshot.
+
+    A long-lived read transaction holds a *snapshot* of the database;
+    a write on top of a snapshot that another connection has moved past
+    fails outright with SQLITE_BUSY_SNAPSHOT ("database is locked") —
+    the busy handler cannot break that one. That is what made the
+    server's writes (edits, sessions) fail next to the update process.
+    """
+
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        self.path = Path(self._holder.name) / "store.db"
+
+    def _other_connection(self) -> sqlite3.Connection:
+        """A second connection to the same file (another process)."""
+        conn = sqlite3.connect(self.path, timeout=5.0)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_a_write_after_another_connection_committed(self) -> None:
+        store = _store(self.path)
+        store.open()
+        store.get("nope")  # the read that would freeze a snapshot
+        other = self._other_connection()
+        other.execute(
+            "CREATE TABLE IF NOT EXISTS rows "
+            "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        other.execute("INSERT OR REPLACE INTO rows VALUES ('x', '{}')")
+        other.commit()
+        # The write on the stale snapshot must still work.
+        store.put(UserRecord("alice", {"password": "x"}))
+        self.assertIsNotNone(store.get("alice"))
+
+    def test_a_write_while_another_process_writes(self) -> None:
+        store = _store(self.path)
+        store.open()
+        store.get("nope")
+        # Another process writes and commits (the update worker).
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sqlite3, sys;"
+                "conn = sqlite3.connect(sys.argv[1], timeout=5);"
+                "conn.execute('CREATE TABLE IF NOT EXISTS rows "
+                "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)');"
+                "conn.execute(\"INSERT OR REPLACE INTO rows VALUES ('y', '{}')\");"
+                "conn.commit()",
+                str(self.path),
+            ],
+            check=True,
+        )
+        store.put(UserRecord("alice", {"password": "x"}))
+        self.assertIsNotNone(store.get("alice"))
+
+    def test_a_write_is_visible_to_another_connection(self) -> None:
+        store = _store(self.path)
+        store.open()
+        store.put(UserRecord("alice", {"password": "x"}))
+        other = self._other_connection()
+        row = other.execute(
+            "SELECT payload FROM rows WHERE key = 'alice'"
+        ).fetchone()
+        self.assertIsNotNone(row)
 
 
 class TestParityWithThePostgresStub(unittest.TestCase):
