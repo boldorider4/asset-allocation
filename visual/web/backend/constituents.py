@@ -179,6 +179,22 @@ def assets_user_exists(
     return repo.exists()
 
 
+def assets_positions_left(
+    assets_path: str | Path,
+    user: str,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+) -> int:
+    """How many positions the user still holds (0 = empty portfolio)."""
+    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo.open()
+    return sum(
+        len(rows)
+        for rows in repo.snapshot().values()
+        if isinstance(rows, list)
+    )
+
+
 def load_constituents(
     assets_path: str | Path,
     cache_path: str | Path,

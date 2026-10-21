@@ -190,3 +190,36 @@ def bucket_for_isin(ctx: Any, isin: str | None) -> str:
         )
         return DEFAULT_ISIN_PORTFOLIO_BUCKET
     return bucket
+
+
+# Suffix of the chart payload files (``*.raw``) in a user's chart dir.
+CHART_SUFFIX = ".raw"
+
+
+def chart_files(directory: Path) -> list[Path]:
+    """The chart payload files in *directory* (empty when there is none).
+
+    The ``*.raw`` files are *derived* data: they always describe the
+    portfolio as of the last update run.
+    """
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob(f"*{CHART_SUFFIX}"))
+
+
+def clear_chart_files(directory: Path) -> int:
+    """Delete the chart payload files in *directory*; returns how many.
+
+    A missing directory is not an error (nothing to clear). A file that
+    cannot be removed is logged, not raised: a stale chart must never
+    abort an update.
+    """
+    removed = 0
+    for path in chart_files(directory):
+        try:
+            path.unlink()
+        except OSError as exc:
+            logger.warning("could not remove stale chart %s: %s", path, exc)
+            continue
+        removed += 1
+    return removed

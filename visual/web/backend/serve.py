@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from .constituents import load_constituents, render_constituents_page
+from .constituents import (
+    assets_positions_left,
+    load_constituents,
+    render_constituents_page,
+)
 from .session import (
     Session,
     clear_cookie_header,
@@ -38,6 +42,7 @@ from .session import (
 from cli.common import DEFAULT_USER_NAME
 from storage.repositories import UnknownUser
 from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN
+from utils import clear_chart_files
 
 logger = logging.getLogger(__name__)
 
@@ -372,15 +377,45 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return True
 
+    def _clear_empty_user_charts(self, user: str) -> None:
+        """A user without positions has no charts: clear their chart dir.
+
+        Self-healing: the charts are derived data, so an emptied
+        portfolio must not keep showing the last computed ones. Failures
+        are logged, never raised.
+        """
+        if not self._assets_file:
+            return
+        try:
+            left = assets_positions_left(
+                self._assets_file, user, self._backend, self._postgres_dsn
+            )
+        except Exception as exc:
+            logger.warning("could not count positions for %s: %s", user, exc)
+            return
+        if left > 0:
+            return
+        cleared = clear_chart_files(
+            Path(self.directory) / self._data_dirname / user
+        )
+        if cleared:
+            logger.info(
+                "Cleared %d chart file(s) for %s (no positions left)",
+                cleared,
+                user,
+            )
+
     def _serve_dashboard(self) -> bool:
         """Serve the app shell; without a session it goes to the login page."""
         if urlsplit(self.path).path not in DASHBOARD_PATHS:
             return False
-        if self._session() is None:
+        session = self._session()
+        if session is None:
             self.send_response(302)
             self.send_header("Location", "/login")
             self.end_headers()
             return True
+        self._clear_empty_user_charts(session.user)
         return False
 
     def _serve_session_status(self) -> bool:
@@ -484,17 +519,21 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         session = self._require_session()
         if session is None:
             return True
+        # Heal before anything else: a user without positions has no
+        # charts, and that must not depend on the cache being set up.
+        self._clear_empty_user_charts(session.user)
         try:
             if not self._assets_file or not self._cache_file:
                 raise RuntimeError("assets file not configured")
+            sections = load_constituents(
+                self._assets_file,
+                self._cache_file,
+                session.user,
+                self._backend,
+                self._postgres_dsn,
+            )
             body = render_constituents_page(
-                load_constituents(
-                    self._assets_file,
-                    self._cache_file,
-                    session.user,
-                    self._backend,
-                    self._postgres_dsn,
-                ),
+                sections,
                 incognito=incognito_flag(parts.query),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"

@@ -20,6 +20,7 @@ from scrape.oskar import _ISIN_STRICT, _OSKAR, update_oskar_etfs_in_portfolio
 from scrape.scalable import update_scalable_etfs_in_portfolio
 from scrape.traderepublic import update_traderepublic_etfs_in_portfolio
 from utils import (
+    clear_chart_files,
     persist_fetched_values_in_portfolio,
     persist_oskar_shares_in_portfolio,
     save_position_in_cache,
@@ -135,6 +136,12 @@ def main(ctx: RuntimeContext) -> None:
         plotter.data_dir = output_dir
         plotter._slug_counts = {}
         plotter._plot_seq = 0
+        # The chart files are derived data: rewrite the directory so it
+        # always matches this run (an empty portfolio leaves no charts
+        # behind, a smaller run leaves no leftovers).
+        cleared = clear_chart_files(output_dir)
+        if cleared:
+            logger.info("Cleared %d stale chart file(s) in %s", cleared, output_dir)
     logger.info("Writing charts to %s", output_dir)
     total_growth_portfolio.plot_geosplit(
         title="90-10 Equity Portfolio: Geo Breakdown",

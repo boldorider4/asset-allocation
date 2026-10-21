@@ -71,8 +71,19 @@ class _ServerCase(unittest.TestCase):
         self.assets.write_text(
             json.dumps(
                 {
-                    _USER: {"equity_portfolio": []},
-                    _OTHER_USER: {"equity_portfolio": []},
+                    # Both known users hold a position, so their chart
+                    # files are legitimate (a user without positions has
+                    # no charts - the server clears them).
+                    _USER: {
+                        "equity_portfolio": [
+                            {"name": "A", "ISIN": "IE00A", "shares": 1, "value": 10}
+                        ]
+                    },
+                    _OTHER_USER: {
+                        "equity_portfolio": [
+                            {"name": "B", "ISIN": "IE00B", "shares": 2, "value": 20}
+                        ]
+                    },
                 }
             ),
             encoding="utf-8",
@@ -232,6 +243,34 @@ class TestDashboardEndpoint(_ServerCase):
         status, body = self._get("/data/01-a.raw", cookie=None)
         self.assertEqual(status, 404)
         self.assertNotIn("PLAIN", body)
+
+    def test_empty_user_has_no_charts(self) -> None:
+        # A user without positions must not keep showing the last
+        # computed charts: the server clears their chart dir.
+        empty = "empty_user"
+        (self.data_root / empty).mkdir(parents=True)
+        stale = self.data_root / empty / "01-complete-portfolio.raw"
+        stale.write_text("STALE", encoding="utf-8")
+        assets = json.loads(self.assets.read_text(encoding="utf-8"))
+        assets[empty] = {"equity_portfolio": []}
+        self.assets.write_text(json.dumps(assets), encoding="utf-8")
+
+        cookie = self.login(empty)
+        # The dashboard shell heals the charts on the way in...
+        self._get("/dashboard", cookie=cookie)
+        self.assertFalse(stale.exists())
+        # ...and so does the constituents page.
+        stale.write_text("STALE", encoding="utf-8")
+        self._get("/constituents", cookie=cookie)
+        self.assertFalse(stale.exists())
+
+    def test_user_with_positions_keeps_their_charts(self) -> None:
+        # The charts of a user who still holds positions stay untouched.
+        chart = self.data_root / _USER / "01-a.raw"
+        self.assertTrue(chart.exists())
+        self._get("/dashboard", cookie=self.cookie)
+        self._get("/constituents", cookie=self.cookie)
+        self.assertTrue(chart.exists())
 
     def test_data_serves_the_session_users_directory(self) -> None:
         # Charts are per user: the session decides whose dir is served.

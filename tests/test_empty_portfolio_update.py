@@ -63,6 +63,20 @@ class TestEmptyPortfolioUpdate(unittest.TestCase):
             # and must be treated as empty, not as a KeyError.
             run_update(ctx)
 
+    def test_update_clears_stale_charts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ctx = _ctx(tmp_path, {})
+            chart_dir = ctx.output_data_dir()
+            chart_dir.mkdir(parents=True, exist_ok=True)
+            stale = chart_dir / "01-complete-portfolio.raw"
+            stale.write_text("{}")
+            # The charts are derived data: an update for an empty
+            # portfolio leaves no chart behind - not even an old one.
+            run_update(ctx)
+            self.assertFalse(stale.exists())
+            self.assertEqual(list(chart_dir.glob("*.raw")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

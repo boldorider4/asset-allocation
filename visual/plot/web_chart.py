@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+from utils import CHART_SUFFIX
+
 from .chart_merge import PieFactor, merge_charts, merge_closing_title
 from .family_palette import family_colors
 from .visual import Visual
@@ -119,9 +121,9 @@ class WebChart(Visual):
         dest.mkdir(parents=True, exist_ok=True)
         type(self)._plot_seq += 1
         stem = f"{type(self)._plot_seq:02d}-{self._unique_stem(_slug(self._title))}"
-        path = dest / f"{stem}.raw"
+        path = dest / f"{stem}{CHART_SUFFIX}"
         # Atomic write so a killed update never leaves a torn chart behind.
-        tmp_path = dest / f".{stem}.raw.{os.getpid()}.tmp"
+        tmp_path = dest / f".{stem}{CHART_SUFFIX}.{os.getpid()}.tmp"
         tmp_path.write_text(json.dumps(self._payload(palette), indent=2) + "\n", encoding="utf-8")
         os.replace(tmp_path, path)
 
