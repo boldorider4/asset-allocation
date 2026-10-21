@@ -48,6 +48,7 @@ class TestCliPlotFlags(unittest.TestCase):
                     fetch_tr=False,
                     assets_file=Path(tmp) / "assets.json",
                     cache_file=Path(tmp) / "cache.json",
+                    isin_file=Path(tmp) / "isin.json",
                     position_source="yfinance",
                     plot="pie-chart",
                     log_level="INFO",
@@ -89,6 +90,45 @@ class TestConfigFlag(unittest.TestCase):
         )
         return path
 
+    def _ini_with_database(self, tmp: Path) -> Path:
+        """An ini that points at one SQLite database."""
+        path = tmp / "db.ini"
+        path.write_text(
+            "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n"
+            "db_file = asalloc.db\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def _serve_cmd(self, ini: Path, **overrides):
+        """Run cmd_serve against a fake Popen; returns the child's argv."""
+        calls: dict = {}
+
+        def fake_popen(cmd, **kwargs):
+            calls["cmd"] = list(cmd)
+            raise RuntimeError("stop here")
+
+        values = {
+            "assets_file": None,
+            "cache_file": None,
+            "users_file": None,
+            "db_file": None,
+            "config": ini,
+        }
+        values.update(overrides)
+        namespace = argparse.Namespace(**values)
+        try:
+            with patch("cli.cli._find_server_pids", return_value=[]), patch(
+                "cli.cli.subprocess.Popen", side_effect=fake_popen
+            ):
+                cmd_serve(namespace)
+        except RuntimeError as exc:
+            # Only the fake Popen's sentinel is swallowed: a real
+            # configuration error has to reach the caller.
+            if "stop here" not in str(exc):
+                raise
+        return calls["cmd"]
+
     def _update_ns(self, tmp: Path, config) -> argparse.Namespace:
         return argparse.Namespace(
             fetch_prices=None,
@@ -99,6 +139,7 @@ class TestConfigFlag(unittest.TestCase):
             fetch_tr=None,
             assets_file=tmp / "assets.json",
             cache_file=tmp / "cache.json",
+            isin_file=tmp / "isin.json",
             position_source="justetf",
             plot=None,
             log_level=None,
@@ -143,7 +184,7 @@ class TestConfigFlag(unittest.TestCase):
         import cli.cli as cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini(Path(tmp))
+            ini = self._ini_with_stores(Path(tmp))
             (Path(tmp) / "visualizer").mkdir()
             calls: dict = {}
             prev = os.environ.get("ASALLOC_CONFIG")
@@ -162,6 +203,8 @@ class TestConfigFlag(unittest.TestCase):
                             argparse.Namespace(
                                 assets_file=None,
                                 cache_file=None,
+                                users_file=None,
+                                db_file=None,
                                 config=ini,
                             )
                         )
@@ -196,6 +239,7 @@ class TestConfigFlag(unittest.TestCase):
                                 assets_file=None,
                                 cache_file=None,
                                 users_file=None,
+                                db_file=None,
                                 config=ini,
                             )
                         )
@@ -215,6 +259,8 @@ class TestConfigFlag(unittest.TestCase):
             self.assertEqual(
                 cmd[cmd.index("--users-file") + 1], str(Path(tmp) / "u.json")
             )
+            # The json backend has no database.
+            self.assertNotIn("--db-file", cmd)
 
     def test_serve_flags_win_over_the_ini(self) -> None:
         import cli.cli as cli
@@ -238,6 +284,7 @@ class TestConfigFlag(unittest.TestCase):
                                 assets_file=Path(tmp) / "flag-assets.json",
                                 cache_file=None,
                                 users_file=None,
+                                db_file=None,
                                 config=ini,
                             )
                         )
@@ -251,6 +298,49 @@ class TestConfigFlag(unittest.TestCase):
                 cmd[cmd.index("--assets-file") + 1],
                 str(Path(tmp) / "flag-assets.json"),
             )
+
+    def test_serve_with_sqlite_passes_only_the_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_database(Path(tmp))
+            cmd = self._serve_cmd(ini)
+            self.assertEqual(
+                cmd[cmd.index("--db-file") + 1], str(Path(tmp) / "asalloc.db")
+            )
+            # The JSON files are not the store here: they stay out of the
+            # process list.
+            for flag in ("--assets-file", "--cache-file", "--users-file"):
+                self.assertNotIn(flag, cmd)
+
+    def test_serve_with_json_passes_only_the_json_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_stores(Path(tmp))
+            cmd = self._serve_cmd(ini)
+            for flag in ("--assets-file", "--cache-file", "--users-file"):
+                self.assertIn(flag, cmd)
+            self.assertNotIn("--db-file", cmd)
+
+    def test_serve_rejects_the_database_and_the_json_files_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_stores(Path(tmp))
+            with self.assertRaises(SystemExit):
+                self._serve_cmd(
+                    ini,
+                    db_file=Path(tmp) / "asalloc.db",
+                    assets_file=Path(tmp) / "a.json",
+                )
+
+    def test_serve_needs_a_location_for_every_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # The ini names the assets and the cache, but not the users.
+            ini = Path(tmp) / "partial.ini"
+            ini.write_text(
+                "[server]\nport = 8765\ndirectory = vis\n"
+                "[update]\nassets_file = a.json\ncache_file = c.json\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(Exception) as ctx:
+                self._serve_cmd(ini)
+            self.assertIn("--users-file", str(ctx.exception))
 
     def test_config_flag_parses_before_and_after_subcommand(self) -> None:
         seen: list = []

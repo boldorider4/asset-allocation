@@ -102,7 +102,9 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
         assets_file=assets,
         cache_file=cache,
         isin_file=isin,
-        server=ServerConfig(port=0, address="localhost", directory=viz),
+        server=ServerConfig(
+            port=0, address="localhost", directory=viz, db_file=tmp / "asalloc.db"
+        ),
     )
     ctx = RuntimeContext(config=config)
     countries_mock = MagicMock(return_value=[dict(r) for r in FRESH_COUNTRIES])

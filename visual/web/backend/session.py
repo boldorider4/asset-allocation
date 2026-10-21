@@ -134,6 +134,7 @@ def read_session(
         # so the store does not keep it around.
         if repo.drop(session_id):
             repo.persist()
+            logger.info("dropped the session %s (expired or unknown)", session_id[:8])
         return None
     return Session(
         user=record.user,

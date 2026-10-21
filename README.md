@@ -54,6 +54,8 @@ The store itself is backend-agnostic: the code above the storage layer only talk
 
 `[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default). `[server] db_file` names the SQLite database (`~/.local/asalloc/asalloc.db` by default).
 
+**Where the stores live.** The backend decides: with `sqlite` every store is a table in the one database (`[server] db_file`), with `json` each store is its own file (`[update] assets_file` / `cache_file` / `users_file` / `isin_file`). The two are alternatives — `asalloc serve` and `asalloc update` take either `--db-file` or the per-store `--*-file` options, never both, and the ini key counts as the location just like a flag (the built-in defaults do *not*: they point into the repository, not into the deployment, so a store with neither a flag nor an ini key is a configuration error).
+
 **SQLite.** The database runs *inside* the process: no server, no idle load, nothing to supervise — which is what a 24/7 Raspberry Pi wants. WAL mode lets the web server read while the update writes, and every table of a database shares one connection (two connections would deadlock against each other's write transaction). The tables are `user_assets`, `cache`, `isin_registry`, `users` and `sessions`; the payload of a row is its JSON form, so a row written by one backend reads back identically in the other.
 
 To move an existing installation over, import the JSON stores once and flip the backend:

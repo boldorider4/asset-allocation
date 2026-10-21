@@ -166,5 +166,132 @@ class TestSessionStoreBackends(unittest.TestCase):
                     )
 
 
+class TestSessionSurvivesAnUpdate(unittest.TestCase):
+    """The update writes to the same store; the session must survive it.
+
+    The update runs in its own process (like the systemd timer does),
+    so this is the interleaving that broke the session before: one
+    writer and the server sharing the database.
+    """
+
+    def test_the_session_survives_a_concurrent_update(self) -> None:
+        import os
+        import sqlite3
+        import subprocess
+        import sys
+
+        from cli.context import AppConfig, RuntimeContext, ServerConfig
+        from cli.update import main as run_update
+        from storage.repositories import UsersRepository
+        from storage.wiring import users_backend
+
+        repo_root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_file = root / "asalloc.db"
+            assets = root / "assets.json"
+            cache = root / "cache.json"
+            isin = root / "isin.json"
+            assets.write_text(
+                json.dumps(
+                    {
+                        "alice": {
+                            "portfolio_name": "Fund",
+                            "positions": {
+                                "equity_portfolio": [
+                                    {
+                                        "name": "A",
+                                        "ISIN": "IE00A",
+                                        "shares": 1,
+                                        "value": 10,
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cache.write_text(json.dumps({"IE00A": {"price": 10.0}}), encoding="utf-8")
+            isin.write_text("{}", encoding="utf-8")
+
+            # The users live in the database (the sqlite backend).
+            users_repo = UsersRepository(
+                users_backend(root / "users.json", "sqlite", db_file=db_file)
+            )
+            users_repo.open()
+            users_repo.add_user("alice", "pw")
+            users_repo.persist()
+
+            ctx = RuntimeContext(
+                config=AppConfig(
+                    user="alice",
+                    assets_file=assets,
+                    cache_file=cache,
+                    isin_file=isin,
+                    plotter="web",
+                    server=ServerConfig(
+                        port=0,
+                        address="localhost",
+                        directory=root / "viz",
+                        backend="sqlite",
+                        db_file=db_file,
+                    ),
+                )
+            )
+            # A session, written by the server.
+            from visual.web.backend.session import login, read_session
+
+            login(
+                root / "viz",
+                "sid",
+                "alice",
+                backend="sqlite",
+                db_file=db_file,
+            )
+            # The update, in its own process (like the systemd timer).
+            worker = root / "worker.py"
+            worker.write_text(
+                "from pathlib import Path\n"
+                "from cli.context import AppConfig, RuntimeContext, ServerConfig\n"
+                "from cli.update import main\n"
+                f"cfg = AppConfig(user='alice', assets_file={str(assets)!r},\n"
+                f"    cache_file={str(cache)!r}, isin_file={str(isin)!r},\n"
+                "    server=ServerConfig(port=0, address='localhost',\n"
+                f"        directory=Path({str(root / 'viz')!r}), backend='sqlite',\n"
+                f"        db_file={str(db_file)!r}))\n"
+                "main(RuntimeContext(config=cfg))\n",
+                encoding="utf-8",
+            )
+            env = dict(os.environ, ASALLOC_CONFIG=str(root / "none.ini"))
+            result = subprocess.run(
+                [sys.executable, str(worker)],
+                capture_output=True,
+                text=True,
+                cwd=str(repo_root),
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+            # The session is still there.
+            session = read_session(
+                root / "viz", _cookie("sid"), backend="sqlite", db_file=db_file
+            )
+            assert session is not None
+            self.assertEqual(session.user, "alice")
+            # And the update really used the same database: it created
+            # the assets table there.
+            conn = sqlite3.connect(db_file)
+            try:
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+            finally:
+                conn.close()
+            self.assertIn("user_assets", tables)
+
+
 if __name__ == "__main__":
     unittest.main()

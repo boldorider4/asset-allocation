@@ -22,7 +22,7 @@ import configparser
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -133,6 +133,23 @@ class AppConfig:
             raise FileNotFoundError(f"config file not found: {cfg_path}")
         parser.read(cfg_path, encoding="utf-8")
         return cfg_path, parser
+
+    @classmethod
+    def ini_has(
+        cls, section: str, option: str, path: Path | None = None
+    ) -> bool:
+        """True when the ini file sets ``option`` in ``section``.
+
+        The built-in defaults do *not* count: a store that is only
+        "configured" by a default would point into the repository
+        instead of the deployment, so the ini (or an explicit flag) has
+        to name it.
+        """
+        try:
+            _, parser = cls._ini_parser(path)
+        except FileNotFoundError:
+            return False
+        return parser.has_option(section, option)
 
     @classmethod
     def _resolve_ini_path(
@@ -285,6 +302,11 @@ class AppConfig:
             )
         ini_update = cls._update_from_ini(ini_path)
         ini_kind, ini_plotter = cls._plotter_from_ini(ini_path)
+
+        # An explicit --db-file wins over the ini's database file.
+        db_file_flag = getattr(args, "db_file", None)
+        if db_file_flag:
+            server = replace(server, db_file=Path(db_file_flag).expanduser())
 
         def pick(cli_value: Any, ini_value: Any) -> Any:
             return cli_value if cli_value is not None else ini_value

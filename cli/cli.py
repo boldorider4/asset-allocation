@@ -13,6 +13,8 @@ from pathlib import Path
 from cli.update import main as run_update
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.logger import attach_color_stderr_handler_for_module, configure_cli_logging
+import cli.stores
+from cli.stores import db_file, resolve_store_locations
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -47,6 +49,24 @@ def server_port(path: Path | None = None) -> int:
 def cmd_update(args: argparse.Namespace) -> None:
     config = AppConfig.from_cli(args, ini_path=getattr(args, "config", None))
     configure_cli_logging(getattr(logging, config.log_level))
+    # The stores must have a location: with the json backend each one
+    # needs its file (a flag or an ini key), with sqlite the one
+    # database covers them all.
+    resolve_store_locations(
+        config.server.backend,
+        "update",
+        ini_path=getattr(args, "config", None),
+        flags={
+            "assets_file": getattr(args, "assets_file", None),
+            "cache_file": getattr(args, "cache_file", None),
+            "isin_file": getattr(args, "isin_file", None),
+        },
+    )
+    db_file(
+        config.server.backend,
+        ini_path=getattr(args, "config", None),
+        flag_value=getattr(args, "db_file", None),
+    )
     ctx = RuntimeContext(config=config)
     run_update(ctx)
 
@@ -191,44 +211,58 @@ def cmd_serve(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
     # The stores come from the ini (config.ini [update] section); an
-    # explicit flag always wins.
-    assets_file = Path(args.assets_file) if args.assets_file else ini_cfg.assets_file
-    cache_file = Path(args.cache_file) if args.cache_file else ini_cfg.cache_file
-    users_file = (
-        Path(args.users_file) if getattr(args, "users_file", None) else ini_cfg.users_file
+    # explicit flag always wins. The backend decides *which* locations
+    # matter: one database (--db-file) or the loose JSON files.
+    ini_path = getattr(args, "config", None)
+    backend = ini_cfg.server.backend
+    store_flags = {
+        "assets_file": getattr(args, "assets_file", None),
+        "cache_file": getattr(args, "cache_file", None),
+        "users_file": getattr(args, "users_file", None),
+    }
+    db_flag = getattr(args, "db_file", None)
+    if db_flag and any(store_flags.values()):
+        print(
+            "error: --db-file and the per-store files are alternatives: "
+            "pass either the database or the JSON files, not both",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    located = resolve_store_locations(
+        backend, "serve", ini_path=ini_path, flags=store_flags
     )
-    db_file = (
-        Path(args.db_file) if getattr(args, "db_file", None) else ini_cfg.server.db_file
+    database = db_file(
+        backend, ini_path=ini_path, flag_value=db_flag, required=backend != "json"
     )
     user = getattr(args, "user", None) or ini_cfg.user
+    child_cmd = [
+        sys.executable,
+        "-m",
+        "visual.web.backend.serve",
+        "--port",
+        str(cfg.port),
+        "--bind",
+        cfg.address,
+        "--directory",
+        str(cfg.directory),
+        "--user",
+        str(user),
+        "--backend",
+        str(backend),
+        "--postgres-dsn",
+        str(ini_cfg.server.postgres_dsn),
+        "--plotter-data-dir",
+        ini_data_dir,
+    ]
+    # Only the locations the backend actually uses are passed on: the
+    # rest would be noise in the process list (and the JSON files are
+    # ignored by the database backend anyway).
+    if database is not None:
+        child_cmd += ["--db-file", str(database)]
+    for store, path in located.items():
+        child_cmd += [cli.stores.STORES[store].flag, str(path)]
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "visual.web.backend.serve",
-            "--port",
-            str(cfg.port),
-            "--bind",
-            cfg.address,
-            "--directory",
-            str(cfg.directory),
-            "--assets-file",
-            str(assets_file),
-            "--cache-file",
-            str(cache_file),
-            "--users-file",
-            str(users_file),
-            "--db-file",
-            str(db_file),
-            "--user",
-            str(user),
-            "--backend",
-            str(ini_cfg.server.backend),
-            "--postgres-dsn",
-            str(ini_cfg.server.postgres_dsn),
-            "--plotter-data-dir",
-            ini_data_dir,
-        ],
+        child_cmd,
         cwd=cfg.directory,
         # The server (and the update workers it spawns) inherit our
         # stdout/stderr: under systemd that is the journal, so a failed
@@ -335,7 +369,21 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         type=Path,
         dest="isin_file",
         default=None,
-        help="Path to the ISIN registry JSON file (default: from config.ini).",
+        help=(
+            "Path to the ISIN registry JSON file (the json backend - an "
+            "alternative to --db-file; default: from config.ini)."
+        ),
+    )
+    update.add_argument(
+        "--db-file",
+        type=Path,
+        dest="db_file",
+        default=None,
+        help=(
+            "SQLite database with every store (the sqlite backend - an "
+            "alternative to the --*-file options; default: from config.ini "
+            "[server] db_file)."
+        ),
     )
     update.add_argument(
         "--position-source",
@@ -400,6 +448,11 @@ def main(argv: list[str] | None = None) -> None:
     update = subparsers.add_parser(
         "update",
         help="Load the assets file, optionally scrape brokers/prices, and write charts.",
+        epilog=(
+            "The stores live either in one database (--db-file) or in loose "
+            "JSON files (--assets-file / --cache-file / --isin-registry-file): "
+            "the backend in config.ini decides which one is used."
+        ),
     )
     _add_config_flag(update, default=argparse.SUPPRESS)
     _add_update_flags(update)
@@ -408,6 +461,11 @@ def main(argv: list[str] | None = None) -> None:
     serve = subparsers.add_parser(
         "serve",
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
+        epilog=(
+            "The stores live either in one database (--db-file) or in loose "
+            "JSON files (--assets-file / --cache-file / --users-file): the "
+            "backend in config.ini decides which one is used."
+        ),
     )
     _add_config_flag(serve, default=argparse.SUPPRESS)
     serve.add_argument(
@@ -421,28 +479,41 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         dest="assets_file",
         default=None,
-        help="Assets JSON file backing /constituents (default: assets.json next to the package).",
+        help=(
+            "Assets JSON file (the json backend - an alternative to "
+            "--db-file; default: from config.ini [update] assets_file)."
+        ),
     )
     serve.add_argument(
         "--cache-file",
         type=Path,
         dest="cache_file",
         default=None,
-        help="Cache JSON file backing /constituents prices (default: cache.json next to the package).",
+        help=(
+            "Cache JSON file (the json backend - an alternative to "
+            "--db-file; default: from config.ini [update] cache_file)."
+        ),
     )
     serve.add_argument(
         "--users-file",
         type=Path,
         dest="users_file",
         default=None,
-        help="Users JSON file backing the login (default: users.json next to the package).",
+        help=(
+            "Users JSON file (the json backend - an alternative to "
+            "--db-file; default: from config.ini [update] users_file)."
+        ),
     )
     serve.add_argument(
         "--db-file",
         type=Path,
         dest="db_file",
         default=None,
-        help="SQLite database file (default: from config.ini [server] db_file).",
+        help=(
+            "SQLite database with every store (the sqlite backend - an "
+            "alternative to the --*-file options; default: from "
+            "config.ini [server] db_file)."
+        ),
     )
     serve.set_defaults(func=cmd_serve)
 

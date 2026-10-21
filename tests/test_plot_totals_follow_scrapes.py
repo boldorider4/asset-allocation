@@ -89,7 +89,9 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
         assets_file=assets,
         cache_file=cache,
         isin_file=isin,
-        server=ServerConfig(port=0, address="localhost", directory=viz),
+        server=ServerConfig(
+            port=0, address="localhost", directory=viz, db_file=tmp / "asalloc.db"
+        ),
         **flags,
     )
     ctx = RuntimeContext(config=config)
