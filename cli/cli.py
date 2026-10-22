@@ -222,6 +222,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         "assets_file": getattr(args, "assets_file", None),
         "cache_file": getattr(args, "cache_file", None),
         "users_file": getattr(args, "users_file", None),
+        "isin_file": getattr(args, "isin_file", None),
     }
     db_flag = getattr(args, "db_file", None)
     if db_flag and any(store_flags.values()):
@@ -505,8 +506,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
         epilog=(
             "The stores live either in one database (--db-file) or in loose "
-            "JSON files (--assets-file / --cache-file / --users-file): the "
-            "backend in config.ini decides which one is used."
+            "JSON files (--assets-file / --cache-file / --users-file / "
+            "--isin-registry-file): the backend in config.ini decides which "
+            "one is used."
         ),
     )
     _add_config_flag(serve, default=argparse.SUPPRESS)
@@ -544,6 +546,16 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Users JSON file (the json backend - an alternative to "
             "--db-file; default: from config.ini [update] users_file)."
+        ),
+    )
+    serve.add_argument(
+        "--isin-registry-file",
+        type=Path,
+        dest="isin_file",
+        default=None,
+        help=(
+            "ISIN registry JSON file (the json backend - an alternative to "
+            "--db-file; default: from config.ini [update] isin_file)."
         ),
     )
     serve.add_argument(

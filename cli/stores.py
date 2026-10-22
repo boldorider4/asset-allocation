@@ -49,7 +49,7 @@ STORES: dict[str, StoreSpec] = {
     "assets": StoreSpec("assets", "update", "assets_file", "--assets-file"),
     "cache": StoreSpec("cache", "update", "cache_file", "--cache-file"),
     "users": StoreSpec("users", "update", "users_file", "--users-file"),
-    "isin": StoreSpec("isin", "update", "isin_file", "--isin-file"),
+    "isin": StoreSpec("isin", "update", "isin_file", "--isin-registry-file"),
 }
 
 #: The stores each command needs, per backend. The sqlite backend
@@ -57,7 +57,7 @@ STORES: dict[str, StoreSpec] = {
 #: location at all.
 REQUIRED: dict[str, dict[str, tuple[str, ...]]] = {
     "json": {
-        "serve": ("assets", "cache", "users"),
+        "serve": ("assets", "cache", "users", "isin"),
         "update": ("assets", "cache", "isin"),
     },
     "sqlite": {"serve": (), "update": ()},
@@ -141,7 +141,9 @@ def resolve_store_locations(
     located: dict[str, Path] = {}
     for store in required_stores(backend, command):
         spec = STORES[store]
-        raw = flags.get(spec.flag.lstrip("-").replace("-", "_"))
+        raw = flags.get(spec.ini_option) or flags.get(
+            spec.flag.lstrip("-").replace("-", "_")
+        )
         if raw:
             located[store] = Path(raw).expanduser()
             continue
