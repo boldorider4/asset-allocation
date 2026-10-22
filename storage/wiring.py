@@ -25,9 +25,14 @@ from typing import TYPE_CHECKING
 from storage.json_storage import JsonStorage
 from storage.records import (
     CacheEntry,
+    CountryRecord,
     IsinRecord,
+    LegacyUserAssets,
+    PositionRecord,
+    SectorRecord,
     SessionRecord,
     UserAssets,
+    UserPortfolioRecord,
     UserRecord,
 )
 from storage.sqlite_storage import SqliteStorage
@@ -39,11 +44,24 @@ __all__ = [
     "BACKEND_JSON",
     "BACKEND_SQLITE",
     "SUPPORTED_BACKENDS",
+    "SQLITE_TABLE_ASSETS",
+    "SQLITE_TABLE_USER_PORTFOLIOS",
+    "SQLITE_TABLE_POSITIONS",
+    "SQLITE_TABLE_POSITION_COUNTRIES",
+    "SQLITE_TABLE_POSITION_SECTORS",
+    "SQLITE_TABLE_CACHE",
+    "SQLITE_TABLE_ISIN",
+    "SQLITE_TABLE_USERS",
+    "SQLITE_TABLE_SESSIONS",
     "assets_backend",
     "cache_backend",
     "isin_backend",
     "normalize_backend",
+    "positions_backend",
+    "position_countries_backend",
+    "position_sectors_backend",
     "sessions_backend",
+    "user_portfolios_backend",
     "users_backend",
 ]
 
@@ -58,7 +76,11 @@ SUPPORTED_BACKENDS: tuple[str, ...] = (
 )
 
 #: Tables of the SQLite database (one per store).
-SQLITE_TABLE_ASSETS = "user_assets"
+SQLITE_TABLE_ASSETS = "user_assets"  # legacy, kept for compat
+SQLITE_TABLE_USER_PORTFOLIOS = "user_portfolios"
+SQLITE_TABLE_POSITIONS = "positions"
+SQLITE_TABLE_POSITION_COUNTRIES = "position_countries"
+SQLITE_TABLE_POSITION_SECTORS = "position_sectors"
 SQLITE_TABLE_CACHE = "cache"
 SQLITE_TABLE_ISIN = "isin_registry"
 SQLITE_TABLE_USERS = "users"
@@ -108,37 +130,72 @@ def assets_backend(
 ) -> "Storage[UserAssets]":
     """Backend for the assets store (one row per user).
 
-    The JSON backend is strict: a malformed row raises instead of being
-    skipped, so a broken assets file fails loudly rather than looking
-    like an empty portfolio.
+    The JSON backend uses LegacyUserAssets for backward compatibility
+    with the old format that includes positions in the same file.
+    The SQLite backend uses the normalized UserAssets (portfolio name only).
     """
     name = normalize_backend(backend)
     if name == BACKEND_SQLITE:
         return _sqlite_backend(
             db_file or path, SQLITE_TABLE_ASSETS, UserAssets
         )
-    return JsonStorage(path, UserAssets, strict=True)
+    return JsonStorage(path, LegacyUserAssets, strict=True)
 
 
-def users_backend(
+def user_portfolios_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
     db_file: str | Path | None = None,
-) -> "Storage[UserRecord]":
-    """Backend for the user accounts (one row per user name).
-
-    Same backend selector as the assets store, so moving the accounts
-    to SQLite is one config line. The row key is the user name (the
-    primary key of the future table), the payload is the password.
-
-    The JSON backend is strict: a malformed account raises instead of
-    being skipped, so a broken users file fails loudly instead of
-    quietly locking everybody out.
-    """
+) -> "Storage[UserPortfolioRecord]":
+    """Backend for the user portfolio names (one row per user)."""
     name = normalize_backend(backend)
     if name == BACKEND_SQLITE:
-        return _sqlite_backend(db_file or path, SQLITE_TABLE_USERS, UserRecord)
-    return JsonStorage(path, UserRecord, strict=True)
+        return _sqlite_backend(
+            db_file or path, SQLITE_TABLE_USER_PORTFOLIOS, UserPortfolioRecord
+        )
+    return JsonStorage(path, UserPortfolioRecord, strict=True)
+
+
+def positions_backend(
+    path: str | Path,
+    backend: str = BACKEND_JSON,
+    db_file: str | Path | None = None,
+) -> "Storage[PositionRecord]":
+    """Backend for the normalized positions table."""
+    name = normalize_backend(backend)
+    if name == BACKEND_SQLITE:
+        return _sqlite_backend(
+            db_file or path, SQLITE_TABLE_POSITIONS, PositionRecord
+        )
+    return JsonStorage(path, PositionRecord)
+
+
+def position_countries_backend(
+    path: str | Path,
+    backend: str = BACKEND_JSON,
+    db_file: str | Path | None = None,
+) -> "Storage[CountryRecord]":
+    """Backend for the position countries table."""
+    name = normalize_backend(backend)
+    if name == BACKEND_SQLITE:
+        return _sqlite_backend(
+            db_file or path, SQLITE_TABLE_POSITION_COUNTRIES, CountryRecord
+        )
+    return JsonStorage(path, CountryRecord)
+
+
+def position_sectors_backend(
+    path: str | Path,
+    backend: str = BACKEND_JSON,
+    db_file: str | Path | None = None,
+) -> "Storage[SectorRecord]":
+    """Backend for the position sectors table."""
+    name = normalize_backend(backend)
+    if name == BACKEND_SQLITE:
+        return _sqlite_backend(
+            db_file or path, SQLITE_TABLE_POSITION_SECTORS, SectorRecord
+        )
+    return JsonStorage(path, SectorRecord)
 
 
 def cache_backend(
@@ -177,3 +234,24 @@ def sessions_backend(
             db_file or path, SQLITE_TABLE_SESSIONS, SessionRecord
         )
     return JsonStorage(path, SessionRecord, strict=True)
+
+
+def users_backend(
+    path: str | Path,
+    backend: str = BACKEND_JSON,
+    db_file: str | Path | None = None,
+) -> "Storage[UserRecord]":
+    """Backend for the user accounts (one row per user name).
+
+    Same backend selector as the assets store, so moving the accounts
+    to SQLite is one config line. The row key is the user name (the
+    primary key of the future table), the payload is the password.
+
+    The JSON backend is strict: a malformed account raises instead of
+    being skipped, so a broken users file fails loudly instead of
+    quietly locking everybody out.
+    """
+    name = normalize_backend(backend)
+    if name == BACKEND_SQLITE:
+        return _sqlite_backend(db_file or path, SQLITE_TABLE_USERS, UserRecord)
+    return JsonStorage(path, UserRecord, strict=True)

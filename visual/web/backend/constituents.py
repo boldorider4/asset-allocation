@@ -34,6 +34,10 @@ from storage.wiring import (
     BACKEND_SQLITE,
     assets_backend,
     cache_backend,
+    position_countries_backend,
+    position_sectors_backend,
+    positions_backend,
+    user_portfolios_backend,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,8 +175,18 @@ def _assets_repo(
     db_file: str | Path | None = None,
 ) -> AssetRepository:
     """Repository over the assets store, scoped to one user."""
+    from storage.repositories import AssetRepository, PositionRepository, UserPortfolioRepository
+
+    position_repo = PositionRepository(
+        positions_backend(assets_path, backend, db_file),
+        position_countries_backend(assets_path, backend, db_file),
+        position_sectors_backend(assets_path, backend, db_file),
+    )
+    portfolio_repo = UserPortfolioRepository(
+        user_portfolios_backend(assets_path, backend, db_file),
+    )
     return AssetRepository(
-        user, assets_backend(assets_path, backend, db_file)
+        user, position_repo=position_repo, portfolio_repo=portfolio_repo
     )
 
 

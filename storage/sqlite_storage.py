@@ -135,7 +135,7 @@ class SqliteStorage(Storage[T]):
     def __init__(
         self, path: str | Path, table: str, object_factory: type[T]
     ) -> None:
-        self._path = Path(path)
+        self._path = Path(path).resolve()
         self._table = table
         self._factory: type[T] = object_factory
         self._conn: sqlite3.Connection | None = None
@@ -199,29 +199,56 @@ class SqliteStorage(Storage[T]):
         """
         with self._lock:
             conn = self._require_conn()
-            rows = conn.execute(
-                f"SELECT key, payload FROM {self._quoted_table()}"
-            ).fetchall()
+            # The positions table uses 'id' as primary key instead of 'key'
+            # and has explicit columns instead of a payload JSON blob
+            if self._table == "positions":
+                rows = conn.execute(
+                    f"SELECT id as key, username, bucket, position_index, name, short_name, "
+                    "isin, value, shares, broker, dmem, dmem_other, usavn FROM "
+                    f"{self._quoted_table()}"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"SELECT key, payload FROM {self._quoted_table()}"
+                ).fetchall()
         out: dict[str, Any] = {}
         for row in rows:
-            payload = row["payload"]
-            if payload is None:
-                logger.warning(
-                    "row %r of table %r has no payload; leaving it out",
-                    row["key"],
-                    self._table,
-                )
-                continue
-            try:
-                out[row["key"]] = json.loads(payload)
-            except (TypeError, ValueError) as exc:
-                logger.warning(
-                    "row %r of table %r has an unreadable payload (%s); "
-                    "leaving it out",
-                    row["key"],
-                    self._table,
-                    exc,
-                )
+            if self._table == "positions":
+                # For positions table, create a dict from the explicit columns
+                # row is a sqlite3.Row with columns: key, username, bucket, etc.
+                out[row["key"]] = {
+                    "username": row["username"],
+                    "bucket": row["bucket"],
+                    "position_index": row["position_index"],
+                    "name": row["name"],
+                    "short_name": row["short_name"],
+                    "isin": row["isin"],
+                    "value": row["value"],
+                    "shares": row["shares"],
+                    "broker": row["broker"],
+                    "dmem": row["dmem"],
+                    "dmem_other": row["dmem_other"],
+                    "usavn": row["usavn"],
+                }
+            else:
+                # For other tables, row has key and payload columns
+                if row["payload"] is None:
+                    logger.warning(
+                        "row %r of table %r has no payload; leaving it out",
+                        row["key"],
+                        self._table,
+                    )
+                    continue
+                try:
+                    out[row["key"]] = json.loads(row["payload"])
+                except (TypeError, ValueError) as exc:
+                    logger.warning(
+                        "row %r of table %r has an unreadable payload (%s); "
+                        "leaving it out",
+                        row["key"],
+                        self._table,
+                        exc,
+                    )
         return out
 
     def persist(self) -> None:
@@ -293,10 +320,92 @@ class SqliteStorage(Storage[T]):
     def _ensure_table(self) -> None:
         with self._lock:
             conn = self._require_conn()
-            conn.execute(
-                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-            )
+            table = self._table
+            if table == "user_assets":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+            elif table == "user_portfolios":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+            elif table == "positions":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "username TEXT NOT NULL, "
+                    "bucket TEXT NOT NULL, "
+                    "position_index INTEGER NOT NULL, "
+                    "name TEXT NOT NULL, "
+                    "short_name TEXT, "
+                    "isin TEXT, "
+                    "value REAL, "
+                    "shares REAL, "
+                    "broker TEXT, "
+                    "dmem REAL, "
+                    "dmem_other REAL, "
+                    "usavn REAL, "
+                    "UNIQUE(username, bucket, position_index))"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_positions_user_bucket "
+                    "ON positions(username, bucket)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_positions_isin "
+                    "ON positions(isin)"
+                )
+            elif table == "position_countries":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE, "
+                    "name TEXT NOT NULL, "
+                    "weight_pct REAL NOT NULL, "
+                    "PRIMARY KEY (position_id, name))"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_position_countries_position "
+                    "ON position_countries(position_id)"
+                )
+            elif table == "position_sectors":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE, "
+                    "name TEXT NOT NULL, "
+                    "weight_pct REAL NOT NULL, "
+                    "PRIMARY KEY (position_id, name))"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_position_sectors_position "
+                    "ON position_sectors(position_id)"
+                )
+            elif table == "cache":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+            elif table == "isin_registry":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, product_ref TEXT)"
+                )
+            elif table == "users":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+            elif table == "sessions":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+            else:
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
             conn.commit()
 
     def _decode(self, key: str, payload: Any) -> T | None:
@@ -358,11 +467,36 @@ class SqliteStorage(Storage[T]):
         """``INSERT INTO <table> (key, payload) VALUES (?, ?)``
         ``ON CONFLICT(key) DO UPDATE SET payload = excluded.payload``."""
         with self._lock:
-            self._require_conn().execute(
-                f"INSERT INTO {self._quoted_table()} (key, payload) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
-                (obj.key, json.dumps(obj.to_dict())),
-            )
+            # Handle tables with auto-incrementing primary keys (e.g., positions table)
+            if self._table == "positions" and obj.key == "0":
+                # New record: insert without ID, let SQLite auto-assign
+                self._require_conn().execute(
+                    f"""INSERT INTO {self._quoted_table()}
+                    (username, bucket, position_index, name, short_name, isin, value, shares, broker, dmem, dmem_other, usavn)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        obj.username, obj.bucket, obj.position_index, obj.name,
+                        obj.short_name, obj.isin, obj.value, obj.shares,
+                        obj.broker, obj.dmem, obj.dmem_other, obj.usavn
+                    ),
+                )
+                # Update object's key with the auto-assigned ID
+                obj._key = str(self._require_conn().execute("SELECT last_insert_rowid()").fetchone()[0])
+            # Handle isin_registry table which uses 'isin' column instead of 'key'
+            elif self._table == "isin_registry":
+                d = obj.to_dict()
+                self._require_conn().execute(
+                    f"INSERT INTO {self._quoted_table()} (isin, issuer, bucket, product_ref) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(isin) DO UPDATE SET issuer = excluded.issuer, "
+                    "bucket = excluded.bucket, product_ref = excluded.product_ref",
+                    (obj.key, d.get("issuer", ""), d.get("bucket", ""), d.get("product_ref", "")),
+                )
+            else:
+                self._require_conn().execute(
+                    f"INSERT INTO {self._quoted_table()} (key, payload) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
+                    (obj.key, json.dumps(obj.to_dict())),
+                )
 
     def add(self, obj: T) -> None:
         """Plain ``INSERT``; a duplicate surfaces as ``KeyError``."""

@@ -45,6 +45,10 @@ __all__ = [
     "IsinRecord",
     "UserRecord",
     "SessionRecord",
+    "PositionRecord",
+    "CountryRecord",
+    "SectorRecord",
+    "UserPortfolioRecord",
 ]
 
 #: Name a user's portfolio carries until they rename it.
@@ -258,54 +262,28 @@ class CacheEntry(DictRow):
 
 
 class UserAssets(StorageObject):
-    """One user's portfolio: a name and its positions.
+    """One user's portfolio metadata (name only).
 
-    Keyed by user name; the payload is that user's portfolio::
-
-        {"portfolio_name": "Portfolio", "positions": {"<class>": [rows]}}
-
-    The positions are grouped by asset class (the keys the composition
-    and the web views use) and validated through :class:`AssetBucket`,
-    keeping the per-class rules in one place.
-
-    The payload is strict: unknown keys raise, so a file in another
-    shape fails loudly instead of silently loading as empty.
+    The positions are stored in a separate normalized table (positions table).
+    This class only holds the portfolio name; positions are accessed via
+    PositionRepository.
     """
 
     PORTFOLIO_NAME = "portfolio_name"
-    POSITIONS = "positions"
-    ALLOWED_KEYS: frozenset[str] = frozenset({PORTFOLIO_NAME, POSITIONS})
+    ALLOWED_KEYS: frozenset[str] = frozenset({PORTFOLIO_NAME})
 
     def __init__(
         self, key: str, data: dict[str, Any] | None = None
     ) -> None:
         self._key = str(key)
-        # _coerce defines what a user payload may be (None = a user listed
-        # without any assets yet); one place, so every path agrees.
-        self._portfolio_name, self._positions = self._coerce(data, key=self._key)
+        self._portfolio_name, _ = self._coerce(data, key=self._key)
         self.validate()
 
     @staticmethod
-    def _coerce_positions(
-        data: Any, *, key: str
-    ) -> dict[str, list[dict[str, Any]]]:
-        """The position map: ``{asset class: [rows]}`` (validated)."""
-        if not isinstance(data, dict):
-            raise TypeError(f"user {key!r} field 'positions' must be a JSON object")
-        out: dict[str, list[dict[str, Any]]] = {}
-        for asset_class, positions in data.items():
-            row = AssetBucket.from_dict(str(asset_class), positions)
-            out[str(asset_class)] = row.positions
-        return out
-
-    @staticmethod
-    def _coerce(data: Any, *, key: str) -> tuple[str, dict[str, list[dict[str, Any]]]]:
+    def _coerce(data: Any, *, key: str) -> tuple[str, None]:
         if data is None:
-            # A user listed without any assets yet: an empty portfolio.
-            return DEFAULT_PORTFOLIO_NAME, {}
+            return DEFAULT_PORTFOLIO_NAME, None
         if isinstance(data, list):
-            # A pre-user file stored the buckets directly at the top
-            # level, so a list payload means the file predates users.
             raise ValueError(
                 f"row {key!r} holds a bucket list, not a user portfolio; "
                 "migrate the file once with: python "
@@ -325,10 +303,7 @@ class UserAssets(StorageObject):
             raise TypeError(
                 f"user {key!r} field 'portfolio_name' must be a string"
             )
-        positions = data.get(UserAssets.POSITIONS)
-        if positions is None:
-            positions = {}
-        return name, UserAssets._coerce_positions(positions, key=key)
+        return name, None
 
     @property
     def key(self) -> str:
@@ -347,12 +322,105 @@ class UserAssets(StorageObject):
             )
         self._portfolio_name = name
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            self.PORTFOLIO_NAME: self._portfolio_name,
+        }
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> UserAssets:
+        return cls(str(key), raw)
+
+    def merge(self, partial: dict[str, Any]) -> None:
+        """Apply a partial update to the portfolio metadata.
+
+        Only ``"portfolio_name"`` is supported now. Positions are managed
+        separately via PositionRepository.
+        """
+        if not isinstance(partial, dict):
+            raise TypeError(
+                f"partial update for {self._key!r} must be a dict"
+            )
+        unknown = set(partial) - set(self.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(
+                f"partial update for {self._key!r} has unknown keys: "
+                f"{sorted(unknown)}"
+            )
+        if self.PORTFOLIO_NAME in partial:
+            self.set_portfolio_name(partial[self.PORTFOLIO_NAME])
+
+    def validate(self) -> None:
+        if not self._key.strip():
+            raise ValueError("user key must be a non-empty string")
+        if not isinstance(self._portfolio_name, str):
+            raise TypeError(
+                f"user {self._key!r} field 'portfolio_name' must be a string"
+            )
+
+
+class LegacyUserAssets(UserAssets):
+    """Legacy-compatible UserAssets that allows the 'positions' key for JSON backend compatibility.
+
+    The JSON backend stores positions in the same file as the portfolio metadata.
+    This class allows the 'positions' key for backward compatibility.
+    """
+
+    POSITIONS = "positions"
+    ALLOWED_KEYS: frozenset[str] = frozenset({UserAssets.PORTFOLIO_NAME, POSITIONS})
+
+    def __init__(
+        self, key: str, data: dict[str, Any] | None = None
+    ) -> None:
+        self._key = str(key)
+        self._portfolio_name, self._positions = self._coerce(data, key=self._key)
+        self.validate()
+
+    @staticmethod
+    def _coerce(data: Any, *, key: str) -> tuple[str, dict[str, list[dict[str, Any]]]]:
+        if data is None:
+            return DEFAULT_PORTFOLIO_NAME, {}
+        if isinstance(data, list):
+            raise ValueError(
+                f"row {key!r} holds a bucket list, not a user portfolio; "
+                "migrate the file once with: python "
+                "scripts/migrate_assets_user.py <assets.json> <user>"
+            )
+        if not isinstance(data, dict):
+            raise TypeError(f"user {key!r} assets must be a JSON object")
+        unknown = set(data) - set(LegacyUserAssets.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(
+                f"user {key!r} assets has unknown keys: {sorted(unknown)}"
+            )
+        name = data.get(UserAssets.PORTFOLIO_NAME)
+        if name is None:
+            name = DEFAULT_PORTFOLIO_NAME
+        if not isinstance(name, str):
+            raise TypeError(
+                f"user {key!r} field 'portfolio_name' must be a string"
+            )
+        positions = data.get(LegacyUserAssets.POSITIONS)
+        if positions is None:
+            positions = {}
+        return name, LegacyUserAssets._coerce_positions(positions, key=key)
+
+    @staticmethod
+    def _coerce_positions(
+        data: Any, *, key: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        if not isinstance(data, dict):
+            raise TypeError(f"user {key!r} field 'positions' must be a JSON object")
+        out: dict[str, list[dict[str, Any]]] = {}
+        for asset_class, positions in data.items():
+            row = AssetBucket.from_dict(str(asset_class), positions)
+            out[str(asset_class)] = row.positions
+        return out
+
+    @property
     def positions(self) -> dict[str, list[dict[str, Any]]]:
         """The user's positions as plain ``{asset class: [rows]}``."""
-        return {
-            asset_class: [dict(p) for p in rows]
-            for asset_class, rows in self._positions.items()
-        }
+        return self._positions
 
     def set_positions(
         self, asset_class: str, positions: list[dict[str, Any]]
@@ -379,25 +447,24 @@ class UserAssets(StorageObject):
     def to_dict(self) -> dict[str, Any]:
         return {
             self.PORTFOLIO_NAME: self._portfolio_name,
-            self.POSITIONS: self.positions(),
+            self.POSITIONS: self._positions,
         }
 
     @classmethod
-    def from_dict(cls, key: str, raw: Any) -> UserAssets:
+    def from_dict(cls, key: str, raw: Any) -> LegacyUserAssets:
         return cls(str(key), raw)
 
     def merge(self, partial: dict[str, Any]) -> None:
         """Apply a partial update to the portfolio.
 
         ``"positions"`` replaces the asset classes it names (the others
-        are kept), ``"portfolio_name"`` renames the portfolio. A bucket
-        is replaced wholesale, never merged row by row.
+        are kept), ``"portfolio_name"`` renames the portfolio.
         """
         if not isinstance(partial, dict):
             raise TypeError(
                 f"partial update for {self._key!r} must be a dict"
             )
-        unknown = set(partial) - set(self.ALLOWED_KEYS)
+        unknown = set(partial) - set(cls.ALLOWED_KEYS)
         if unknown:
             raise KeyError(
                 f"partial update for {self._key!r} has unknown keys: "
@@ -405,10 +472,10 @@ class UserAssets(StorageObject):
             )
         old_name, old_positions = self._portfolio_name, self._positions
         try:
-            if self.PORTFOLIO_NAME in partial:
-                self.set_portfolio_name(partial[self.PORTFOLIO_NAME])
-            if self.POSITIONS in partial:
-                coerced = self._coerce_positions(partial[self.POSITIONS], key=self._key)
+            if cls.PORTFOLIO_NAME in partial:
+                self.set_portfolio_name(partial[cls.PORTFOLIO_NAME])
+            if cls.POSITIONS in partial:
+                coerced = cls._coerce_positions(partial[cls.POSITIONS], key=self._key)
                 self._positions.update(coerced)
         except Exception:
             self._portfolio_name, self._positions = old_name, old_positions
@@ -429,27 +496,29 @@ class UserAssets(StorageObject):
             isinstance(other, UserAssets)
             and other._key == self._key
             and other._portfolio_name == self._portfolio_name
-            and other._positions == self._positions
         )
 
     def __repr__(self) -> str:
-        return (
-            f"UserAssets(key={self._key!r}, "
-            f"portfolio_name={self._portfolio_name!r}, "
-            f"positions={sorted(self._positions)!r})"
-        )
+        return f"UserAssets(key={self._key!r}, portfolio_name={self._portfolio_name!r})"
 
 
-class AssetBucket(DictRow):
-    """One portfolio bucket; serialised as a bare list of position dicts."""
+class AssetBucket:
+    """One portfolio bucket: a list of position dicts.
 
-    # No fixed dict keys: the payload *is* the positions list.
-    ALLOWED_KEYS: frozenset[str] = frozenset()
+    In the SQLite backend, positions are stored in a separate normalized
+    table (positions table with position_countries/position_sectors).
+    This class is a domain helper for the JSON backend and UI layer;
+    it does not persist directly.
+    """
 
     def __init__(self, key: str, positions: list[dict[str, Any]] | None = None) -> None:
+        self._key = str(key)
         self._positions: list[dict[str, Any]] = []
-        super().__init__(key)
         self.set_positions(positions if positions is not None else [])
+
+    @property
+    def key(self) -> str:
+        return self._key
 
     @property
     def positions(self) -> list[dict[str, Any]]:
@@ -468,22 +537,24 @@ class AssetBucket(DictRow):
 
     @classmethod
     def from_dict(cls, key: str, raw: Any) -> AssetBucket:
-        return cls(str(key), raw)  # __init__ validates list-of-dicts
-
-    def merge(self, partial: dict[str, Any]) -> None:
-        # Buckets replace wholesale (a "partial position" has no meaning);
-        # accept {"positions": [...]} for interface conformance.
-        if not isinstance(partial, dict) or set(partial) != {"positions"}:
-            raise KeyError(
-                f"bucket {self._key!r} merges only {{'positions': [...]}}"
-            )
-        self.set_positions(partial["positions"])
+        if not isinstance(raw, list):
+            raise TypeError(f"bucket {key!r} must be a JSON array")
+        return cls(str(key), raw)
 
     def validate(self) -> None:
-        # _data is unused for buckets; validate the positions list instead.
         for i, pos in enumerate(self._positions):
             if not isinstance(pos, dict):
                 raise TypeError(f"{self._key!r}[{i}] must be a JSON object")
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, AssetBucket)
+            and self._key == other._key
+            and self._positions == other._positions
+        )
+
+    def __repr__(self) -> str:
+        return f"AssetBucket(key={self._key!r}, positions={self._positions!r})"
 
 
 class IsinRecord(DictRow):
@@ -715,3 +786,470 @@ class SessionRecord(DictRow):
         if expires_at <= 0.0:
             return True
         return expires_at <= (now if now is not None else time.time())
+
+
+class PositionRecord(StorageObject):
+    """One position row in the positions table.
+
+    Keyed by auto-incrementing ID; the payload holds all position attributes.
+    """
+
+    ID = "id"
+    USERNAME = "username"
+    BUCKET = "bucket"
+    POSITION_INDEX = "position_index"
+    NAME = "name"
+    SHORT_NAME = "short_name"
+    ISIN = "isin"
+    VALUE = "value"
+    SHARES = "shares"
+    BROKER = "broker"
+    DMEM = "dmem"
+    DMEM_OTHER = "dmem_other"
+    USAVN = "usavn"
+    ALLOWED_KEYS: frozenset[str] = frozenset({
+        ID, USERNAME, BUCKET, POSITION_INDEX, NAME, SHORT_NAME,
+        ISIN, VALUE, SHARES, BROKER, DMEM, DMEM_OTHER, USAVN
+    })
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        username: str | None = None,
+        bucket: str | None = None,
+        position_index: int | None = None,
+        name: str | None = None,
+        short_name: str | None = None,
+        isin: str | None = None,
+        value: float | None = None,
+        shares: float | None = None,
+        broker: str | None = None,
+        dmem: float | None = None,
+        dmem_other: float | None = None,
+        usavn: float | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if username is not None:
+            payload[self.USERNAME] = username
+        if bucket is not None:
+            payload[self.BUCKET] = bucket
+        if position_index is not None:
+            payload[self.POSITION_INDEX] = position_index
+        if name is not None:
+            payload[self.NAME] = name
+        if short_name is not None:
+            payload[self.SHORT_NAME] = short_name
+        if isin is not None:
+            payload[self.ISIN] = isin
+        if value is not None:
+            payload[self.VALUE] = value
+        if shares is not None:
+            payload[self.SHARES] = shares
+        if broker is not None:
+            payload[self.BROKER] = broker
+        if dmem is not None:
+            payload[self.DMEM] = dmem
+        if dmem_other is not None:
+            payload[self.DMEM_OTHER] = dmem_other
+        if usavn is not None:
+            payload[self.USAVN] = usavn
+        # ID is auto-assigned by the database, not stored in payload
+        self._key = str(key)
+        self._data = payload
+        self.validate()
+
+    def validate(self) -> None:
+        super().validate()
+        if self._key != "0" and not self._key.isdigit():
+            # Key "0" is used for new records before DB assigns an ID
+            raise ValueError(f"PositionRecord key must be a numeric ID, got {self._key!r}")
+        username = self._data.get(self.USERNAME)
+        if username is not None and not isinstance(username, str):
+            raise TypeError(f"row {self._key!r} field 'username' must be a string")
+        bucket = self._data.get(self.BUCKET)
+        if bucket is not None and not isinstance(bucket, str):
+            raise TypeError(f"row {self._key!r} field 'bucket' must be a string")
+        position_index = self._data.get(self.POSITION_INDEX)
+        if position_index is not None and not isinstance(position_index, int):
+            raise TypeError(f"row {self._key!r} field 'position_index' must be an integer")
+        name = self._data.get(self.NAME)
+        if name is not None and not isinstance(name, str):
+            raise TypeError(f"row {self._key!r} field 'name' must be a string")
+        short_name = self._data.get(self.SHORT_NAME)
+        if short_name is not None and not isinstance(short_name, str):
+            raise TypeError(f"row {self._key!r} field 'short_name' must be a string")
+        isin = self._data.get(self.ISIN)
+        if isin is not None and not isinstance(isin, str):
+            raise TypeError(f"row {self._key!r} field 'isin' must be a string")
+        value = self._data.get(self.VALUE)
+        if value is not None:
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'value' must be a number")
+        shares = self._data.get(self.SHARES)
+        if shares is not None:
+            try:
+                float(shares)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'shares' must be a number")
+        broker = self._data.get(self.BROKER)
+        if broker is not None and not isinstance(broker, str):
+            raise TypeError(f"row {self._key!r} field 'broker' must be a string")
+        dmem = self._data.get(self.DMEM)
+        if dmem is not None:
+            try:
+                float(dmem)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'dmem' must be a number")
+        dmem_other = self._data.get(self.DMEM_OTHER)
+        if dmem_other is not None:
+            try:
+                float(dmem_other)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'dmem_other' must be a number")
+        usavn = self._data.get(self.USAVN)
+        if usavn is not None:
+            try:
+                float(usavn)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'usavn' must be a number")
+
+    @property
+    def id(self) -> int:
+        """The auto-assigned database ID (0 for new records)."""
+        try:
+            return int(self._key)
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def key(self) -> str:
+        """The database key (same as id for PositionRecord)."""
+        return str(self.id)
+
+    @property
+    def username(self) -> str:
+        value = self._data.get(self.USERNAME)
+        return "" if value is None else str(value)
+
+    @property
+    def bucket(self) -> str:
+        value = self._data.get(self.BUCKET)
+        return "" if value is None else str(value)
+
+    @property
+    def position_index(self) -> int:
+        value = self._data.get(self.POSITION_INDEX)
+        return 0 if value is None else int(value)
+
+    @property
+    def name(self) -> str:
+        value = self._data.get(self.NAME)
+        return "" if value is None else str(value)
+
+    @property
+    def short_name(self) -> str:
+        value = self._data.get(self.SHORT_NAME)
+        return "" if value is None else str(value)
+
+    @property
+    def isin(self) -> str | None:
+        value = self._data.get(self.ISIN)
+        return None if value is None else str(value)
+
+    @property
+    def value(self) -> float | None:
+        value = self._data.get(self.VALUE)
+        return None if value is None else float(value)
+
+    @property
+    def shares(self) -> float | None:
+        value = self._data.get(self.SHARES)
+        return None if value is None else float(value)
+
+    @property
+    def broker(self) -> str | None:
+        value = self._data.get(self.BROKER)
+        return None if value is None else str(value)
+
+    @property
+    def dmem(self) -> float | None:
+        value = self._data.get(self.DMEM)
+        return None if value is None else float(value)
+
+    @property
+    def dmem_other(self) -> float | None:
+        value = self._data.get(self.DMEM_OTHER)
+        return None if value is None else float(value)
+
+    @property
+    def usavn(self) -> float | None:
+        value = self._data.get(self.USAVN)
+        return None if value is None else float(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._data)
+
+    @property
+    def key(self) -> str:
+        return str(self._key)
+
+    def merge(self, partial: dict[str, Any]) -> None:
+        if not isinstance(partial, dict):
+            raise TypeError(f"partial update for {self._key!r} must be a dict")
+        unknown = set(partial) - set(self.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {self._key!r} has unknown keys: {sorted(unknown)}")
+        self._data.update(partial)
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> PositionRecord:
+        if not isinstance(raw, dict):
+            raise TypeError(f"row {key!r} must be a JSON object, got {type(raw).__name__}")
+        unknown = set(raw) - set(cls.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
+        return cls(str(key), dict(raw))
+
+
+class CountryRecord(StorageObject):
+    """One country row in the position_countries table.
+
+    Keyed by auto-incrementing ID; the payload holds the position_id, country name, and weight_pct.
+    """
+
+    ID = "id"
+    POSITION_ID = "position_id"
+    NAME = "name"
+    WEIGHT_PCT = "weight_pct"
+    ALLOWED_KEYS: frozenset[str] = frozenset({ID, POSITION_ID, NAME, WEIGHT_PCT})
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        position_id: int | None = None,
+        name: str | None = None,
+        weight_pct: float | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if position_id is not None:
+            payload[self.POSITION_ID] = position_id
+        if name is not None:
+            payload[self.NAME] = name
+        if weight_pct is not None:
+            payload[self.WEIGHT_PCT] = weight_pct
+        # ID is auto-assigned by the database, not stored in payload
+        super().__init__(key, payload)
+
+    def validate(self) -> None:
+        super().validate()
+        if self._key != "0" and not self._key.isdigit():
+            raise ValueError(f"CountryRecord key must be a numeric ID, got {self._key!r}")
+        position_id = self._data.get(self.POSITION_ID)
+        if position_id is not None and not isinstance(position_id, int):
+            raise TypeError(f"row {self._key!r} field 'position_id' must be an integer")
+        name = self._data.get(self.NAME)
+        if name is not None and not isinstance(name, str):
+            raise TypeError(f"row {self._key!r} field 'name' must be a string")
+        weight_pct = self._data.get(self.WEIGHT_PCT)
+        if weight_pct is not None:
+            try:
+                float(weight_pct)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'weight_pct' must be a number")
+
+    @property
+    def id(self) -> int:
+        try:
+            return int(self._key)
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def position_id(self) -> int:
+        value = self._data.get(self.POSITION_ID)
+        return 0 if value is None else int(value)
+
+    @property
+    def name(self) -> str:
+        value = self._data.get(self.NAME)
+        return "" if value is None else str(value)
+
+    @property
+    def weight_pct(self) -> float | None:
+        value = self._data.get(self.WEIGHT_PCT)
+        return None if value is None else float(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._data)
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> CountryRecord:
+        if not isinstance(raw, dict):
+            raise TypeError(f"row {key!r} must be a JSON object, got {type(raw).__name__}")
+        unknown = set(raw) - set(cls.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
+        return cls(str(key), dict(raw))
+
+
+class SectorRecord(StorageObject):
+    """One sector row in the position_sectors table.
+
+    Keyed by auto-incrementing ID; the payload holds the position_id, sector name, and weight_pct.
+    """
+
+    ID = "id"
+    POSITION_ID = "position_id"
+    NAME = "name"
+    WEIGHT_PCT = "weight_pct"
+    ALLOWED_KEYS: frozenset[str] = frozenset({ID, POSITION_ID, NAME, WEIGHT_PCT})
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        position_id: int | None = None,
+        name: str | None = None,
+        weight_pct: float | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if position_id is not None:
+            payload[self.POSITION_ID] = position_id
+        if name is not None:
+            payload[self.NAME] = name
+        if weight_pct is not None:
+            payload[self.WEIGHT_PCT] = weight_pct
+        # ID is auto-assigned by the database, not stored in payload
+        super().__init__(key, payload)
+
+    def validate(self) -> None:
+        super().validate()
+        if self._key != "0" and not self._key.isdigit():
+            raise ValueError(f"SectorRecord key must be a numeric ID, got {self._key!r}")
+        position_id = self._data.get(self.POSITION_ID)
+        if position_id is not None and not isinstance(position_id, int):
+            raise TypeError(f"row {self._key!r} field 'position_id' must be an integer")
+        name = self._data.get(self.NAME)
+        if name is not None and not isinstance(name, str):
+            raise TypeError(f"row {self._key!r} field 'name' must be a string")
+        weight_pct = self._data.get(self.WEIGHT_PCT)
+        if weight_pct is not None:
+            try:
+                float(weight_pct)
+            except (TypeError, ValueError):
+                raise TypeError(f"row {self._key!r} field 'weight_pct' must be a number")
+
+    @property
+    def id(self) -> int:
+        try:
+            return int(self._key)
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def position_id(self) -> int:
+        value = self._data.get(self.POSITION_ID)
+        return 0 if value is None else int(value)
+
+    @property
+    def name(self) -> str:
+        value = self._data.get(self.NAME)
+        return "" if value is None else str(value)
+
+    @property
+    def weight_pct(self) -> float | None:
+        value = self._data.get(self.WEIGHT_PCT)
+        return None if value is None else float(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._data)
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> SectorRecord:
+        if not isinstance(raw, dict):
+            raise TypeError(f"row {key!r} must be a JSON object, got {type(raw).__name__}")
+        unknown = set(raw) - set(cls.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
+        return cls(str(key), dict(raw))
+
+
+class UserPortfolioRecord(DictRow):
+    """One user's portfolio metadata (name only, positions are in separate table).
+
+    Keyed by username; the payload holds just the portfolio name.
+    """
+
+    USERNAME = "username"
+    PORTFOLIO_NAME = "portfolio_name"
+    ALLOWED_KEYS: frozenset[str] = frozenset({PORTFOLIO_NAME})
+
+    def __init__(
+        self,
+        key: str,
+        data: dict[str, Any] | None = None,
+        *,
+        portfolio_name: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = dict(data) if data else {}
+        if portfolio_name is not None:
+            payload[self.PORTFOLIO_NAME] = portfolio_name
+        super().__init__(key, payload)
+
+    def validate(self) -> None:
+        super().validate()
+        if not str(self._key).strip():
+            raise ValueError("user name (username) must be a non-empty string")
+        portfolio_name = self._data.get(self.PORTFOLIO_NAME)
+        if portfolio_name is not None and not isinstance(portfolio_name, str):
+            raise TypeError(
+                f"row {self._key!r} field 'portfolio_name' must be a string"
+            )
+
+    @property
+    def username(self) -> str:
+        return str(self._key)
+
+    @property
+    def portfolio_name(self) -> str:
+        value = self._data.get(self.PORTFOLIO_NAME)
+        return DEFAULT_PORTFOLIO_NAME if value is None else str(value)
+
+    @portfolio_name.setter
+    def portfolio_name(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError(f"row {self._key!r} field 'portfolio_name' must be a string")
+        self._data[self.PORTFOLIO_NAME] = value
+
+    def to_dict(self) -> dict[str, Any]:
+        return {self.PORTFOLIO_NAME: self.portfolio_name}
+
+    @classmethod
+    def from_dict(cls, key: str, raw: Any) -> UserPortfolioRecord:
+        if not isinstance(raw, dict):
+            raise TypeError(f"row {key!r} must be a JSON object, got {type(raw).__name__}")
+        unknown = set(raw) - set(cls.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {key!r} has unknown keys: {sorted(unknown)}")
+        return cls(str(key), dict(raw))
+
+    @property
+    def key(self) -> str:
+        return str(self._key)
+
+    def merge(self, partial: dict[str, Any]) -> None:
+        if not isinstance(partial, dict):
+            raise TypeError(f"partial update for {self._key!r} must be a dict")
+        unknown = set(partial) - set(self.ALLOWED_KEYS)
+        if unknown:
+            raise KeyError(f"row {self._key!r} has unknown keys: {sorted(unknown)}")
+        self._data.update(partial)
+        self.validate()

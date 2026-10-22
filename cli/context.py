@@ -35,6 +35,10 @@ from storage.wiring import (
     cache_backend,
     isin_backend,
     normalize_backend,
+    positions_backend,
+    position_countries_backend,
+    position_sectors_backend,
+    user_portfolios_backend,
 )
 
 if TYPE_CHECKING:
@@ -386,16 +390,37 @@ class RuntimeContext:
         ``config.user`` — other users' rows are never touched. The
         backend itself is chosen in :mod:`storage.wiring`.
         """
-        from storage.repositories import AssetRepository
+        from storage.repositories import AssetRepository, PositionRepository, UserPortfolioRepository
 
         if self._asset_repo is None:
-            self._asset_repo = AssetRepository(
-                self.config.user,
-                assets_backend(
+            position_repo = PositionRepository(
+                positions_backend(
                     self.config.assets_file,
                     self.config.server.backend,
                     self.config.server.db_file,
                 ),
+                position_countries_backend(
+                    self.config.assets_file,
+                    self.config.server.backend,
+                    self.config.server.db_file,
+                ),
+                position_sectors_backend(
+                    self.config.assets_file,
+                    self.config.server.backend,
+                    self.config.server.db_file,
+                ),
+            )
+            portfolio_repo = UserPortfolioRepository(
+                user_portfolios_backend(
+                    self.config.assets_file,
+                    self.config.server.backend,
+                    self.config.server.db_file,
+                ),
+            )
+            self._asset_repo = AssetRepository(
+                self.config.user,
+                position_repo=position_repo,
+                portfolio_repo=portfolio_repo,
             )
         return self._asset_repo
 

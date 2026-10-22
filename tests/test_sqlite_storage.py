@@ -185,14 +185,13 @@ class TestLifecycle(unittest.TestCase):
         store.put(
             UserAssets(
                 "alice",
-                {"portfolio_name": "Fund", "positions": {"equity_portfolio": []}},
+                {"portfolio_name": "Fund"},
             )
         )
         store.persist()
         record = store.get("alice")
         assert record is not None
         self.assertEqual(record.portfolio_name, "Fund")
-        self.assertEqual(record.positions(), {"equity_portfolio": []})
 
 
 class TestConcurrency(unittest.TestCase):

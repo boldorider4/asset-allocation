@@ -38,7 +38,27 @@ POSITION = {"name": "ETF", "ISIN": "IE00TEST0001", "shares": 2, "value": 100.0}
 
 
 def _repo(path: Path, user: str) -> AssetRepository:
-    return AssetRepository(user, assets_backend(path, "json"))
+    from storage.repositories import PositionRepository, UserPortfolioRepository
+    from storage.wiring import (
+        positions_backend,
+        position_countries_backend,
+        position_sectors_backend,
+        user_portfolios_backend,
+    )
+    portfolio_repo = user_portfolios_backend(path, "json")
+    # Always wrap in UserPortfolioRepository
+    if not isinstance(portfolio_repo, UserPortfolioRepository):
+        portfolio_repo = UserPortfolioRepository(portfolio_repo)  # type: ignore[arg-type]
+    position_repo = PositionRepository(
+        positions_backend(path, "json"),
+        position_countries_backend(path, "json"),
+        position_sectors_backend(path, "json"),
+    )
+    return AssetRepository(
+        user,
+        position_repo=position_repo,
+        portfolio_repo=portfolio_repo,
+    )
 
 
 class TestAssetsStoreShape(unittest.TestCase):
@@ -47,15 +67,12 @@ class TestAssetsStoreShape(unittest.TestCase):
             path = Path(tmp) / "assets.json"
             repo = _repo(path, "foobar")
             repo.open()
-            repo.restore({BUCKET: [POSITION]})
+            repo.restore({BUCKET: [POSITION]}, portfolio_name="Portfolio")
             repo.persist()
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(list(raw), ["foobar"])
             self.assertEqual(
                 raw["foobar"]["portfolio_name"], "Portfolio"
-            )
-            self.assertEqual(
-                raw["foobar"]["positions"][BUCKET][0]["ISIN"], "IE00TEST0001"
             )
 
     def test_legacy_flat_store_is_rejected_with_migration_hint(self) -> None:
@@ -99,7 +116,7 @@ class TestAssetsStoreShape(unittest.TestCase):
             repo = _repo(Path(tmp) / "assets.json", "foobar")
             repo.open()
             repo.set_portfolio_name("Kept")
-            repo.restore({BUCKET: [POSITION]})
+            repo.restore({BUCKET: [POSITION]}, portfolio_name="Portfolio")
             self.assertEqual(repo.portfolio_name, "Kept")
 
 
@@ -163,7 +180,7 @@ class TestRuntimeContextUser(unittest.TestCase):
             root = Path(tmp)
             repo = _repo(root / "assets.json", "alice")
             repo.open()
-            repo.restore({BUCKET: [POSITION]})
+            repo.restore({BUCKET: [POSITION]}, portfolio_name="Portfolio")
             repo.persist()
             alice = self._ctx(root, "alice")
             alice.load_portfolio()
@@ -372,7 +389,7 @@ class TestPositionsMigrationScript(unittest.TestCase):
             path = Path(tmp) / "assets.json"
             repo = _repo(path, "default")
             repo.open()
-            repo.restore({BUCKET: [POSITION]})
+            repo.restore({BUCKET: [POSITION]}, portfolio_name="Portfolio")
             repo.persist()
             result = subprocess.run(
                 [sys.executable, str(script), str(path), "foobar"],
