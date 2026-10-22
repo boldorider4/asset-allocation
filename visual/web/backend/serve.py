@@ -358,6 +358,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         assets_file=None,
         cache_file=None,
         users_file=None,
+        isin_file=None,
         db_file=None,
         data_dirname=None,
         user=None,
@@ -368,6 +369,8 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._cache_file = cache_file
         # The user accounts (the login asks this store, not the assets).
         self._users_file = users_file
+        # The ISIN registry (written when a constituent is added).
+        self._isin_file = isin_file
         # The SQLite database file (one file, one table per store).
         self._db_file = db_file
         # On-disk chart layout (defaults mirror the served /data tree).
@@ -1225,6 +1228,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def _add_constituent(self) -> bool:
         """Handle ``POST /api/constituents/add``; plain-text statuses on failure."""
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
         from .constituents import _render_row, add_constituent
 
         if urlsplit(self.path).path != "/api/constituents/add":
@@ -1236,9 +1242,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if payload is None:
             return True
         try:
-            if not self._store_configured(self._assets_file):
-                raise RuntimeError("assets store not configured")
+            if not self._store_configured(self._assets_file, self._isin_file):
+                raise RuntimeError("assets or isin store not configured")
             cache = self._cache_map()
+            registry = IsinRegistry(
+                isin_backend(self._isin_file, self._backend, self._db_file)
+            )
             display = add_constituent(
                 self._assets_file,
                 payload.get("bucket"),
@@ -1249,6 +1258,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 shares=payload.get("shares"),
                 broker=payload.get("broker"),
                 cache=cache,
+                registry=registry,
                 user=session.user,
                 backend=self._backend,
                 db_file=self._db_file,
@@ -1264,7 +1274,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(502, f"constituents unavailable: {exc}")
             return True
         body = json.dumps(
-            {"index": display["index"], "row": _render_row(display)}
+            {
+                "index": display["index"],
+                "row": _render_row(display),
+                "needs_full_update": bool(display["needs_full_update"]),
+            }
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -1323,6 +1337,7 @@ def serve_forever(
     assets_file: str | None = None,
     cache_file: str | None = None,
     users_file: str | None = None,
+    isin_file: str | None = None,
     db_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
     user: str = DEFAULT_USER_NAME,
@@ -1335,6 +1350,7 @@ def serve_forever(
         assets_file=assets_file,
         cache_file=cache_file,
         users_file=users_file,
+        isin_file=isin_file,
         db_file=db_file,
         data_dirname=data_dirname,
         user=user,
@@ -1344,12 +1360,13 @@ def serve_forever(
         # Say where the stores live: a typo in a path is otherwise
         # invisible (the server happily opens a different database).
         logger.info(
-            "Stores: backend=%s database=%s assets=%s cache=%s users=%s",
+            "Stores: backend=%s database=%s assets=%s cache=%s users=%s isin=%s",
             backend,
             db_file or "-",
             assets_file or "-",
             cache_file or "-",
             users_file or "-",
+            isin_file or "-",
         )
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
         httpd.serve_forever()
@@ -1363,6 +1380,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
     parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
     parser.add_argument("--users-file", default=None, help="Users JSON file holding the accounts that may log in.")
+    parser.add_argument("--isin-registry-file", default=None, help="ISIN registry JSON file written when constituents are added.")
     parser.add_argument("--db-file", default=None, help="SQLite database file (one file, one table per store).")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
     parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | sqlite).")
@@ -1376,6 +1394,7 @@ def main(argv: list[str] | None = None) -> None:
         assets_file=args.assets_file,
         cache_file=args.cache_file,
         users_file=args.users_file,
+        isin_file=args.isin_registry_file,
         db_file=args.db_file,
         data_dirname=args.plotter_data_dir,
         user=args.user,

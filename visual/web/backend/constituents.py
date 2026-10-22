@@ -28,7 +28,7 @@ from cli.common import (
     USAVN,
     VALUE,
 )
-from storage.repositories import AssetRepository, UnknownUser
+from storage.repositories import AssetRepository, IsinRegistry, UnknownUser
 from storage.wiring import (
     BACKEND_JSON,
     BACKEND_SQLITE,
@@ -287,6 +287,16 @@ def cache_lookup(
     except (OSError, ValueError, KeyError, TypeError) as exc:
         logger.warning("cache %s unreadable (%s); showing no prices", cache_path, exc)
         return {}
+
+
+def _has_geosector_cache(cache: dict[str, Any] | None, isin: str | None) -> bool:
+    """True when the cache holds country or sector data for ``isin``."""
+    if not isin or not cache:
+        return False
+    row = cache.get(isin)
+    if not isinstance(row, dict):
+        return False
+    return bool(row.get("countries")) or bool(row.get("sectors"))
 
 
 def load_constituents(
@@ -584,6 +594,7 @@ def add_constituent(
     shares: Any = None,
     broker: Any = None,
     cache: dict[str, Any] | None = None,
+    registry: IsinRegistry | None = None,
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
     db_file: str | Path | None = None,
@@ -593,6 +604,11 @@ def add_constituent(
     Blank ISIN becomes null (displayed as "—", no quote); otherwise it
     must be a 12-character alphanumeric ISIN. ``broker`` must be a known
     broker id. Numbers accept the same shapes as cell edits.
+
+    A non-empty ISIN is registered under *bucket* when ``registry`` is
+    given; existing registry fields are left untouched (a wrong bucket is
+    preserved). The display row reports ``needs_full_update`` when the
+    cache has no country or sector data for the ISIN.
 
     Returns the display row (same shape as :func:`load_constituents`
     rows) for rendering.
@@ -634,6 +650,10 @@ def add_constituent(
     }
     rows.append(stored)
     index = len(rows) - 1
+    if registry is not None and clean_isin is not None:
+        registry.open()
+        registry.register_isin(clean_isin, bucket=bucket)
+        registry.persist()
     repo.restore(assets)
     repo.persist()
     price = _cached_price_for(cache, clean_isin)
@@ -652,6 +672,10 @@ def add_constituent(
         "editable_shares": SHARES in fields,
         "editable_value": VALUE in fields,
         "no_quote": not _has_isin(clean_isin),
+        "needs_full_update": bool(
+            clean_isin
+            and not _has_geosector_cache(cache, clean_isin)
+        ),
     }
 
 

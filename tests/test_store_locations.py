@@ -31,7 +31,8 @@ def _ini(tmp: Path, body: str) -> Path:
 class TestRequiredStores(unittest.TestCase):
     def test_json_needs_the_per_store_files(self) -> None:
         self.assertEqual(
-            required_stores("json", "serve"), ("assets", "cache", "users")
+            required_stores("json", "serve"),
+            ("assets", "cache", "users", "isin"),
         )
         self.assertEqual(
             required_stores("json", "update"), ("assets", "cache", "isin")
@@ -42,7 +43,10 @@ class TestRequiredStores(unittest.TestCase):
         self.assertEqual(required_stores("sqlite", "update"), ())
 
     def test_an_unknown_backend_falls_back_to_json(self) -> None:
-        self.assertEqual(required_stores("mongodb", "serve"), ("assets", "cache", "users"))
+        self.assertEqual(
+            required_stores("mongodb", "serve"),
+            ("assets", "cache", "users", "isin"),
+        )
 
 
 class TestResolveStoreLocations(unittest.TestCase):
@@ -51,7 +55,7 @@ class TestResolveStoreLocations(unittest.TestCase):
             ini = _ini(
                 Path(tmp),
                 "[update]\nassets_file = from-ini.json\ncache_file = c.json\n"
-                "users_file = u.json\n",
+                "users_file = u.json\nisin_file = i.json\n",
             )
             located = resolve_store_locations(
                 "json",
@@ -66,7 +70,8 @@ class TestResolveStoreLocations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ini = _ini(
                 Path(tmp),
-                "[update]\nassets_file = a.json\ncache_file = c.json\nusers_file = u.json\n",
+                "[update]\nassets_file = a.json\ncache_file = c.json\n"
+                "users_file = u.json\nisin_file = i.json\n",
             )
             located = resolve_store_locations("json", "serve", ini_path=ini)
             self.assertEqual(located["assets"], Path(tmp) / "a.json")
@@ -76,7 +81,8 @@ class TestResolveStoreLocations(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ini = _ini(
                 Path(tmp),
-                "[update]\nassets_file = sub/a.json\ncache_file = c.json\nusers_file = u.json\n",
+                "[update]\nassets_file = sub/a.json\ncache_file = c.json\n"
+                "users_file = u.json\nisin_file = i.json\n",
             )
             located = resolve_store_locations("json", "serve", ini_path=ini)
             self.assertEqual(located["assets"], Path(tmp) / "sub" / "a.json")

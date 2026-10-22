@@ -86,7 +86,7 @@ class TestConfigFlag(unittest.TestCase):
         path.write_text(
             "[server]\nport = 8765\ndirectory = vis\n"
             "[update]\nassets_file = a.json\ncache_file = c.json\n"
-            "users_file = u.json\n",
+            "users_file = u.json\nisin_file = i.json\n",
             encoding="utf-8",
         )
         return path
@@ -113,6 +113,7 @@ class TestConfigFlag(unittest.TestCase):
             "assets_file": None,
             "cache_file": None,
             "users_file": None,
+            "isin_file": None,
             "db_file": None,
             "config": ini,
         }
@@ -205,6 +206,7 @@ class TestConfigFlag(unittest.TestCase):
                                 assets_file=None,
                                 cache_file=None,
                                 users_file=None,
+                                isin_file=None,
                                 db_file=None,
                                 config=ini,
                             )
@@ -240,6 +242,7 @@ class TestConfigFlag(unittest.TestCase):
                                 assets_file=None,
                                 cache_file=None,
                                 users_file=None,
+                                isin_file=None,
                                 db_file=None,
                                 config=ini,
                             )
@@ -259,6 +262,10 @@ class TestConfigFlag(unittest.TestCase):
             )
             self.assertEqual(
                 cmd[cmd.index("--users-file") + 1], str(Path(tmp) / "u.json")
+            )
+            self.assertEqual(
+                cmd[cmd.index("--isin-registry-file") + 1],
+                str(Path(tmp) / "i.json"),
             )
             # The json backend has no database.
             self.assertNotIn("--db-file", cmd)
@@ -285,6 +292,7 @@ class TestConfigFlag(unittest.TestCase):
                                 assets_file=Path(tmp) / "flag-assets.json",
                                 cache_file=None,
                                 users_file=None,
+                                isin_file=None,
                                 db_file=None,
                                 config=ini,
                             )
@@ -309,14 +317,24 @@ class TestConfigFlag(unittest.TestCase):
             )
             # The JSON files are not the store here: they stay out of the
             # process list.
-            for flag in ("--assets-file", "--cache-file", "--users-file"):
+            for flag in (
+                "--assets-file",
+                "--cache-file",
+                "--users-file",
+                "--isin-registry-file",
+            ):
                 self.assertNotIn(flag, cmd)
 
     def test_serve_with_json_passes_only_the_json_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini_with_stores(Path(tmp))
             cmd = self._serve_cmd(ini)
-            for flag in ("--assets-file", "--cache-file", "--users-file"):
+            for flag in (
+                "--assets-file",
+                "--cache-file",
+                "--users-file",
+                "--isin-registry-file",
+            ):
                 self.assertIn(flag, cmd)
             self.assertNotIn("--db-file", cmd)
 
@@ -336,7 +354,8 @@ class TestConfigFlag(unittest.TestCase):
             ini = Path(tmp) / "partial.ini"
             ini.write_text(
                 "[server]\nport = 8765\ndirectory = vis\n"
-                "[update]\nassets_file = a.json\ncache_file = c.json\n",
+                "[update]\nassets_file = a.json\ncache_file = c.json\n"
+                "isin_file = i.json\n",
                 encoding="utf-8",
             )
             with self.assertRaises(Exception) as ctx:

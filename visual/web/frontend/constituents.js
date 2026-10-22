@@ -34,6 +34,9 @@
   // edits and row deletes. Dashboard runs the lite update when set,
   // otherwise it navigates straight to the dashboard.
   let dirty = false;
+  // A newly added ISIN without cached geo/sector data needs the fat
+  // update (prices, geosplits, sectorsplits), not the lite one.
+  let fullUpdateNeeded = false;
 
   function flash(input, className) {
     input.classList.remove("saved-flash", "stale-flash");
@@ -572,6 +575,9 @@
       return;
     }
     row.replaceWith(real);
+    if (data && data.needs_full_update === true) {
+      fullUpdateNeeded = true;
+    }
     dirty = true;
   }
 
@@ -995,11 +1001,17 @@
     link.dataset.busy = "1";
     setOverlay(true);
     try {
-      const response = await fetch(urlWithParams("/api/update"), { method: "POST" });
+      const request = { method: "POST" };
+      if (fullUpdateNeeded) {
+        request.headers = { "Content-Type": "application/json" };
+        request.body = JSON.stringify({ mode: "fat" });
+      }
+      const response = await fetch(urlWithParams("/api/update"), request);
       if (!response.ok) {
         throw new Error(await response.text());
       }
       dirty = false;
+      fullUpdateNeeded = false;
       // Restore the pristine state before the view is stashed: the
       // switcher caches live HTML, so a still-visible overlay (or a
       // stuck busy flag) would linger after the round trip.

@@ -1220,6 +1220,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
             "document.addEventListener("
         )[0]
         self.assertIn("dirty = true", add_flow)
+        self.assertIn("data.needs_full_update", add_flow)
+        self.assertIn("fullUpdateNeeded = true", add_flow)
+        # A missing geo/sector cache stages the fat update instead.
+        refresh_flow = js.split("async function refreshAndGo")[1].split(
+            "function initConstituents"
+        )[0]
+        self.assertIn("if (fullUpdateNeeded)", refresh_flow)
+        self.assertIn('JSON.stringify({ mode: "fat" })', refresh_flow)
+        self.assertIn("fullUpdateNeeded = false", refresh_flow)
         persist = js.split("async function persistOrder")[1].split(
             "document.addEventListener("
         )[0]
@@ -1643,6 +1652,17 @@ class TestAddConstituent(unittest.TestCase):
         assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
         return assets
 
+    def _database(self, tmp: Path) -> Path:
+        from storage.records import UserPortfolioRecord
+        from storage.sqlite_storage import SqliteStorage
+
+        db_file = tmp / "asalloc.db"
+        portfolios = SqliteStorage(db_file, "user_portfolios", UserPortfolioRecord)
+        portfolios.open()
+        portfolios.put(UserPortfolioRecord("default", {}))
+        portfolios.persist()
+        return db_file
+
     def test_full_row_appends_and_reports_display(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
@@ -1671,6 +1691,107 @@ class TestAddConstituent(unittest.TestCase):
             self.assertEqual(stored["shares"], 7.0)
             # Other buckets are untouched.
             self.assertEqual(len(data["cash_portfolio"]), 2)
+
+    def test_add_registers_isin_with_the_selected_bucket(self) -> None:
+        from storage.json_storage import JsonStorage
+        from storage.records import IsinRecord
+        from storage.repositories import IsinRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            isin_file = Path(tmp) / "isin.json"
+            registry = IsinRegistry(JsonStorage(isin_file, IsinRecord))
+            display = add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="New Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+                backend="sqlite",
+                db_file=db_file,
+            )
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "bond_portfolio",
+            )
+            stored = json.loads(isin_file.read_text(encoding="utf-8"))
+            self.assertEqual(stored["DE0001234567"]["bucket"], "bond_portfolio")
+            self.assertTrue(display["needs_full_update"])
+
+    def test_add_only_fills_a_missing_registry_bucket(self) -> None:
+        from storage import MemoryStorage
+        from storage.records import IsinRecord
+        from storage.repositories import IsinRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            registry = IsinRegistry(MemoryStorage(IsinRecord))
+            registry.register_isin("DE0001234567")
+            add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="New Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+                backend="sqlite",
+                db_file=db_file,
+            )
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "bond_portfolio",
+            )
+
+            existing = IsinRegistry(MemoryStorage(IsinRecord))
+            existing.register_isin("DE0007654321", bucket="equity_portfolio")
+            add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="Existing Equity",
+                isin="DE0007654321",
+                broker="scalable",
+                registry=existing,
+                backend="sqlite",
+                db_file=db_file,
+            )
+            self.assertEqual(
+                existing.get_bucket_for_isin("DE0007654321"),
+                "equity_portfolio",
+            )
+
+    def test_add_uses_cache_to_decide_whether_a_full_update_is_needed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            price_only = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="Price Only",
+                isin="DE0001234567",
+                broker="scalable",
+                cache={"DE0001234567": {"price": 10.0}},
+                backend="sqlite",
+                db_file=db_file,
+            )
+            self.assertTrue(price_only["needs_full_update"])
+
+            with_splits = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="With Splits",
+                isin="DE0007654321",
+                broker="scalable",
+                cache={
+                    "DE0007654321": {
+                        "price": 10.0,
+                        "countries": {"Germany": 1.0},
+                        "sectors": {"Financials": 1.0},
+                    }
+                },
+                backend="sqlite",
+                db_file=db_file,
+            )
+            self.assertFalse(with_splits["needs_full_update"])
 
     def test_minimal_row_defaults_to_nulls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1928,6 +2049,7 @@ class _RouteCase(unittest.TestCase):
         (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
         self.assets, self.cache = _write_files(tmp)
         self.users = _write_users(tmp)
+        self.isin = tmp / "isin.json"
         # Updates run in stubbed child processes (threads), so
         # ``cli.update.main`` patches apply and no real worker spawns.
         del _SPAWNED_STUBS[:]
@@ -1950,6 +2072,7 @@ class _RouteCase(unittest.TestCase):
             assets_file=str(self.assets),
             cache_file=str(self.cache),
             users_file=str(self.users),
+            isin_file=str(self.isin),
         )
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -2379,12 +2502,45 @@ class TestConstituentsRoute(_RouteCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertEqual(payload["index"], 2)
+        self.assertTrue(payload["needs_full_update"])
         self.assertIn("<tr ", payload["row"])
         self.assertIn("New Fund", payload["row"])
         self.assertIn('data-index="2"', payload["row"])
         data = _positions(self.assets, "default")
         self.assertEqual(data["equity_portfolio"][2]["name"], "New Fund")
         self.assertEqual(data["equity_portfolio"][2]["ISIN"], "IE000BI8OT95")
+        registry = json.loads(self.isin.read_text(encoding="utf-8"))
+        self.assertEqual(
+            registry["IE000BI8OT95"]["bucket"], "equity_portfolio"
+        )
+
+    def test_post_add_skips_full_update_when_geo_sector_cache_exists(self) -> None:
+        self.cache.write_text(
+            json.dumps(
+                {
+                    "DE0001234567": {
+                        "price": 10.0,
+                        "countries": {"Germany": 1.0},
+                        "sectors": {"Financials": 1.0},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        status, body = self._post_add(
+            {
+                "bucket": "bond_portfolio",
+                "name": "Cached Bond",
+                "isin": "DE0001234567",
+                "value": 100,
+                "broker": "scalable",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertFalse(payload["needs_full_update"])
+        registry = json.loads(self.isin.read_text(encoding="utf-8"))
+        self.assertEqual(registry["DE0001234567"]["bucket"], "bond_portfolio")
 
     def test_post_add_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = self.assets.read_text(encoding="utf-8")
@@ -3163,8 +3319,11 @@ class TestDatabaseBackendRoute(unittest.TestCase):
             return exc.code, exc.read().decode("utf-8", errors="replace")
 
     def _post(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents", payload)
+
+    def _post_json(self, path: str, payload: dict) -> tuple[int, str]:
         req = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/api/constituents",
+            f"http://127.0.0.1:{self.port}{path}",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -3175,6 +3334,28 @@ class TestDatabaseBackendRoute(unittest.TestCase):
                 return resp.status, resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_add_registers_the_bucket_in_the_database(self) -> None:
+        import sqlite3
+
+        status, body = self._post_json(
+            "/api/constituents/add",
+            {
+                "bucket": "bond_portfolio",
+                "name": "New Bond",
+                "isin": "DE0001234567",
+                "value": 100,
+                "broker": "scalable",
+            },
+        )
+        self.assertEqual(status, 200, body)
+        self.assertTrue(json.loads(body)["needs_full_update"])
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT bucket FROM isin_registry WHERE isin = ?",
+                ("DE0001234567",),
+            ).fetchone()
+        self.assertEqual(row, ("bond_portfolio",))
 
     def test_login_stores_a_thirty_minute_session(self) -> None:
         import sqlite3
