@@ -22,7 +22,7 @@ from scrape.scalable import (
     update_scalable_etfs_in_portfolio,
 )
 from cli.context import AppConfig, RuntimeContext
-from assets_helpers import write_user_buckets
+from tests.assets_helpers import write_user_buckets
 
 
 class TestUpdateScalableEtfsInPortfolio(unittest.TestCase):

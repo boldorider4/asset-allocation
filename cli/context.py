@@ -30,7 +30,7 @@ from cli.common import DEFAULT_USER_NAME
 from storage.records import DEFAULT_PORTFOLIO_NAME
 from storage.wiring import (
     BACKEND_JSON,
-    DEFAULT_POSTGRES_DSN,
+    BACKEND_SQLITE,
     assets_backend,
     cache_backend,
     isin_backend,
@@ -67,11 +67,8 @@ class ServerConfig:
     # Kept separate from the plotter output dir on purpose: one instance
     # may serve what another one wrote.
     data_dir: str = "data"
-    # Which backend stores the data (``json`` today, ``sqlite`` and
-    # ``postgres`` when they land). Resolved in ``storage.wiring``.
+    # Which backend stores the data (``json`` or ``sqlite``). Resolved in ``storage.wiring``.
     backend: str = BACKEND_JSON
-    # Connection string for the postgres backend.
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN
     # The SQLite database file (one file, one table per store).
     db_file: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
@@ -181,10 +178,6 @@ class AppConfig:
         backend = normalize_backend(
             parser.get("server", "backend", fallback=BACKEND_JSON)
         )
-        postgres_dsn = (
-            parser.get("server", "postgres_dsn", fallback=DEFAULT_POSTGRES_DSN).strip()
-            or DEFAULT_POSTGRES_DSN
-        )
         db_file = DEFAULT_DB_PATH
         raw_db = parser.get("server", "db_file", fallback=None)
         if raw_db and raw_db.strip():
@@ -197,7 +190,6 @@ class AppConfig:
             directory=directory,
             data_dir=data_dir,
             backend=backend,
-            postgres_dsn=postgres_dsn,
             db_file=db_file,
         )
 
@@ -402,7 +394,6 @@ class RuntimeContext:
                 assets_backend(
                     self.config.assets_file,
                     self.config.server.backend,
-                    self.config.server.postgres_dsn,
                     self.config.server.db_file,
                 ),
             )
@@ -424,7 +415,6 @@ class RuntimeContext:
                 isin_backend(
                     self.config.isin_file,
                     self.config.server.backend,
-                    self.config.server.postgres_dsn,
                     self.config.server.db_file,
                 )
             )
@@ -456,7 +446,6 @@ class RuntimeContext:
             assets_backend(
                 Path(path),
                 self.config.server.backend,
-                self.config.server.postgres_dsn,
                 self.config.server.db_file,
             ),
         )
@@ -488,7 +477,6 @@ class RuntimeContext:
                 cache_backend(
                     self.config.cache_file,
                     self.config.server.backend,
-                    self.config.server.postgres_dsn,
                     self.config.server.db_file,
                 )
             )

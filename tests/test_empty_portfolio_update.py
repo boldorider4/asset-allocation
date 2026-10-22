@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.assets_helpers import user_payload
 
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.update import main as run_update

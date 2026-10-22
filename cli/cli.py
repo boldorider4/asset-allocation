@@ -176,7 +176,6 @@ def cmd_add_user(args: argparse.Namespace) -> None:
             user,
             password,
             backend=cfg.server.backend,
-            postgres_dsn=cfg.server.postgres_dsn,
             db_file=cfg.server.db_file,
         )
     except NotImplementedError as exc:
@@ -253,8 +252,6 @@ def cmd_serve(args: argparse.Namespace) -> None:
         str(user),
         "--backend",
         str(backend),
-        "--postgres-dsn",
-        str(ini_cfg.server.postgres_dsn),
         "--plotter-data-dir",
         ini_data_dir,
     ]
@@ -326,7 +323,6 @@ def cmd_clear_sessions(args: argparse.Namespace) -> None:
         cleared = clear_sessions(
             cfg.directory,
             backend=cfg.backend,
-            postgres_dsn=cfg.postgres_dsn,
             db_file=database,
             expired_only=expired_only,
         )

@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """SQLite backend for the :mod:`storage.storage` abstractions.
 
-The file-backed sibling of :mod:`storage.postgres_storage`: the same
-class shape, the same method names, the same signatures — but here the
-SQL is real instead of a stub. One table per store, one row per key::
+One table per store, one row per key::
 
     CREATE TABLE <table> (key TEXT PRIMARY KEY, payload TEXT NOT NULL)
 

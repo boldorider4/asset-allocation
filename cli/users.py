@@ -16,39 +16,14 @@ from pathlib import Path
 from storage.repositories import UsersRepository
 from storage.wiring import (
     BACKEND_JSON,
-    BACKEND_POSTGRES,
-    DEFAULT_POSTGRES_DSN,
-    POSTGRES_USERS_TABLE,
+    BACKEND_SQLITE,
     normalize_backend,
     users_backend,
 )
 
-__all__ = ["add_user_account", "add_user_postgres"]
+__all__ = ["add_user_account"]
 
 logger = logging.getLogger(__name__)
-
-
-def add_user_postgres(
-    dsn: str,
-    user: str,
-    password: str | None = None,
-    table: str = POSTGRES_USERS_TABLE,
-) -> bool:
-    """Stub: writing accounts to Postgres is not implemented yet.
-
-    The intended statement, once the Postgres backend lands::
-
-        INSERT INTO users (key, payload) VALUES (%s, %s)
-        ON CONFLICT (key) DO UPDATE SET payload = EXCLUDED.payload
-
-    with ``key`` = the user name and ``payload`` = ``{"password": ...}``.
-    """
-    raise NotImplementedError(
-        "adding a user to Postgres is not implemented yet; the intended "
-        f"statement is: INSERT INTO {table} (key, payload) VALUES (%s, %s) "
-        "ON CONFLICT (key) DO UPDATE SET payload = EXCLUDED.payload "
-        f"(dsn={dsn})"
-    )
 
 
 def add_user_account(
@@ -57,7 +32,6 @@ def add_user_account(
     password: str | None = None,
     *,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> bool:
     """Add the account ``user`` to the users store.
@@ -70,11 +44,9 @@ def add_user_account(
     name = str(user).strip()
     if not name:
         raise ValueError("the user name must not be empty")
-    if normalize_backend(backend) == BACKEND_POSTGRES:
-        return add_user_postgres(postgres_dsn, name, password)
 
     repo = UsersRepository(
-        users_backend(users_file, backend, postgres_dsn, db_file)
+        users_backend(users_file, backend, db_file)
     )
     repo.open()
     created = not repo.exists(name)

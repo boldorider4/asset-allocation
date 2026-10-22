@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.assets_helpers import user_payload
 
 from visual.web.backend.serve import DashboardHandler
 

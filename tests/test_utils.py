@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
-from assets_helpers import (  # noqa: E402
+from tests.assets_helpers import (  # noqa: E402
     read_user_buckets,
     write_user_buckets,
 )

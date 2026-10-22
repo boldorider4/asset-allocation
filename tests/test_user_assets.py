@@ -24,13 +24,11 @@ if str(REPO_ROOT) not in sys.path:
 from cli.common import DEFAULT_USER_NAME  # noqa: E402
 from cli.context import AppConfig, RuntimeContext  # noqa: E402
 from storage.json_storage import JsonStorage  # noqa: E402
-from storage.postgres_storage import PostgresStorage  # noqa: E402
 from storage.records import UserAssets  # noqa: E402
 from storage.repositories import AssetRepository, UnknownUser  # noqa: E402
 from storage.wiring import (  # noqa: E402
     BACKEND_JSON,
-    BACKEND_POSTGRES,
-    DEFAULT_POSTGRES_DSN,
+    BACKEND_SQLITE,
     assets_backend,
     normalize_backend,
 )
@@ -192,19 +190,6 @@ class TestBackendSelection(unittest.TestCase):
             backend = assets_backend(Path(store) / "assets.json")
         self.assertIsInstance(backend, JsonStorage)
 
-    def test_postgres_is_handed_over_and_logged(self) -> None:
-        # The stub is wired in and an error is logged; the wiring itself
-        # does not raise.
-        with tempfile.TemporaryDirectory() as store:
-            with self.assertLogs("storage.wiring", level="ERROR"):
-                backend = assets_backend(
-                    Path(store) / "assets.json",
-                    BACKEND_POSTGRES,
-                    "postgresql://example/db",
-                )
-        self.assertIsInstance(backend, PostgresStorage)
-        self.assertEqual(backend.table, "user_assets")
-
     def test_unknown_backend_falls_back_to_json(self) -> None:
         with self.assertLogs("storage.wiring", level="WARNING"):
             self.assertEqual(normalize_backend("mongodb"), "json")
@@ -227,20 +212,6 @@ class TestBackendSelection(unittest.TestCase):
         self.assertFalse(hasattr(wiring, "os"))
         params = inspect.signature(wiring.assets_backend).parameters
         self.assertIn("backend", params)
-        self.assertIn("postgres_dsn", params)
-
-    def test_server_config_carries_the_setting(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ini = Path(tmp) / "config.ini"
-            ini.write_text(
-                "[server]\nport = 8765\naddress = localhost\n"
-                "directory = /tmp/x\nbackend = postgres\n"
-                "postgres_dsn = postgresql://example/db\n",
-                encoding="utf-8",
-            )
-            config = AppConfig.from_ini(ini)
-        self.assertEqual(config.server.backend, "postgres")
-        self.assertEqual(config.server.postgres_dsn, "postgresql://example/db")
 
     def test_server_config_defaults_to_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -252,7 +223,20 @@ class TestBackendSelection(unittest.TestCase):
             )
             config = AppConfig.from_ini(ini)
         self.assertEqual(config.server.backend, "json")
-        self.assertEqual(config.server.postgres_dsn, DEFAULT_POSTGRES_DSN)
+        self.assertFalse(hasattr(config.server, "postgres_dsn"))
+
+    def test_server_config_reads_db_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = Path(tmp) / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\naddress = localhost\n"
+                "directory = /tmp/x\nbackend = sqlite\n"
+                "db_file = /tmp/test.db\n",
+                encoding="utf-8",
+            )
+            config = AppConfig.from_ini(ini)
+        self.assertEqual(config.server.backend, "sqlite")
+        self.assertEqual(config.server.db_file, Path("/tmp/test.db"))
 
 
 class TestWiring(unittest.TestCase):

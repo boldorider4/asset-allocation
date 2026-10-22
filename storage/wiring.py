@@ -6,10 +6,9 @@ backend, the scrapers) talks to the *repository* and never to a concrete
 backend. This module is the single place where the concrete backend is
 built, so moving a store to SQLite is one line here.
 
-Configuration lives with the application: the backend name, the SQLite
-file and the Postgres DSN are read from ``config.ini`` by the app layer
-(see ``cli.context``) and passed in. This module reads no files and
-knows no settings.
+Configuration lives with the application: the backend name and the SQLite
+file are read from ``config.ini`` by the app layer (see ``cli.context``)
+and passed in. This module reads no files and knows no settings.
 
 The row type stays the one the store has always used (one row per user
 for the assets, one per ISIN for the cache, ...), which maps onto the
@@ -24,7 +23,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from storage.json_storage import JsonStorage
-from storage.postgres_storage import PostgresStorage
 from storage.records import (
     CacheEntry,
     IsinRecord,
@@ -39,11 +37,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BACKEND_JSON",
-    "BACKEND_POSTGRES",
     "BACKEND_SQLITE",
-    "DEFAULT_POSTGRES_DSN",
-    "POSTGRES_TABLE",
-    "POSTGRES_USERS_TABLE",
     "SUPPORTED_BACKENDS",
     "assets_backend",
     "cache_backend",
@@ -57,20 +51,11 @@ logger = logging.getLogger(__name__)
 
 #: Backend names the application may configure.
 BACKEND_JSON = "json"
-BACKEND_POSTGRES = "postgres"
 BACKEND_SQLITE = "sqlite"
 SUPPORTED_BACKENDS: tuple[str, ...] = (
     BACKEND_JSON,
     BACKEND_SQLITE,
-    BACKEND_POSTGRES,
 )
-
-#: Where the Postgres backend will keep its rows.
-POSTGRES_TABLE = "user_assets"
-#: Where the Postgres backend will keep the user accounts.
-POSTGRES_USERS_TABLE = "users"
-#: Connection string used when the configuration does not carry one.
-DEFAULT_POSTGRES_DSN = "postgresql://localhost/asalloc"
 
 #: Tables of the SQLite database (one per store).
 SQLITE_TABLE_ASSETS = "user_assets"
@@ -119,7 +104,6 @@ def _sqlite_backend(
 def assets_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> "Storage[UserAssets]":
     """Backend for the assets store (one row per user).
@@ -133,23 +117,12 @@ def assets_backend(
         return _sqlite_backend(
             db_file or path, SQLITE_TABLE_ASSETS, UserAssets
         )
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "assets backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            POSTGRES_TABLE,
-        )
-        return PostgresStorage(dsn, POSTGRES_TABLE, UserAssets)
     return JsonStorage(path, UserAssets, strict=True)
 
 
 def users_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> "Storage[UserRecord]":
     """Backend for the user accounts (one row per user name).
@@ -165,69 +138,36 @@ def users_backend(
     name = normalize_backend(backend)
     if name == BACKEND_SQLITE:
         return _sqlite_backend(db_file or path, SQLITE_TABLE_USERS, UserRecord)
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "users backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            POSTGRES_USERS_TABLE,
-        )
-        return PostgresStorage(dsn, POSTGRES_USERS_TABLE, UserRecord)
     return JsonStorage(path, UserRecord, strict=True)
 
 
 def cache_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> "Storage[CacheEntry]":
     """Backend for the per-ISIN cache (price, countries, sectors)."""
     name = normalize_backend(backend)
     if name == BACKEND_SQLITE:
         return _sqlite_backend(db_file or path, SQLITE_TABLE_CACHE, CacheEntry)
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "cache backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            "cache",
-        )
-        return PostgresStorage(dsn, "cache", CacheEntry)
     return JsonStorage(path, CacheEntry)
 
 
 def isin_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> "Storage[IsinRecord]":
     """Backend for the ISIN registry (issuer, bucket, vendor ref)."""
     name = normalize_backend(backend)
     if name == BACKEND_SQLITE:
         return _sqlite_backend(db_file or path, SQLITE_TABLE_ISIN, IsinRecord)
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "isin backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            "isin_registry",
-        )
-        return PostgresStorage(dsn, "isin_registry", IsinRecord)
     return JsonStorage(path, IsinRecord)
 
 
 def sessions_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> "Storage[SessionRecord]":
     """Backend for the browser sessions (one row per session id)."""
@@ -236,14 +176,4 @@ def sessions_backend(
         return _sqlite_backend(
             db_file or path, SQLITE_TABLE_SESSIONS, SessionRecord
         )
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "sessions backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            "sessions",
-        )
-        return PostgresStorage(dsn, "sessions", SessionRecord)
     return JsonStorage(path, SessionRecord, strict=True)

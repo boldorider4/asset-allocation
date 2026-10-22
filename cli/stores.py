@@ -18,7 +18,7 @@ import configparser
 from dataclasses import dataclass
 from pathlib import Path
 
-from storage.wiring import BACKEND_POSTGRES, BACKEND_SQLITE
+from storage.wiring import BACKEND_SQLITE
 
 __all__ = [
     "StoreLocationMissing",
@@ -61,7 +61,6 @@ REQUIRED: dict[str, dict[str, tuple[str, ...]]] = {
         "update": ("assets", "cache", "isin"),
     },
     "sqlite": {"serve": (), "update": ()},
-    "postgres": {"serve": (), "update": ()},
 }
 
 #: The SQLite database: one file, one table per store.
@@ -172,18 +171,3 @@ def db_file(
             raise StoreLocationMissing(DB_SPEC)
         return None
     return value
-
-
-def postgres_dsn(
-    backend: str,
-    *,
-    ini_path: Path | None = None,
-    flag_value: str | None = None,
-) -> str | None:
-    """The Postgres DSN (only for the postgres backend)."""
-    if backend != BACKEND_POSTGRES:
-        return None
-    if flag_value:
-        return flag_value
-    value = _ini_value("server", "postgres_dsn", ini_path)
-    return value or None

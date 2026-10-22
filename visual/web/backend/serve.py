@@ -44,9 +44,7 @@ from cli.context import DEFAULT_DB_PATH
 from storage.repositories import UnknownUser
 from storage.wiring import (
     BACKEND_JSON,
-    BACKEND_POSTGRES,
     BACKEND_SQLITE,
-    DEFAULT_POSTGRES_DSN,
 )
 from utils import clear_chart_files
 
@@ -200,7 +198,6 @@ def _update_worker(
     directory: str,
     user: str,
     backend: str,
-    postgres_dsn: str,
     db_file: str | None,
     result_conn,
     cancel_event,
@@ -263,8 +260,7 @@ def _update_worker(
             address="localhost",
             directory=Path(directory),
             backend=backend,
-            postgres_dsn=postgres_dsn,
-            db_file=Path(db_file) if db_file else DEFAULT_DB_PATH,
+                        db_file=Path(db_file) if db_file else DEFAULT_DB_PATH,
         ),
         plotter_config=ini_plotter,
     )
@@ -366,7 +362,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         data_dirname=None,
         user=None,
         backend=None,
-        postgres_dsn=None,
         **kwargs,
     ):
         self._assets_file = assets_file
@@ -381,7 +376,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self._default_user = user or DEFAULT_USER_NAME
         # Which backend holds the assets (resolved by the app, not here).
         self._backend = backend or BACKEND_JSON
-        self._postgres_dsn = postgres_dsn or DEFAULT_POSTGRES_DSN
         super().__init__(*args, **kwargs)
 
     def _session(self) -> Session | None:
@@ -390,7 +384,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.directory,
             self.headers.get("Cookie"),
             backend=self._backend,
-            postgres_dsn=self._postgres_dsn,
             db_file=self._db_file,
         )
 
@@ -430,8 +423,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         """
         if self._backend == BACKEND_SQLITE:
             return bool(self._db_file)
-        if self._backend == BACKEND_POSTGRES:
-            return True
         return all(paths)
 
     def _cache_map(self) -> dict[str, Any]:
@@ -451,7 +442,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return cache_lookup(
                 self._cache_file,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except Exception as exc:
@@ -474,7 +464,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except Exception as exc:
@@ -553,7 +542,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 str(payload.get("old_password") or ""),
                 str(payload.get("new_password") or ""),
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except (OSError, json.JSONDecodeError) as exc:
@@ -609,7 +597,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             user,
             incognito=incognito,
             backend=self._backend,
-            postgres_dsn=self._postgres_dsn,
             db_file=self._db_file,
         )
         body = json.dumps(
@@ -639,7 +626,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self.directory,
                 session_id,
                 backend=self._backend,
-                postgres_dsn=self._postgres_dsn,
                 db_file=self._db_file,
             )
         body = json.dumps({"ok": True, "redirect": "/login"}).encode("utf-8")
@@ -665,7 +651,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 user,
                 "" if password is None else str(password),
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except Exception as exc:
@@ -685,7 +670,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._assets_file,
                 user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except Exception as exc:
@@ -729,7 +713,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 self._cache_file,
                 session.user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
             from .constituents import assets_portfolio_name
@@ -741,7 +724,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     self._assets_file,
                     session.user,
                     self._backend,
-                    self._postgres_dsn,
                     self._db_file,
                 ),
             ).encode("utf-8")
@@ -799,7 +781,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 cache,
                 session.user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except UnknownUser as exc:
@@ -852,7 +833,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 payload.get("name"),
                 session.user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except UnknownUser as exc:
@@ -906,7 +886,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 payload.get("order"),
                 session.user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except UnknownUser as exc:
@@ -960,7 +939,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 payload.get("index"),
                 session.user,
                 self._backend,
-                self._postgres_dsn,
                 self._db_file,
             )
         except UnknownUser as exc:
@@ -1101,7 +1079,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     str(self.directory),
                     session.user,
                     self._backend,
-                    self._postgres_dsn,
                     str(self._db_file) if self._db_file else None,
                     send_conn,
                     cancel_event,
@@ -1274,7 +1251,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 cache=cache,
                 user=session.user,
                 backend=self._backend,
-                postgres_dsn=self._postgres_dsn,
                 db_file=self._db_file,
             )
         except UnknownUser as exc:
@@ -1351,7 +1327,6 @@ def serve_forever(
     data_dirname: str = DATA_DIRNAME,
     user: str = DEFAULT_USER_NAME,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
     handler = functools.partial(
@@ -1364,7 +1339,6 @@ def serve_forever(
         data_dirname=data_dirname,
         user=user,
         backend=backend,
-        postgres_dsn=postgres_dsn,
     )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         # Say where the stores live: a typo in a path is otherwise
@@ -1391,8 +1365,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--users-file", default=None, help="Users JSON file holding the accounts that may log in.")
     parser.add_argument("--db-file", default=None, help="SQLite database file (one file, one table per store).")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
-    parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | postgres).")
-    parser.add_argument("--postgres-dsn", default=DEFAULT_POSTGRES_DSN, help="Postgres connection string for the postgres backend.")
+    parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | sqlite).")
     parser.add_argument("--plotter-data-dir", default=DATA_DIRNAME, help="On-disk data dir name under --directory (default: data).")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1407,7 +1380,6 @@ def main(argv: list[str] | None = None) -> None:
         data_dirname=args.plotter_data_dir,
         user=args.user,
         backend=args.backend,
-        postgres_dsn=args.postgres_dsn,
     )
 
 

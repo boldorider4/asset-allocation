@@ -5,7 +5,7 @@
 * :mod:`storage.records` — backend-agnostic row types (``DictRow``,
   ``CacheEntry``, ``AssetBucket``, ``UserAssets``, ``IsinRecord``).
 * :mod:`storage.json_storage` / :mod:`storage.memory_storage` /
-  :mod:`storage.postgres_storage` — backends.
+  :mod:`storage.sqlite_storage` — backends.
 * :mod:`storage.wiring` — the composition point choosing the backend.
 * :mod:`storage.repositories` — domain logic over any backend
   (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``).
@@ -13,7 +13,6 @@
 
 from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
-from storage.postgres_storage import PostgresStorage
 from storage.records import (
     DEFAULT_PORTFOLIO_NAME,
     AssetBucket,
@@ -30,10 +29,11 @@ from storage.repositories import (
     UnknownUser,
     UsersRepository,
 )
+from storage.sqlite_storage import SqliteStorage
 from storage.storage import Storage, StorageObject
 from storage.wiring import (
     BACKEND_JSON,
-    BACKEND_POSTGRES,
+    BACKEND_SQLITE,
     assets_backend,
     normalize_backend,
     users_backend,
@@ -51,7 +51,7 @@ __all__ = [
     "UserRecord",
     "JsonStorage",
     "MemoryStorage",
-    "PostgresStorage",
+    "SqliteStorage",
     "CacheRepository",
     "AssetRepository",
     "IsinRegistry",
@@ -61,5 +61,5 @@ __all__ = [
     "users_backend",
     "normalize_backend",
     "BACKEND_JSON",
-    "BACKEND_POSTGRES",
+    "BACKEND_SQLITE",
 ]

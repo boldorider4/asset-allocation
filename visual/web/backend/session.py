@@ -27,7 +27,7 @@ from pathlib import Path
 from storage.repositories import SessionsRepository
 from storage.wiring import (
     BACKEND_JSON,
-    DEFAULT_POSTGRES_DSN,
+    BACKEND_SQLITE,
     sessions_backend,
 )
 
@@ -94,7 +94,6 @@ def session_id_from_cookie(header: str | None) -> str | None:
 def _repo(
     workspace: str | Path,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> SessionsRepository:
     """The session repository for this workspace.
@@ -105,7 +104,7 @@ def _repo(
     """
     return SessionsRepository(
         sessions_backend(
-            store_path(workspace), backend, postgres_dsn, db_file
+            store_path(workspace), backend, db_file
         )
     )
 
@@ -115,7 +114,6 @@ def read_session(
     cookie_header_value: str | None,
     *,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> Session | None:
     """The session for the given cookie, or None when there is none.
@@ -129,7 +127,7 @@ def read_session(
     session_id = session_id_from_cookie(cookie_header_value)
     if not session_id:
         return None
-    repo = _repo(workspace, backend, postgres_dsn, db_file)
+    repo = _repo(workspace, backend, db_file)
     repo.open()
     try:
         record = repo.get(session_id)
@@ -159,14 +157,13 @@ def login(
     *,
     incognito: bool = False,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> Session:
     """Persist a session for ``session_id`` and return it.
 
     The session expires ``SESSION_TTL_SECONDS`` after this call.
     """
-    repo = _repo(workspace, backend, postgres_dsn, db_file)
+    repo = _repo(workspace, backend, db_file)
     repo.open()
     record = repo.start(
         session_id,
@@ -187,11 +184,10 @@ def logout(
     session_id: str,
     *,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
 ) -> None:
     """Drop the session for ``session_id`` (no-op when unknown)."""
-    repo = _repo(workspace, backend, postgres_dsn, db_file)
+    repo = _repo(workspace, backend, db_file)
     repo.open()
     if repo.drop(session_id):
         repo.persist()
@@ -201,7 +197,6 @@ def clear_sessions(
     workspace: str | Path,
     *,
     backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
     db_file: str | Path | None = None,
     expired_only: bool = False,
 ) -> int:
@@ -213,7 +208,7 @@ def clear_sessions(
     ``<workspace>/.sessions.json`` rows, the SQLite backend its
     ``sessions`` table rows.
     """
-    repo = _repo(workspace, backend, postgres_dsn, db_file)
+    repo = _repo(workspace, backend, db_file)
     repo.open()
     if expired_only:
         return repo.purge_expired()

@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.assets_helpers import user_payload
 
 from utils import chart_files, clear_chart_files
 from visual.web.backend.constituents import assets_positions_left

@@ -1,14 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The SQLite backend: the storage contract, on a real database.
 
-The backend is the file-backed twin of the Postgres stub: the same
-class shape, the same methods, the same signatures. The parity test
-below keeps the two from drifting apart.
+The backend is the file-backed twin of the JSON backend: the same
+class shape, the same method names, the same signatures.
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 import sqlite3
 import subprocess
@@ -17,7 +15,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage.postgres_storage import PostgresStorage
 from storage.records import CacheEntry, UserAssets, UserRecord
 from storage.sqlite_storage import SqliteStorage
 
@@ -366,39 +363,6 @@ class TestConcurrentUse(unittest.TestCase):
         # ...and the rest of the store still works.
         store.put(UserRecord("alice", {"password": "x"}))
         self.assertIsNotNone(store.get("alice"))
-
-
-class TestParityWithThePostgresStub(unittest.TestCase):
-    """The SQLite backend mirrors the stub: same methods, same parameters."""
-
-    def _public_api(self, cls: type) -> dict[str, list[str]]:
-        return {
-            name: [
-                param
-                for param in inspect.signature(getattr(cls, name)).parameters
-                if param not in ("self", "cls")
-            ]
-            for name in dir(cls)
-            if not name.startswith("_")
-            and callable(getattr(cls, name, None))
-        }
-
-    def test_the_same_public_methods(self) -> None:
-        self.assertEqual(
-            sorted(self._public_api(SqliteStorage)),
-            sorted(self._public_api(PostgresStorage)),
-        )
-
-    def test_the_same_parameters(self) -> None:
-        self.assertEqual(
-            self._public_api(SqliteStorage), self._public_api(PostgresStorage)
-        )
-
-    def test_the_constructor_takes_the_same_shape(self) -> None:
-        # (locator, table, row factory) — only the locator differs.
-        for cls in (SqliteStorage, PostgresStorage):
-            params = list(inspect.signature(cls.__init__).parameters)
-            self.assertEqual(params[2:], ["table", "object_factory"])
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ from scrape.traderepublic import (
     update_traderepublic_etfs_in_portfolio,
 )
 from cli.context import AppConfig, RuntimeContext
-from assets_helpers import write_user_buckets
+from tests.assets_helpers import write_user_buckets
 
 
 class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):

@@ -17,8 +17,7 @@ from storage.records import UserRecord
 from storage.repositories import UsersRepository
 from storage.wiring import (
     BACKEND_JSON,
-    BACKEND_POSTGRES,
-    POSTGRES_USERS_TABLE,
+    BACKEND_SQLITE,
     users_backend,
 )
 
@@ -169,9 +168,13 @@ class TestUsersBackendWiring(unittest.TestCase):
             backend = users_backend(path, BACKEND_JSON)
             self.assertEqual(backend.path, path)
 
-    def test_postgres_backend_uses_the_users_table(self) -> None:
-        backend = users_backend("users.json", BACKEND_POSTGRES)
-        self.assertEqual(backend.table, POSTGRES_USERS_TABLE)
+    def test_sqlite_backend_uses_the_users_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "test.db"
+            backend = users_backend(db, BACKEND_SQLITE, db_file=db)
+            # The table name is the SQLite table for users
+            from storage.wiring import SQLITE_TABLE_USERS
+            self.assertEqual(backend.table, SQLITE_TABLE_USERS)
 
 
 if __name__ == "__main__":

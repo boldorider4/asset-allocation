@@ -50,9 +50,8 @@ The store itself is backend-agnostic: the code above the storage layer only talk
 | --- | --- |
 | `json` (default) | Every store in its own JSON file (`assets.json`, `cache.json`, `isin.json`, `users.json`, `.sessions.json`) |
 | `sqlite` | Every store in one SQLite database (`[server] db_file`), one table per store |
-| `postgres` | Not implemented yet: the wiring logs an error and the store fails to open |
 
-`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default). `[server] db_file` names the SQLite database (`~/.local/asalloc/asalloc.db` by default).
+`[server] db_file` names the SQLite database (`~/.local/asalloc/asalloc.db` by default).
 
 **Where the stores live.** The backend decides: with `sqlite` every store is a table in the one database (`[server] db_file`), with `json` each store is its own file (`[update] assets_file` / `cache_file` / `users_file` / `isin_file`). The two are alternatives — `asalloc serve` and `asalloc update` take either `--db-file` or the per-store `--*-file` options, never both, and the ini key counts as the location just like a flag (the built-in defaults do *not*: they point into the repository, not into the deployment, so a store with neither a flag nor an ini key is a configuration error).
 
@@ -117,7 +116,7 @@ asalloc add-user --config ~/.local/asalloc/config.ini --user alice --password se
 asalloc add-user --config /path/to/config.ini --user alice    # empty password
 ```
 
-The CLI command reads the users file from the given `config.ini` (`[update] users_file`); `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed. The `--backend postgres` path is a stub and does not work yet.
+The CLI command reads the users file from the given `config.ini` (`[update] users_file`); `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed.
 **Login.** The login screen asks for a **User** and a **Password**: the name must have an account in `users.json` (a name that only appears in `assets.json` is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
 
 **Reset password.** The "Reset password" link under the password box turns the form into a reset (the password box becomes "Old Password", a "New Password" box appears, the button becomes "Reset" and the incognito toggle goes away — still on the login page). The old password must match; an empty new password is allowed. On success the login form comes back and the new password is the one that logs in.

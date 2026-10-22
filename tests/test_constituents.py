@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.assets_helpers import user_payload
 
 from cli.common import DEFAULT_USER_NAME
 from visual.web.backend.constituents import (

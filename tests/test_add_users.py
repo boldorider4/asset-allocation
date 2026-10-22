@@ -2,7 +2,7 @@
 """Adding a user account: the script and the ``asalloc add-user`` command.
 
 Both write to the same users store (``users.json``), keyed by user
-name, and both refuse to work against Postgres (a stub for now).
+name.
 """
 
 from __future__ import annotations
@@ -92,14 +92,6 @@ class TestAddUsersScript(unittest.TestCase):
             path = Path(tmp) / "users.json"
             result = _run_script(str(path), "   ")
             self.assertEqual(result.returncode, 2)
-            self.assertFalse(path.exists())
-
-    def test_postgres_is_a_stub(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            result = _run_script(str(path), "alice", "--backend", "postgres")
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("not implemented", result.stderr)
             self.assertFalse(path.exists())
 
 

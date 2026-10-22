@@ -34,7 +34,6 @@ from storage import (  # noqa: E402
     UserAssets,
     JsonStorage,
     MemoryStorage,
-    PostgresStorage,
 )
 from storage.sqlite_storage import SqliteStorage  # noqa: E402
 from storage.storage import Storage  # noqa: E402
@@ -502,50 +501,6 @@ class TestIsinRegistryComposition(unittest.TestCase):
         self.assertEqual(registry.get_issuer_for_isin("IE00NEWX03"), "ubs")
         with self.assertRaises(ValueError):
             registry.set_issuer_for_isin("IE00NEWX03", "nope")
-
-
-class TestPostgresStub(unittest.TestCase):
-    def test_importable_without_driver(self) -> None:
-        store: Storage[CacheEntry] = PostgresStorage(
-            "postgresql://localhost:5432/x", "cache", CacheEntry
-        )
-        assert isinstance(store, PostgresStorage)
-        self.assertEqual(store.table, "cache")
-        self.assertFalse(store.connected)
-
-    def test_io_raises_not_implemented(self) -> None:
-        store = PostgresStorage("postgresql://localhost:5432/x", "cache", CacheEntry)
-        with self.assertRaises(NotImplementedError):
-            store.connect()
-        with self.assertRaises(NotImplementedError):
-            store.get("IE00X")
-        with self.assertRaises(NotImplementedError):
-            store.upsert("IE00X", {"price": 1.0})
-        with self.assertRaises(NotImplementedError):
-            store.put(CacheEntry("IE00X", {"price": 1.0}))
-        with self.assertRaises(NotImplementedError):
-            store.remove("IE00X")
-        with self.assertRaises(NotImplementedError):
-            "IE00X" in store
-        with self.assertRaises(NotImplementedError):
-            store.commit()
-        with self.assertRaises(NotImplementedError):
-            store.rollback()
-        with self.assertRaises(NotImplementedError):
-            store.open()
-        with self.assertRaises(NotImplementedError):
-            store.snapshot()
-        with self.assertRaises(NotImplementedError):
-            store.persist()
-
-    def test_close_safe_without_connect(self) -> None:
-        store = PostgresStorage("postgresql://localhost:5432/x", "cache", CacheEntry)
-        store.close()  # must not raise
-        self.assertFalse(store.connected)
-
-    def test_context_manager_protocol(self) -> None:
-        self.assertTrue(hasattr(PostgresStorage, "__enter__"))
-        self.assertTrue(hasattr(PostgresStorage, "__exit__"))
 
 
 if __name__ == "__main__":

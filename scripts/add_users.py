@@ -5,8 +5,7 @@
 Usage::
 
     python scripts/add_users.py <users.json> <user> [--password PW]
-                                [--backend json|sqlite|postgres] [--db-file DB]
-                                [--postgres-dsn DSN]
+                                [--backend json|sqlite] [--db-file DB]
 
 The store is keyed by user name — the same key a database table would
 use — and holds the password::
@@ -18,9 +17,7 @@ given; a new account gets an empty password when none is given.
 
 The backend decides how the account is written: ``json`` (the default)
 modifies the file, ``sqlite`` writes to the ``users`` table of the
-database given by ``--db-file``, ``postgres`` is a stub that does not
-work yet (the intended statement is in
-``cli/users.py::add_user_postgres``).
+database given by ``--db-file``.
 
 The script touches **only** the file you pass.
 """
@@ -38,7 +35,7 @@ if str(REPO_ROOT) not in sys.path:
 from cli.users import add_user_account  # noqa: E402
 from storage.wiring import (  # noqa: E402
     BACKEND_JSON,
-    DEFAULT_POSTGRES_DSN,
+    BACKEND_SQLITE,
     SUPPORTED_BACKENDS,
 )
 
@@ -58,18 +55,13 @@ def main(argv: list[str] | None = None) -> int:
         "--backend",
         choices=list(SUPPORTED_BACKENDS),
         default=BACKEND_JSON,
-        help="Store backend (default: json; postgres is a stub that does not work yet).",
+        help="Store backend (default: json).",
     )
     parser.add_argument(
         "--db-file",
         type=Path,
         default=None,
         help="SQLite database file (only used by the sqlite backend).",
-    )
-    parser.add_argument(
-        "--postgres-dsn",
-        default=DEFAULT_POSTGRES_DSN,
-        help="Postgres connection string (only used by the postgres backend).",
     )
     args = parser.parse_args(argv)
 
@@ -83,7 +75,6 @@ def main(argv: list[str] | None = None) -> int:
             user,
             args.password,
             backend=args.backend,
-            postgres_dsn=args.postgres_dsn,
             db_file=args.db_file,
         )
     except NotImplementedError as exc:
