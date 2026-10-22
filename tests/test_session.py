@@ -146,17 +146,9 @@ class TestSessionStoreBackends(unittest.TestCase):
 
                         conn = sqlite3.connect(db_file)
                         conn.execute(
-                            "UPDATE sessions SET payload = ? WHERE key = ?",
-                            (
-                                json.dumps(
-                                    {
-                                        "user": "alice",
-                                        "incognito": False,
-                                        "expires_at": expired,
-                                    }
-                                ),
-                                "sid",
-                            ),
+                            "UPDATE sessions SET expires_at = ? "
+                            "WHERE session_id = ?",
+                            (expired, "sid"),
                         )
                         conn.commit()
                         conn.close()
@@ -170,29 +162,27 @@ class TestSessionStoreBackends(unittest.TestCase):
 class TestBrokenSessionRow(unittest.TestCase):
     """A damaged session row is no session, not a broken request."""
 
-    def test_a_row_without_a_payload_reads_as_no_session(self) -> None:
+    def test_a_legacy_row_without_a_payload_reads_as_no_session(self) -> None:
         import sqlite3
 
         with tempfile.TemporaryDirectory() as tmp:
             db_file = Path(tmp) / "asalloc.db"
-            login(tmp, "sid", "alice", backend=BACKEND_SQLITE, db_file=db_file)
-            # A row whose payload is gone (a table from an older
-            # schema, or a damaged one): the browser must land on the
-            # login page, not on a traceback.
             conn = sqlite3.connect(db_file)
             try:
-                conn.execute("DROP TABLE sessions")
                 conn.execute(
                     "CREATE TABLE sessions (key TEXT PRIMARY KEY, payload TEXT)"
                 )
-                conn.execute("INSERT INTO sessions (key, payload) VALUES ('sid', NULL)")
+                conn.execute(
+                    "INSERT INTO sessions (key, payload) VALUES ('sid', NULL)"
+                )
                 conn.commit()
             finally:
                 conn.close()
+            # The legacy table is upgraded on first use; the unusable row
+            # is dropped, so the browser lands on the login page.
             self.assertIsNone(
                 read_session(tmp, _cookie("sid"), backend=BACKEND_SQLITE, db_file=db_file)
             )
-            # ...and the damaged row is cleaned up, not left behind.
             conn = sqlite3.connect(db_file)
             try:
                 rows = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
@@ -208,7 +198,10 @@ class TestBrokenSessionRow(unittest.TestCase):
             login(tmp, "sid", "alice", backend=BACKEND_SQLITE, db_file=db_file)
             conn = sqlite3.connect(db_file)
             try:
-                conn.execute("UPDATE sessions SET payload = 'not json' WHERE key = 'sid'")
+                conn.execute(
+                    "UPDATE sessions SET expires_at = 'not a number' "
+                    "WHERE session_id = 'sid'"
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -253,8 +246,8 @@ class TestClearSessions(unittest.TestCase):
             conn = sqlite3.connect(db_file)
             try:
                 conn.execute(
-                    "UPDATE sessions SET payload = ? WHERE key = 'dead'",
-                    (json.dumps({"user": "bob", "expires_at": time.time() - 1}),),
+                    "UPDATE sessions SET expires_at = ? WHERE session_id = 'dead'",
+                    (time.time() - 1,),
                 )
                 conn.commit()
             finally:

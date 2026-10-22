@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """SQLite backend for the :mod:`storage.storage` abstractions.
 
-Most stores are one table with one JSON payload per key::
+The application tables are normalized: ``user_positions`` has one row per
+position, keyed by ``(username, bucket, position_idx)``, with typed columns
+and an ISIN index; ``user_portfolios`` holds one portfolio name per user;
+``users`` one password per account; ``cache`` one price/split row per ISIN;
+``sessions`` one browser session per id. Only arbitrary/custom tables use
+the generic layout::
 
     CREATE TABLE <table> (key TEXT PRIMARY KEY, payload TEXT NOT NULL)
 
-The payload is the row's JSON form (``to_dict()``), so a row written
-by one backend reads back identically in the other. ``user_positions``
-is the exception: it is normalized, one row per position, keyed by
-``(username, bucket, position_idx)``, with typed columns and an ISIN
-index. ``user_portfolios`` holds one portfolio name per user.
+The payload is the row's JSON form (``to_dict()``), so a row written by
+one backend reads back identically in the other. Legacy ``(key, payload)``
+versions of the application tables are upgraded in place on first open.
 
 SQLite runs the database *inside* the process: no server, no idle
 load, nothing to supervise. WAL mode lets the web server read while
@@ -37,7 +40,15 @@ import threading
 from pathlib import Path
 from typing import Any, TypeVar
 
-from storage.records import AssetBucket, PositionRecord
+from storage.records import (
+    DEFAULT_PORTFOLIO_NAME,
+    AssetBucket,
+    CacheEntry,
+    PositionRecord,
+    SessionRecord,
+    UserPortfolioRecord,
+    UserRecord,
+)
 from storage.storage import Storage, StorageObject
 
 __all__ = ["SqliteStorage"]
@@ -45,6 +56,19 @@ __all__ = ["SqliteStorage"]
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=StorageObject)
+
+#: Application tables with explicit columns (and their primary key first).
+NORMALIZED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "user_portfolios": ("username", "portfolio_name"),
+    "users": ("username", "password"),
+    "cache": ("isin", "price", "countries", "sectors"),
+    "sessions": ("session_id", "username", "incognito", "expires_at"),
+}
+
+#: The primary-key column of every normalized application table.
+NORMALIZED_KEYS: dict[str, str] = {
+    table: columns[0] for table, columns in NORMALIZED_COLUMNS.items()
+}
 
 #: How long a statement waits for a lock before giving up (seconds).
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -212,6 +236,11 @@ class SqliteStorage(Storage[T]):
                 rows = conn.execute(
                     f"SELECT {self._isin_columns()} FROM {self._quoted_table()}"
                 ).fetchall()
+            elif self._table in NORMALIZED_COLUMNS:
+                rows = conn.execute(
+                    f"SELECT {self._normalized_columns()} "
+                    f"FROM {self._quoted_table()}"
+                ).fetchall()
             else:
                 rows = conn.execute(
                     f"SELECT key, payload FROM {self._quoted_table()}"
@@ -225,6 +254,17 @@ class SqliteStorage(Storage[T]):
                 out[key] = self._position_row_to_dict(row)
             elif self._table == "isin_registry":
                 out[str(row["isin"])] = self._isin_row_to_dict(row)
+            elif self._table in NORMALIZED_COLUMNS:
+                key = str(row[NORMALIZED_KEYS[self._table]])
+                try:
+                    out[key] = self._normalized_row_to_dict(row)
+                except (TypeError, ValueError, KeyError) as exc:
+                    logger.warning(
+                        "row %r of table %r is unreadable (%s); leaving it out",
+                        key,
+                        self._table,
+                        exc,
+                    )
             else:
                 # For other tables, row has key and payload columns
                 if row["payload"] is None:
@@ -344,60 +384,219 @@ class SqliteStorage(Storage[T]):
             "dmem_other": row["dmem_other"],
         }
 
+    def _normalized_columns(self) -> str:
+        return ", ".join(NORMALIZED_COLUMNS[self._table])
+
+    def _normalized_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert one explicit-column row to the record's JSON payload."""
+        table = self._table
+        if table == "user_portfolios":
+            name = row["portfolio_name"]
+            return {
+                UserPortfolioRecord.PORTFOLIO_NAME: (
+                    DEFAULT_PORTFOLIO_NAME if name is None else str(name)
+                )
+            }
+        if table == "users":
+            password = row["password"]
+            return {UserRecord.PASSWORD: "" if password is None else str(password)}
+        if table == "cache":
+            payload: dict[str, Any] = {}
+            if row["price"] is not None:
+                payload[CacheEntry.PRICE] = row["price"]
+            for field in (CacheEntry.COUNTRIES, CacheEntry.SECTORS):
+                raw = row[field]
+                if raw is not None:
+                    payload[field] = json.loads(raw)
+            return payload
+        # sessions
+        return {
+            SessionRecord.USER: str(row["username"] or ""),
+            SessionRecord.INCOGNITO: bool(row["incognito"]),
+            SessionRecord.EXPIRES_AT: float(row["expires_at"] or 0.0),
+        }
+
+    @staticmethod
+    def _json_or_none(value: Any) -> str | None:
+        return None if value is None else json.dumps(value)
+
+    def _normalized_values(self, obj: T) -> tuple[Any, ...]:
+        """The explicit-column values for one record, in schema order."""
+        table = self._table
+        data = obj.to_dict()
+        if table == "user_portfolios":
+            return (
+                obj.key,
+                data.get(
+                    UserPortfolioRecord.PORTFOLIO_NAME, DEFAULT_PORTFOLIO_NAME
+                ),
+            )
+        if table == "users":
+            return (obj.key, data.get(UserRecord.PASSWORD, ""))
+        if table == "cache":
+            return (
+                obj.key,
+                data.get(CacheEntry.PRICE),
+                self._json_or_none(data.get(CacheEntry.COUNTRIES)),
+                self._json_or_none(data.get(CacheEntry.SECTORS)),
+            )
+        # sessions
+        return (
+            obj.key,
+            data.get(SessionRecord.USER, ""),
+            int(bool(data.get(SessionRecord.INCOGNITO))),
+            float(data.get(SessionRecord.EXPIRES_AT) or 0.0),
+        )
+
+    def _normalized_insert_sql(self) -> str:
+        columns = NORMALIZED_COLUMNS[self._table]
+        placeholders = ", ".join("?" for _ in columns)
+        return (
+            f"INSERT INTO {self._quoted_table()} ({', '.join(columns)}) "
+            f"VALUES ({placeholders})"
+        )
+
+    def _normalized_upsert_sql(self) -> str:
+        columns = NORMALIZED_COLUMNS[self._table]
+        primary_key = NORMALIZED_KEYS[self._table]
+        placeholders = ", ".join("?" for _ in columns)
+        updates = ", ".join(
+            f"{column} = excluded.{column}"
+            for column in columns
+            if column != primary_key
+        )
+        return (
+            f"INSERT INTO {self._quoted_table()} ({', '.join(columns)}) "
+            f"VALUES ({placeholders}) "
+            f"ON CONFLICT({primary_key}) DO UPDATE SET {updates}"
+        )
+
+    def _table_columns(self) -> set[str]:
+        rows = self._require_conn().execute(
+            f"PRAGMA table_info({self._quoted_table()})"
+        ).fetchall()
+        return {str(row[1]) for row in rows}
+
+    def _upgrade_legacy_table(self) -> None:
+        """Rebuild a legacy ``(key, payload)`` application table in place."""
+        table = self._table
+        if table not in NORMALIZED_COLUMNS or "payload" not in self._table_columns():
+            return
+        conn = self._require_conn()
+        logger.info("upgrading legacy table %r to explicit columns", table)
+        conn.execute("SAVEPOINT legacy_upgrade")
+        try:
+            rows = conn.execute(
+                f"SELECT key, payload FROM {self._quoted_table()}"
+            ).fetchall()
+            converted: list[tuple[Any, ...]] = []
+            for row in rows:
+                key = str(row["key"])
+                raw = row["payload"]
+                if raw is None:
+                    logger.warning(
+                        "legacy row %r of table %r has no payload; dropping it",
+                        key,
+                        table,
+                    )
+                    continue
+                try:
+                    obj = self._factory.from_dict(key, json.loads(raw))
+                except (TypeError, ValueError, KeyError) as exc:
+                    logger.warning(
+                        "legacy row %r of table %r is unreadable (%s); dropping it",
+                        key,
+                        table,
+                        exc,
+                    )
+                    continue
+                converted.append(self._normalized_values(obj))
+
+            temporary = self._quoted_identifier(f"{table}__legacy")
+            conn.execute(
+                f"ALTER TABLE {self._quoted_table()} RENAME TO {temporary}"
+            )
+            self._create_table(conn)
+            insert_sql = self._normalized_insert_sql()
+            for values in converted:
+                conn.execute(insert_sql, values)
+            conn.execute(f"DROP TABLE {temporary}")
+            conn.execute("RELEASE legacy_upgrade")
+        except BaseException:
+            conn.execute("ROLLBACK TO legacy_upgrade")
+            conn.execute("RELEASE legacy_upgrade")
+            raise
+
+    @staticmethod
+    def _quoted_identifier(name: str) -> str:
+        return f'"{name}"'
+
     def _empty_raw(self) -> Any:
         # Bucket rows serialise as bare lists, everything else as objects.
         return [] if self._factory is AssetBucket else {}
 
+    def _create_table(self, conn: sqlite3.Connection) -> None:
+        table = self._table
+        if table == "user_positions":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(username TEXT NOT NULL, "
+                "bucket TEXT NOT NULL, "
+                "position_idx INTEGER NOT NULL, "
+                "name TEXT NOT NULL, "
+                "short_name TEXT, "
+                "isin TEXT, "
+                "value REAL, "
+                "shares REAL, "
+                "broker TEXT, "
+                "dmem REAL, "
+                "usavn REAL, "
+                "dmem_other REAL, "
+                "PRIMARY KEY (username, bucket, position_idx))"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_positions_isin "
+                "ON user_positions(isin)"
+            )
+        elif table == "user_portfolios":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(username TEXT PRIMARY KEY, portfolio_name TEXT NOT NULL)"
+            )
+        elif table == "cache":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(isin TEXT PRIMARY KEY, price REAL, countries TEXT, sectors TEXT)"
+            )
+        elif table == "isin_registry":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, product_ref TEXT)"
+            )
+        elif table == "users":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(username TEXT PRIMARY KEY, password TEXT NOT NULL DEFAULT '')"
+            )
+        elif table == "sessions":
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(session_id TEXT PRIMARY KEY, "
+                "username TEXT NOT NULL DEFAULT '', "
+                "incognito INTEGER NOT NULL DEFAULT 0, "
+                "expires_at REAL NOT NULL DEFAULT 0)"
+            )
+        else:
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+            )
+
     def _ensure_table(self) -> None:
         with self._lock:
             conn = self._require_conn()
-            table = self._table
-            if table == "user_positions":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(username TEXT NOT NULL, "
-                    "bucket TEXT NOT NULL, "
-                    "position_idx INTEGER NOT NULL, "
-                    "name TEXT NOT NULL, "
-                    "short_name TEXT, "
-                    "isin TEXT, "
-                    "value REAL, "
-                    "shares REAL, "
-                    "broker TEXT, "
-                    "dmem REAL, "
-                    "usavn REAL, "
-                    "dmem_other REAL, "
-                    "PRIMARY KEY (username, bucket, position_idx))"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_user_positions_isin "
-                    "ON user_positions(isin)"
-                )
-            elif table == "cache":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-            elif table == "isin_registry":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, product_ref TEXT)"
-                )
-            elif table == "users":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-            elif table == "sessions":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-            else:
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
+            self._create_table(conn)
+            self._upgrade_legacy_table()
             conn.commit()
 
     def _decode(self, key: str, payload: Any) -> T | None:
@@ -453,6 +652,28 @@ class SqliteStorage(Storage[T]):
                 return self._factory.from_dict(  # type: ignore[return-value]
                     str(key), self._isin_row_to_dict(row)
                 )
+            if self._table in NORMALIZED_COLUMNS:
+                primary_key = NORMALIZED_KEYS[self._table]
+                row = conn.execute(
+                    f"SELECT {self._normalized_columns()} "
+                    f"FROM {self._quoted_table()} WHERE {primary_key} = ?",
+                    (str(key),),
+                ).fetchone()
+                if row is None:
+                    return None
+                try:
+                    return self._factory.from_dict(  # type: ignore[return-value]
+                        str(key), self._normalized_row_to_dict(row)
+                    )
+                except (TypeError, ValueError, KeyError) as exc:
+                    logger.warning(
+                        "row %r of table %r is unreadable (%s); treating it "
+                        "as missing",
+                        key,
+                        self._table,
+                        exc,
+                    )
+                    return None
             row = conn.execute(
                 f"SELECT payload FROM {self._quoted_table()} WHERE key = ?",
                 (str(key),),
@@ -477,6 +698,18 @@ class SqliteStorage(Storage[T]):
                     f"INSERT OR IGNORE INTO {self._quoted_table()} "
                     "(isin, issuer, bucket, product_ref) VALUES (?, NULL, NULL, NULL)",
                     (key,),
+                )
+                return self.get(key) or obj
+            if self._table in NORMALIZED_COLUMNS:
+                obj = self._factory.from_dict(  # type: ignore[assignment]
+                    key, self._empty_raw()
+                )
+                columns = NORMALIZED_COLUMNS[self._table]
+                placeholders = ", ".join("?" for _ in columns)
+                self._require_conn().execute(
+                    f"INSERT OR IGNORE INTO {self._quoted_table()} "
+                    f"({', '.join(columns)}) VALUES ({placeholders})",
+                    self._normalized_values(obj),
                 )
                 return self.get(key) or obj
             obj = self._factory.from_dict(key, self._empty_raw())  # type: ignore[assignment]
@@ -529,6 +762,10 @@ class SqliteStorage(Storage[T]):
                     "bucket = excluded.bucket, product_ref = excluded.product_ref",
                     (obj.key, d.get("issuer"), d.get("bucket"), d.get("product_ref")),
                 )
+            elif self._table in NORMALIZED_COLUMNS:
+                self._require_conn().execute(
+                    self._normalized_upsert_sql(), self._normalized_values(obj)
+                )
             else:
                 self._require_conn().execute(
                     f"INSERT INTO {self._quoted_table()} (key, payload) VALUES (?, ?) "
@@ -545,6 +782,11 @@ class SqliteStorage(Storage[T]):
                 self.put(obj)
                 return
             if self._table == "isin_registry":
+                if obj.key in self:
+                    raise KeyError(f"row {obj.key!r} already exists")
+                self.put(obj)
+                return
+            if self._table in NORMALIZED_COLUMNS:
                 if obj.key in self:
                     raise KeyError(f"row {obj.key!r} already exists")
                 self.put(obj)
@@ -583,6 +825,13 @@ class SqliteStorage(Storage[T]):
                     f"DELETE FROM {self._quoted_table()} WHERE isin = ?", (str(key),)
                 )
                 return
+            if self._table in NORMALIZED_COLUMNS:
+                primary_key = NORMALIZED_KEYS[self._table]
+                conn.execute(
+                    f"DELETE FROM {self._quoted_table()} WHERE {primary_key} = ?",
+                    (str(key),),
+                )
+                return
             conn.execute(
                 f"DELETE FROM {self._quoted_table()} WHERE key = ?", (str(key),)
             )
@@ -602,6 +851,14 @@ class SqliteStorage(Storage[T]):
             if self._table == "isin_registry":
                 row = conn.execute(
                     f"SELECT 1 FROM {self._quoted_table()} WHERE isin = ?",
+                    (str(key),),
+                ).fetchone()
+                return row is not None
+            if self._table in NORMALIZED_COLUMNS:
+                primary_key = NORMALIZED_KEYS[self._table]
+                row = conn.execute(
+                    f"SELECT 1 FROM {self._quoted_table()} "
+                    f"WHERE {primary_key} = ?",
                     (str(key),),
                 ).fetchone()
                 return row is not None

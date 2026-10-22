@@ -4,16 +4,21 @@
 
 Tables written:
 
-* ``user_portfolios`` — one row per user (portfolio name)
+* ``user_portfolios`` — one row per user: ``(username, portfolio_name)``
 * ``user_positions``  — one row per position, keyed by
   ``(username, bucket, position_idx)``, with the ISIN preserved
-* ``cache`` / ``isin_registry`` / ``users`` / ``sessions`` — as before
+* ``users``           — one row per account: ``(username, password)``
+* ``cache``           — one row per ISIN: ``(isin, price, countries, sectors)``
+* ``sessions``        — one row per session:
+  ``(session_id, username, incognito, expires_at)``
+* ``isin_registry``   — as before
 
 ``user_assets`` is obsolete: it is never created or written, and an old
 table is dropped. A legacy ``positions`` table (auto-increment ``id``)
 is converted to ``user_positions``; the dead ``position_countries`` and
 ``position_sectors`` tables and the leftover ``sqlite_sequence`` are
-removed as well.
+removed as well. Legacy ``(key, payload)`` versions of ``user_portfolios``,
+``users``, ``cache`` and ``sessions`` are upgraded in place.
 
 Idempotent: every store is upserted, and each user/bucket's positions
 are replaced wholesale, so running it again is safe.

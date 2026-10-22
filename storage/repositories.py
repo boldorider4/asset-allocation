@@ -570,8 +570,8 @@ class UsersRepository:
     """User accounts (name + password) over any backend.
 
     The backend holds one row per account; the key is the user name
-    (the primary key a database table would carry) and the payload is
-    the password. Passwords are stored as given (plaintext) -- hashing
+    (the primary key of the ``users`` table) and the value is the
+    password. Passwords are stored as given (plaintext) -- hashing
     belongs in :class:`~storage.records.UserRecord` when it lands.
     """
 
@@ -674,7 +674,7 @@ class SessionsRepository:
     """Browser sessions over any backend.
 
     The backend holds one row per session id (the value of the
-    ``asalloc_sid`` cookie); the payload is the user, the incognito
+    ``asalloc_sid`` cookie); the row carries the user, the incognito
     state and the expiry. An expired session reads as *no* session, so
     the caller never has to think about the timeout.
     """

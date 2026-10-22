@@ -10,11 +10,12 @@ Configuration lives with the application: the backend name and the SQLite
 file are read from ``config.ini`` by the app layer (see ``cli.context``)
 and passed in. This module reads no files and knows no settings.
 
-Most stores keep their row type and map onto the SQLite layout
-``(key TEXT PRIMARY KEY, payload TEXT NOT NULL)`` with ``key`` = the
-row key and ``payload`` = the row's JSON form. Portfolios (one row per
-user) and positions (normalized, one row per position with a composite
-key) have dedicated tables.
+Most stores map onto explicit-column SQLite tables: ``user_portfolios``
+(one row per user), ``user_positions`` (one row per position with a
+composite key), ``users`` (one account per row), ``cache`` (price and
+split weights per ISIN) and ``sessions`` (one browser session per id).
+The generic layout ``(key TEXT PRIMARY KEY, payload TEXT NOT NULL)`` is
+kept for custom/test tables only.
 """
 
 from __future__ import annotations
@@ -186,7 +187,7 @@ def users_backend(
 
     Same backend selector as the assets store, so moving the accounts
     to SQLite is one config line. The row key is the user name (the
-    primary key of the future table), the payload is the password.
+    primary key of the ``users`` table), the value is the password.
 
     The JSON backend is strict: a malformed account raises instead of
     being skipped, so a broken users file fails loudly instead of

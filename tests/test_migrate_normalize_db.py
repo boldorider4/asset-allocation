@@ -99,6 +99,37 @@ class TestMigrateNormalizeDb(unittest.TestCase):
                 self.assertNotIn("price", columns)
                 self.assertNotIn("id", columns)
 
+                self.assertEqual(
+                    {
+                        str(row[1])
+                        for row in conn.execute(
+                            "PRAGMA table_info(user_portfolios)"
+                        )
+                    },
+                    {"username", "portfolio_name"},
+                )
+                self.assertEqual(
+                    {
+                        str(row[1])
+                        for row in conn.execute("PRAGMA table_info(users)")
+                    },
+                    {"username", "password"},
+                )
+                self.assertEqual(
+                    {
+                        str(row[1])
+                        for row in conn.execute("PRAGMA table_info(cache)")
+                    },
+                    {"isin", "price", "countries", "sectors"},
+                )
+                self.assertEqual(
+                    {
+                        str(row[1])
+                        for row in conn.execute("PRAGMA table_info(sessions)")
+                    },
+                    {"session_id", "username", "incognito", "expires_at"},
+                )
+
     def test_it_preserves_the_uppercase_json_isin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -130,15 +161,85 @@ class TestMigrateNormalizeDb(unittest.TestCase):
 
             with sqlite3.connect(db_file) as conn:
                 rows = conn.execute(
-                    "SELECT key, payload FROM user_portfolios ORDER BY key"
+                    "SELECT username, portfolio_name "
+                    "FROM user_portfolios ORDER BY username"
                 ).fetchall()
-            self.assertEqual([row[0] for row in rows], ["alice", "bob"])
             self.assertEqual(
-                json.loads(rows[0][1])["portfolio_name"], "Alice Fund"
+                rows,
+                [("alice", "Alice Fund"), ("bob", "Bob Fund")],
             )
-            self.assertEqual(
-                json.loads(rows[1][1])["portfolio_name"], "Bob Fund"
-            )
+
+    def test_legacy_payload_tables_are_converted_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_file = root / "legacy-flat.db"
+            payloads = {
+                "user_portfolios": {"portfolio_name": "Old Fund"},
+                "users": {"password": "pw"},
+                "cache": {
+                    "price": 12.5,
+                    "countries": {"France": 0.5},
+                    "sectors": {"Technology": 1.0},
+                },
+                "sessions": {
+                    "user": "alice",
+                    "incognito": True,
+                    "expires_at": 123.0,
+                },
+            }
+            with sqlite3.connect(db_file) as conn:
+                for table, payload in payloads.items():
+                    conn.execute(
+                        f"CREATE TABLE {table} "
+                        "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                    )
+                    conn.execute(
+                        f"INSERT INTO {table} VALUES (?, ?)",
+                        (f"{table}-key", json.dumps(payload)),
+                    )
+                conn.commit()
+
+            migrate(db_file, root)
+
+            with sqlite3.connect(db_file) as conn:
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT username, portfolio_name FROM user_portfolios"
+                    ).fetchone(),
+                    ("user_portfolios-key", "Old Fund"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT username, password FROM users"
+                    ).fetchone(),
+                    ("users-key", "pw"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT isin, price, countries, sectors FROM cache"
+                    ).fetchone(),
+                    (
+                        "cache-key",
+                        12.5,
+                        json.dumps({"France": 0.5}),
+                        json.dumps({"Technology": 1.0}),
+                    ),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT session_id, username, incognito, expires_at "
+                        "FROM sessions"
+                    ).fetchone(),
+                    ("sessions-key", "alice", 1, 123.0),
+                )
+                for table in payloads:
+                    columns = {
+                        str(row[1])
+                        for row in conn.execute(
+                            f"PRAGMA table_info({table})"
+                        )
+                    }
+                    self.assertNotIn("payload", columns)
 
     def test_it_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

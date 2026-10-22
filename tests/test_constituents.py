@@ -15,6 +15,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -3174,6 +3175,44 @@ class TestDatabaseBackendRoute(unittest.TestCase):
                 return resp.status, resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_login_stores_a_thirty_minute_session(self) -> None:
+        import sqlite3
+
+        from visual.web.backend.session import SESSION_TTL_SECONDS
+
+        session_id = self.cookie.split("=", 1)[1]
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT username, incognito, expires_at FROM sessions "
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], _USER)
+        self.assertFalse(bool(row[1]))
+        now = time.time()
+        self.assertGreater(row[2], now)
+        self.assertLessEqual(row[2], now + SESSION_TTL_SECONDS + 5)
+
+    def test_an_expired_session_row_is_dropped(self) -> None:
+        import sqlite3
+
+        session_id = self.cookie.split("=", 1)[1]
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE session_id = ?",
+                (time.time() - 1, session_id),
+            )
+        status, body = self._get("/api/session")
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(json.loads(body)["user"])
+        with sqlite3.connect(self.db) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
 
     def test_the_page_shows_the_quotes_from_the_database(self) -> None:
         status, body = self._get("/constituents")

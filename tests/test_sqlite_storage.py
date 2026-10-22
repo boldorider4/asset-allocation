@@ -15,12 +15,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage.records import CacheEntry, IsinRecord, PositionRecord, UserRecord
+from storage.records import (
+    CacheEntry,
+    IsinRecord,
+    PositionRecord,
+    SessionRecord,
+    UserPortfolioRecord,
+    UserRecord,
+)
 from storage.sqlite_storage import SqliteStorage
 
 
 def _store(path: Path, table: str = "rows", factory=UserRecord) -> SqliteStorage:
     return SqliteStorage(path, table, factory)  # type: ignore[arg-type]
+
+
+def _columns(path: Path, table: str) -> set[str]:
+    with sqlite3.connect(path) as conn:
+        return {
+            str(row[1])
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        }
 
 
 class TestIsinRegistryBackend(unittest.TestCase):
@@ -71,6 +86,159 @@ class TestIsinRegistryBackend(unittest.TestCase):
             self.store.add(IsinRecord("IE00TEST0004", issuer="justetf"))
         self.store.remove("IE00TEST0004")
         self.assertNotIn("IE00TEST0004", self.store)
+
+
+class TestNormalizedApplicationTables(unittest.TestCase):
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        self.path = Path(self._holder.name) / "store.db"
+
+    def test_user_portfolios_use_explicit_columns(self) -> None:
+        store = _store(self.path, "user_portfolios", UserPortfolioRecord)
+        store.open()
+        created = store.get_or_create("alice")
+        self.assertEqual(created.portfolio_name, "Portfolio")
+        store.upsert("alice", {"portfolio_name": "Alice Fund"})
+        self.assertEqual(
+            store.snapshot(), {"alice": {"portfolio_name": "Alice Fund"}}
+        )
+        self.assertEqual(
+            _columns(self.path, "user_portfolios"),
+            {"username", "portfolio_name"},
+        )
+        store.remove("alice")
+        self.assertNotIn("alice", store)
+
+    def test_users_use_explicit_columns(self) -> None:
+        store = _store(self.path, "users", UserRecord)
+        store.open()
+        created = store.get_or_create("alice")
+        self.assertEqual(created.password, "")
+        store.add(UserRecord("bob", {"password": "first"}))
+        with self.assertRaises(KeyError):
+            store.add(UserRecord("bob", {"password": "second"}))
+        store.upsert("bob", {"password": "pw"})
+        self.assertEqual(
+            store.snapshot(),
+            {"alice": {"password": ""}, "bob": {"password": "pw"}},
+        )
+        self.assertEqual(
+            _columns(self.path, "users"), {"username", "password"}
+        )
+
+    def test_cache_uses_explicit_columns(self) -> None:
+        store = _store(self.path, "cache", CacheEntry)
+        store.open()
+        store.upsert(
+            "IE00TEST0001",
+            {
+                "price": 1.5,
+                "countries": {"France": 0.5},
+                "sectors": {"Technology": 1.0},
+            },
+        )
+        entry = store.get("IE00TEST0001")
+        assert entry is not None
+        self.assertEqual(entry.parsed(), (1.5, {"France": 0.5}, {"Technology": 1.0}))
+        self.assertEqual(
+            store.snapshot(),
+            {
+                "IE00TEST0001": {
+                    "price": 1.5,
+                    "countries": {"France": 0.5},
+                    "sectors": {"Technology": 1.0},
+                }
+            },
+        )
+        self.assertEqual(
+            _columns(self.path, "cache"),
+            {"isin", "price", "countries", "sectors"},
+        )
+
+    def test_sessions_use_explicit_columns(self) -> None:
+        store = _store(self.path, "sessions", SessionRecord)
+        store.open()
+        created = store.get_or_create("sid")
+        self.assertEqual(created.user, "")
+        self.assertEqual(created.expires_at, 0.0)
+        store.put(
+            SessionRecord(
+                "sid",
+                {"user": "alice", "incognito": True, "expires_at": 123.0},
+            )
+        )
+        self.assertEqual(
+            store.snapshot(),
+            {
+                "sid": {
+                    "user": "alice",
+                    "incognito": True,
+                    "expires_at": 123.0,
+                }
+            },
+        )
+        self.assertEqual(
+            _columns(self.path, "sessions"),
+            {"session_id", "username", "incognito", "expires_at"},
+        )
+        store.remove("sid")
+        self.assertNotIn("sid", store)
+
+    def test_legacy_payload_tables_are_upgraded(self) -> None:
+        payloads = {
+            "user_portfolios": {"portfolio_name": "Alice Fund"},
+            "users": {"password": "pw"},
+            "cache": {
+                "price": 2.0,
+                "countries": {"France": 0.5},
+                "sectors": {"Technology": 1.0},
+            },
+            "sessions": {
+                "user": "alice",
+                "incognito": True,
+                "expires_at": 123.0,
+            },
+        }
+        with sqlite3.connect(self.path) as conn:
+            for table, payload in payloads.items():
+                conn.execute(
+                    f"CREATE TABLE {table} (key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+                conn.execute(
+                    f"INSERT INTO {table} VALUES (?, ?)",
+                    (f"{table}-key", json.dumps(payload)),
+                )
+
+        expected = {
+            "user_portfolios": ("user_portfolios-key", UserPortfolioRecord),
+            "users": ("users-key", UserRecord),
+            "cache": ("cache-key", CacheEntry),
+            "sessions": ("sessions-key", SessionRecord),
+        }
+        for table, (key, factory) in expected.items():
+            with self.subTest(table=table):
+                store = _store(self.path, table, factory)
+                store.open()
+                self.assertIn(key, store)
+                self.assertNotIn("payload", _columns(self.path, table))
+                store.close()
+        cache = _store(self.path, "cache", CacheEntry)
+        cache.open()
+        try:
+            snapshot = cache.snapshot()
+        finally:
+            cache.close()
+        self.assertEqual(
+            snapshot,
+            {
+                "cache-key": {
+                    "price": 2.0,
+                    "countries": {"France": 0.5},
+                    "sectors": {"Technology": 1.0},
+                }
+            },
+        )
 
 
 class TestPointAccess(unittest.TestCase):
@@ -219,15 +387,25 @@ class TestLifecycle(unittest.TestCase):
         other.open()
         self.assertIsNone(other.get("alice"))
 
-    def test_the_database_file_is_json(self) -> None:
-        # The payload is the row's JSON form: the file stays readable.
+    def test_the_cache_table_has_explicit_columns(self) -> None:
         store = _store(self.path, "cache", CacheEntry)
         store.open()
-        store.put(CacheEntry("IE00A", {"price": 1.5}))
+        store.put(
+            CacheEntry(
+                "IE00A",
+                {"price": 1.5, "countries": {"France": 0.5}},
+            )
+        )
         store.persist()
         conn = sqlite3.connect(self.path)
-        payload = conn.execute("SELECT payload FROM cache").fetchone()[0]
-        self.assertEqual(json.loads(payload), {"price": 1.5})
+        row = conn.execute(
+            "SELECT isin, price, countries, sectors FROM cache"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(row[0], "IE00A")
+        self.assertEqual(row[1], 1.5)
+        self.assertEqual(json.loads(row[2]), {"France": 0.5})
+        self.assertIsNone(row[3])
 
     def test_a_position_row_round_trips_on_the_composite_key(self) -> None:
         store = _store(self.path, "user_positions", PositionRecord)
