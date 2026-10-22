@@ -15,12 +15,62 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from storage.records import CacheEntry, UserAssets, UserRecord
+from storage.records import CacheEntry, IsinRecord, PositionRecord, UserRecord
 from storage.sqlite_storage import SqliteStorage
 
 
 def _store(path: Path, table: str = "rows", factory=UserRecord) -> SqliteStorage:
     return SqliteStorage(path, table, factory)  # type: ignore[arg-type]
+
+
+class TestIsinRegistryBackend(unittest.TestCase):
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        self.path = Path(self._holder.name) / "store.db"
+        self.store = _store(self.path, "isin_registry", IsinRecord)
+        self.store.open()
+
+    def test_point_access_uses_the_isin_column(self) -> None:
+        self.store.put(
+            IsinRecord(
+                "IE00TEST0001",
+                issuer="justetf",
+                bucket="equity_portfolio",
+                product_ref="prod",
+            )
+        )
+        record = self.store.get("IE00TEST0001")
+        assert record is not None
+        self.assertEqual(record.issuer, "justetf")
+        self.assertEqual(record.bucket, "equity_portfolio")
+        self.assertEqual(record.product_ref, "prod")
+        self.assertIn("IE00TEST0001", self.store)
+
+    def test_snapshot_returns_the_registry_payload(self) -> None:
+        self.store.put(
+            IsinRecord("IE00TEST0002", issuer="yfinance", bucket="bond_portfolio")
+        )
+        self.assertEqual(
+            self.store.snapshot(),
+            {
+                "IE00TEST0002": {
+                    "issuer": "yfinance",
+                    "bucket": "bond_portfolio",
+                    "product_ref": None,
+                }
+            },
+        )
+
+    def test_get_or_create_add_and_remove(self) -> None:
+        created = self.store.get_or_create("IE00TEST0003")
+        self.assertEqual(created.issuer, None)
+        self.assertIn("IE00TEST0003", self.store)
+        self.store.add(IsinRecord("IE00TEST0004", issuer="justetf"))
+        with self.assertRaises(KeyError):
+            self.store.add(IsinRecord("IE00TEST0004", issuer="justetf"))
+        self.store.remove("IE00TEST0004")
+        self.assertNotIn("IE00TEST0004", self.store)
 
 
 class TestPointAccess(unittest.TestCase):
@@ -179,19 +229,48 @@ class TestLifecycle(unittest.TestCase):
         payload = conn.execute("SELECT payload FROM cache").fetchone()[0]
         self.assertEqual(json.loads(payload), {"price": 1.5})
 
-    def test_an_asset_row_round_trips(self) -> None:
-        store = _store(self.path, "user_assets", UserAssets)
+    def test_a_position_row_round_trips_on_the_composite_key(self) -> None:
+        store = _store(self.path, "user_positions", PositionRecord)
         store.open()
+        row = PositionRecord(
+            username="alice",
+            bucket="equity_portfolio",
+            position_idx=0,
+            name="ETF",
+            isin="IE00TEST0001",
+            value=1.0,
+        )
+        store.put(row)
+        store.persist()
+
+        self.assertIn(row.key, store)
+        record = store.get(row.key)
+        assert record is not None
+        self.assertEqual(record.username, "alice")
+        self.assertEqual(record.bucket, "equity_portfolio")
+        self.assertEqual(record.position_idx, 0)
+        self.assertEqual(record.isin, "IE00TEST0001")
+
+        # Upsert on the same composite key updates the row.
         store.put(
-            UserAssets(
-                "alice",
-                {"portfolio_name": "Fund"},
+            PositionRecord(
+                username="alice",
+                bucket="equity_portfolio",
+                position_idx=0,
+                name="ETF renamed",
+                isin="IE00TEST0001",
+                value=2.0,
             )
         )
-        store.persist()
-        record = store.get("alice")
+        record = store.get(row.key)
         assert record is not None
-        self.assertEqual(record.portfolio_name, "Fund")
+        self.assertEqual(record.name, "ETF renamed")
+        self.assertEqual(record.value, 2.0)
+        self.assertEqual(len(store.snapshot()), 1)
+
+        store.remove(row.key)
+        self.assertNotIn(row.key, store)
+        self.assertIsNone(store.get(row.key))
 
 
 class TestConcurrency(unittest.TestCase):

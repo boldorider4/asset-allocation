@@ -25,12 +25,9 @@ from storage.records import (
     DEFAULT_PORTFOLIO_NAME,
     AssetBucket,
     CacheEntry,
-    CountryRecord,
     IsinRecord,
     PositionRecord,
-    SectorRecord,
     SessionRecord,
-    UserAssets,
     UserPortfolioRecord,
     UserRecord,
 )
@@ -43,8 +40,6 @@ __all__ = [
     "UsersRepository",
     "SessionsRepository",
     "PositionRepository",
-    "CountryRepository",
-    "SectorRepository",
     "UserPortfolioRepository",
 ]
 
@@ -182,60 +177,55 @@ class CacheRepository:
 
 
 class PositionRepository:
-    """Per-position operations over the normalized positions tables."""
+    """Per-position operations over the normalized ``user_positions`` table.
 
-    def __init__(
-        self,
-        position_backend: Storage[PositionRecord],
-        countries_backend: Storage[CountryRecord],
-        sectors_backend: Storage[SectorRecord],
-    ) -> None:
+    A position is identified by the composite key
+    ``(username, bucket, position_idx)``; the app-facing dict uses
+    ``position_index`` for the last part.
+    """
+
+    def __init__(self, position_backend: Storage[PositionRecord]) -> None:
         self._positions = position_backend
-        self._countries = countries_backend
-        self._sectors = sectors_backend
 
     @property
     def position_backend(self) -> Storage[PositionRecord]:
         return self._positions
 
-    @property
-    def countries_backend(self) -> Storage[CountryRecord]:
-        return self._countries
-
-    @property
-    def sectors_backend(self) -> Storage[SectorRecord]:
-        return self._sectors
-
     # -- Position CRUD --
 
     def get_for_user(self, username: str) -> dict[str, list[dict[str, Any]]]:
         """Return all positions for a user grouped by bucket: ``{bucket: [positions]}``.
-        
-        If username is "all", return positions for all users.
+
+        ``username="all"`` returns every user's positions.
         """
         self._positions.open()
-        self._countries.open()
-        self._sectors.open()
         rows = self._positions.snapshot()
         buckets: dict[str, list[dict[str, Any]]] = {}
-        for record in rows.values():
+        for key, raw in rows.items():
+            try:
+                record = PositionRecord.from_dict(str(key), raw)
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.warning("skipping bad position row %r (%s)", key, exc)
+                continue
             if username == "all" or record.username == username:
                 pos = self._record_to_dict(record)
                 buckets.setdefault(record.bucket, []).append(pos)
-        # Sort each bucket by position_index
         for bucket_positions in buckets.values():
             bucket_positions.sort(key=lambda p: p["position_index"])
         return buckets
 
-    def get_for_bucket(self, username: str, bucket: str):
-        """Return all positions for a user in a specific bucket, ordered by position_index."""
+    def get_for_bucket(self, username: str, bucket: str) -> list[dict[str, Any]]:
+        """Return one user's positions in a bucket, ordered by position_idx."""
         self._positions.open()
-        positions = self.get_for_user(username)
-        return positions.get(bucket, [])
+        return self.get_for_user(username).get(bucket, [])
 
-    def get_by_id(self, position_id: int) -> dict[str, Any] | None:
-        """Get a single position by its database ID."""
-        record = self._positions.get(str(position_id))
+    def get_position(
+        self, username: str, bucket: str, position_idx: int
+    ) -> dict[str, Any] | None:
+        """Get one position by its composite key."""
+        self._positions.open()
+        key = PositionRecord.encode_key(username, bucket, position_idx)
+        record = self._positions.get(key)
         if record is None:
             return None
         return self._record_to_dict(record)
@@ -244,7 +234,7 @@ class PositionRepository:
         self,
         username: str,
         bucket: str,
-        position_index: int,
+        position_idx: int,
         name: str,
         short_name: str | None = None,
         isin: str | None = None,
@@ -258,10 +248,9 @@ class PositionRepository:
         """Insert or update a single position."""
         self._positions.open()
         record = PositionRecord(
-            key="0",  # auto-assign
             username=username,
             bucket=bucket,
-            position_index=position_index,
+            position_idx=position_idx,
             name=name,
             short_name=short_name,
             isin=isin,
@@ -276,43 +265,82 @@ class PositionRepository:
         self._positions.persist()
         return self._record_to_dict(record)
 
-    def delete_position(self, position_id: int) -> bool:
-        """Delete a position by its ID. Returns True if deleted."""
+    def delete_position(
+        self, username: str, bucket: str, position_idx: int
+    ) -> bool:
+        """Delete one position by its composite key. Returns True if deleted."""
         self._positions.open()
-        if str(position_id) not in self._positions:
+        key = PositionRecord.encode_key(username, bucket, position_idx)
+        if key not in self._positions:
             return False
-        self._positions.remove(str(position_id))
+        self._positions.remove(key)
         self._positions.persist()
         return True
 
-    def reorder_positions(self, username: str, bucket: str, new_order: list[int]) -> None:
-        """Reorder positions within a bucket. new_order is a list of position IDs."""
+    def delete_bucket(self, username: str, bucket: str) -> int:
+        """Delete every position in one user's bucket; returns the count."""
         self._positions.open()
-        # For each position in new_order, update its position_index
-        for new_index, position_id in enumerate(new_order):
-            record = self._positions.get(str(position_id))
-            if record is not None and record.username == username and record.bucket == bucket:
-                record._data[record.POSITION_INDEX] = new_index
-                self._positions.put(record)
+        positions = self.get_for_bucket(username, bucket)
+        for pos in positions:
+            self._positions.remove(
+                PositionRecord.encode_key(
+                    username, bucket, pos["position_index"]
+                )
+            )
+        self._positions.persist()
+        return len(positions)
+
+    def reorder_positions(
+        self, username: str, bucket: str, new_order: list[int]
+    ) -> None:
+        """Reorder one bucket.
+
+        ``new_order`` lists the *current* ``position_idx`` values in their
+        new order (an exact permutation). Rows are rewritten because
+        shifting indices in place could collide on the primary key.
+        """
+        positions = self.get_for_bucket(username, bucket)
+        if sorted(new_order) != list(range(len(positions))):
+            raise ValueError(
+                f"new_order must be a permutation of 0..{len(positions) - 1}, "
+                f"got {new_order!r}"
+            )
+        ordered = [positions[index] for index in new_order]
+        self.delete_bucket(username, bucket)
+        for new_index, pos in enumerate(ordered):
+            self._positions.put(
+                PositionRecord(
+                    username=username,
+                    bucket=bucket,
+                    position_idx=new_index,
+                    name=pos.get("name", ""),
+                    short_name=pos.get("short_name"),
+                    isin=pos.get("ISIN") or pos.get("isin"),
+                    value=pos.get("value"),
+                    shares=pos.get("shares"),
+                    broker=pos.get("broker"),
+                    dmem=pos.get("dmem"),
+                    dmem_other=pos.get("dmem_other"),
+                    usavn=pos.get("usavn"),
+                )
+            )
         self._positions.persist()
 
-    def batch_upsert_positions(self, username: str, bucket: str, positions: list[dict[str, Any]]) -> None:
+    def batch_upsert_positions(
+        self, username: str, bucket: str, positions: list[dict[str, Any]]
+    ) -> None:
         """Replace all positions in a bucket for a user with the given list."""
+        validated = AssetBucket.from_dict(str(bucket), positions)
         self._positions.open()
-        # First, delete existing positions for this user/bucket
-        existing = self.get_for_bucket(username, bucket)
-        for pos in existing:
-            self._positions.remove(str(pos["id"]))
-        # Insert new positions
-        for index, pos in enumerate(positions):
+        self.delete_bucket(username, bucket)
+        for index, pos in enumerate(validated.positions):
             record = PositionRecord(
-                key="0",
                 username=username,
                 bucket=bucket,
-                position_index=index,
+                position_idx=index,
                 name=pos.get("name", ""),
-                short_name=pos.get("short_name"),
-                isin=pos.get("isin"),
+                short_name=pos.get("short_name") or pos.get("group"),
+                isin=pos.get("ISIN") or pos.get("isin"),
                 value=pos.get("value"),
                 shares=pos.get("shares"),
                 broker=pos.get("broker"),
@@ -323,76 +351,23 @@ class PositionRepository:
             self._positions.put(record)
         self._positions.persist()
 
-    # -- Countries/Sectors per position --
-
-    def get_countries(self, position_id: int) -> list[dict[str, Any]]:
-        """Return list of {"name": ..., "weight_pct": ...} for a position."""
-        self._countries.open()
-        rows = self._countries.snapshot()
-        return [
-            {"name": r.name, "weight_pct": r.weight_pct}
-            for r in rows.values()
-            if r.position_id == position_id
-        ]
-
-    def set_countries(self, position_id: int, countries: list[dict[str, Any]]) -> None:
-        """Replace all countries for a position."""
-        self._countries.open()
-        # Delete existing
-        existing = self._countries.snapshot()
-        for key, record in existing.items():
-            if record.position_id == position_id:
-                self._countries.remove(key)
-        # Insert new
-        for c in countries:
-            self._countries.put(CountryRecord(
-                key="0",
-                position_id=position_id,
-                name=c["name"],
-                weight_pct=c["weight_pct"],
-            ))
-        self._countries.persist()
-
-    def get_sectors(self, position_id: int) -> list[dict[str, Any]]:
-        """Return list of {"name": ..., "weight_pct": ...} for a position."""
-        self._sectors.open()
-        rows = self._sectors.snapshot()
-        return [
-            {"name": r.name, "weight_pct": r.weight_pct}
-            for r in rows.values()
-            if r.position_id == position_id
-        ]
-
-    def set_sectors(self, position_id: int, sectors: list[dict[str, Any]]) -> None:
-        """Replace all sectors for a position."""
-        self._sectors.open()
-        # Delete existing
-        existing = self._sectors.snapshot()
-        for key, record in existing.items():
-            if record.position_id == position_id:
-                self._sectors.remove(key)
-        # Insert new
-        for s in sectors:
-            self._sectors.put(SectorRecord(
-                key="0",
-                position_id=position_id,
-                name=s["name"],
-                weight_pct=s["weight_pct"],
-            ))
-        self._sectors.persist()
-
     # -- Internal helpers --
 
     def _record_to_dict(self, record: PositionRecord) -> dict[str, Any]:
-        """Convert a PositionRecord to the dict format used by the UI."""
+        """Convert a PositionRecord to the app-facing position dict.
+
+        ISIN is uppercase (the app-wide key), ``short_name`` keeps the
+        DB's null when it was never set, and there is no ``id``: lookups
+        use ``(username, bucket, position_index)``.
+        """
+        data = record.to_dict()
         return {
-            "id": record.id,
             "username": record.username,
             "bucket": record.bucket,
-            "position_index": record.position_index,
+            "position_index": record.position_idx,
             "name": record.name,
-            "short_name": record.short_name,
-            "isin": record.isin,
+            "short_name": data.get(PositionRecord.SHORT_NAME),
+            "ISIN": data.get(PositionRecord.ISIN),
             "value": record.value,
             "shares": record.shares,
             "broker": record.broker,
@@ -404,8 +379,6 @@ class PositionRepository:
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> PositionRepository:
         self._positions.open()
-        self._countries.open()
-        self._sectors.open()
         return self
 
     def snapshot(self) -> dict[str, list[dict[str, Any]]]:
@@ -414,103 +387,9 @@ class PositionRepository:
 
     def persist(self) -> None:
         self._positions.persist()
-        self._countries.persist()
-        self._sectors.persist()
 
     def close(self) -> None:
         self._positions.close()
-        self._countries.close()
-        self._sectors.close()
-
-
-class CountryRepository:
-    """Country splits per position."""
-
-    def __init__(self, backend: Storage[CountryRecord]) -> None:
-        self._backend = backend
-
-    @property
-    def backend(self) -> Storage[CountryRecord]:
-        return self._backend
-
-    def get_for_position(self, position_id: int) -> list[dict[str, Any]]:
-        self._backend.open()
-        rows = self._backend.snapshot()
-        return [
-            {"name": r.name, "weight_pct": r.weight_pct}
-            for r in rows.values()
-            if r.position_id == position_id
-        ]
-
-    def set_for_position(self, position_id: int, countries: list[dict[str, Any]]) -> None:
-        self._backend.open()
-        existing = self._backend.snapshot()
-        for key, record in existing.items():
-            if record.position_id == position_id:
-                self._backend.remove(key)
-        for c in countries:
-            self._backend.put(CountryRecord(
-                key="0",
-                position_id=position_id,
-                name=c["name"],
-                weight_pct=c["weight_pct"],
-            ))
-        self._backend.persist()
-
-    def open(self) -> CountryRepository:
-        self._backend.open()
-        return self
-
-    def persist(self) -> None:
-        self._backend.persist()
-
-    def close(self) -> None:
-        self._backend.close()
-
-
-class SectorRepository:
-    """Sector splits per position."""
-
-    def __init__(self, backend: Storage[SectorRecord]) -> None:
-        self._backend = backend
-
-    @property
-    def backend(self) -> Storage[SectorRecord]:
-        return self._backend
-
-    def get_for_position(self, position_id: int) -> list[dict[str, Any]]:
-        self._backend.open()
-        rows = self._backend.snapshot()
-        return [
-            {"name": r.name, "weight_pct": r.weight_pct}
-            for r in rows.values()
-            if r.position_id == position_id
-        ]
-
-    def set_for_position(self, position_id: int, sectors: list[dict[str, Any]]) -> None:
-        self._backend.open()
-        existing = self._backend.snapshot()
-        for key, record in existing.items():
-            if record.position_id == position_id:
-                self._backend.remove(key)
-        for s in sectors:
-            self._backend.put(SectorRecord(
-                key="0",
-                position_id=position_id,
-                name=s["name"],
-                weight_pct=s["weight_pct"],
-            ))
-        self._backend.persist()
-
-    def open(self) -> SectorRepository:
-        self._backend.open()
-        return self
-
-    def persist(self) -> None:
-        self._backend.persist()
-
-    def close(self) -> None:
-        self._backend.close()
 
 
 class UserPortfolioRepository:
@@ -558,10 +437,11 @@ class UserPortfolioRepository:
 class AssetRepository:
     """One user's portfolio (name + positions) over any backend.
 
-    The backend holds one row per user (a :class:`UserAssets` row); this
-    repository is scoped to a single user and speaks in that user's
-    positions (``{asset class: [positions]}``) plus the name of the
-    portfolio. Other users' rows are never read or written.
+    Portfolio metadata lives in ``user_portfolios`` and positions in
+    ``user_positions``. This repository is scoped to a single user and
+    speaks in that user's positions (``{asset class: [positions]}``)
+    plus the name of the portfolio. Other users' rows are never read or
+    written.
     """
 
     def __init__(
@@ -589,7 +469,8 @@ class AssetRepository:
 
     def exists(self) -> bool:
         """True when the store holds a portfolio for this user."""
-        return self._portfolio_repo.backend.__contains__(self._user)
+        self._portfolio_repo.open()
+        return self._user in self._portfolio_repo.backend
 
     def store_is_empty(self) -> bool:
         """True when the store holds no portfolios at all.
@@ -598,14 +479,15 @@ class AssetRepository:
         error path to tell "no store yet" (misconfiguration) from
         "no portfolio for this user".
         """
+        self._portfolio_repo.open()
         return not self._portfolio_repo.backend.snapshot()
 
-    def require(self) -> UserAssets:
-        """This user's row, or :class:`UnknownUser` when there is none."""
+    def require(self) -> UserPortfolioRecord:
+        """This user's portfolio row, or :class:`UnknownUser` when there is none."""
         row = self._portfolio_repo.backend.get(self._user)
         if row is None:
             raise UnknownUser(self._user)
-        return UserAssets(self._user, self._portfolio_repo.get_name(self._user))
+        return row
 
     @property
     def portfolio_name(self) -> str:
@@ -618,7 +500,7 @@ class AssetRepository:
 
     def get(self, asset_class: str) -> list[dict[str, Any]] | None:
         """One asset class's positions, or None when the user has none."""
-        return self._position_repo.get_for_bucket(self._user, asset_class)
+        return self._position_repo.get_for_user(self._user).get(asset_class)
 
     def __contains__(self, asset_class: object) -> bool:
         return asset_class in self._position_repo.get_for_user(self._user)
@@ -634,10 +516,7 @@ class AssetRepository:
 
     def remove_positions(self, asset_class: str) -> None:
         """Drop one asset class of this user (no-op when absent)."""
-        positions = self.get(asset_class)
-        if positions:
-            for pos in positions:
-                self._position_repo.delete_position(pos["id"])
+        self._position_repo.delete_bucket(self._user, asset_class)
 
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> AssetRepository:
@@ -669,6 +548,9 @@ class AssetRepository:
                 logger.warning("skipping bad asset bucket %r (%s)", key, exc)
                 continue
             good[str(key)] = raw
+        existing = set(self._position_repo.get_for_user(self._user))
+        for bucket in existing - set(good):
+            self._position_repo.delete_bucket(self._user, bucket)
         for bucket, positions in good.items():
             self._position_repo.batch_upsert_positions(self._user, bucket, positions)
         if portfolio_name is not None:

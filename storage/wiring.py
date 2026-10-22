@@ -10,10 +10,11 @@ Configuration lives with the application: the backend name and the SQLite
 file are read from ``config.ini`` by the app layer (see ``cli.context``)
 and passed in. This module reads no files and knows no settings.
 
-The row type stays the one the store has always used (one row per user
-for the assets, one per ISIN for the cache, ...), which maps onto the
-SQLite table layout ``(key TEXT PRIMARY KEY, payload TEXT NOT NULL)``
-with ``key`` = the row key and ``payload`` = the row's JSON form.
+Most stores keep their row type and map onto the SQLite layout
+``(key TEXT PRIMARY KEY, payload TEXT NOT NULL)`` with ``key`` = the
+row key and ``payload`` = the row's JSON form. Portfolios (one row per
+user) and positions (normalized, one row per position with a composite
+key) have dedicated tables.
 """
 
 from __future__ import annotations
@@ -25,13 +26,9 @@ from typing import TYPE_CHECKING
 from storage.json_storage import JsonStorage
 from storage.records import (
     CacheEntry,
-    CountryRecord,
     IsinRecord,
-    LegacyUserAssets,
     PositionRecord,
-    SectorRecord,
     SessionRecord,
-    UserAssets,
     UserPortfolioRecord,
     UserRecord,
 )
@@ -44,22 +41,16 @@ __all__ = [
     "BACKEND_JSON",
     "BACKEND_SQLITE",
     "SUPPORTED_BACKENDS",
-    "SQLITE_TABLE_ASSETS",
     "SQLITE_TABLE_USER_PORTFOLIOS",
     "SQLITE_TABLE_POSITIONS",
-    "SQLITE_TABLE_POSITION_COUNTRIES",
-    "SQLITE_TABLE_POSITION_SECTORS",
     "SQLITE_TABLE_CACHE",
     "SQLITE_TABLE_ISIN",
     "SQLITE_TABLE_USERS",
     "SQLITE_TABLE_SESSIONS",
-    "assets_backend",
     "cache_backend",
     "isin_backend",
     "normalize_backend",
     "positions_backend",
-    "position_countries_backend",
-    "position_sectors_backend",
     "sessions_backend",
     "user_portfolios_backend",
     "users_backend",
@@ -76,11 +67,8 @@ SUPPORTED_BACKENDS: tuple[str, ...] = (
 )
 
 #: Tables of the SQLite database (one per store).
-SQLITE_TABLE_ASSETS = "user_assets"  # legacy, kept for compat
 SQLITE_TABLE_USER_PORTFOLIOS = "user_portfolios"
-SQLITE_TABLE_POSITIONS = "positions"
-SQLITE_TABLE_POSITION_COUNTRIES = "position_countries"
-SQLITE_TABLE_POSITION_SECTORS = "position_sectors"
+SQLITE_TABLE_POSITIONS = "user_positions"
 SQLITE_TABLE_CACHE = "cache"
 SQLITE_TABLE_ISIN = "isin_registry"
 SQLITE_TABLE_USERS = "users"
@@ -123,25 +111,6 @@ def _sqlite_backend(
     return backend
 
 
-def assets_backend(
-    path: str | Path,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
-) -> "Storage[UserAssets]":
-    """Backend for the assets store (one row per user).
-
-    The JSON backend uses LegacyUserAssets for backward compatibility
-    with the old format that includes positions in the same file.
-    The SQLite backend uses the normalized UserAssets (portfolio name only).
-    """
-    name = normalize_backend(backend)
-    if name == BACKEND_SQLITE:
-        return _sqlite_backend(
-            db_file or path, SQLITE_TABLE_ASSETS, UserAssets
-        )
-    return JsonStorage(path, LegacyUserAssets, strict=True)
-
-
 def user_portfolios_backend(
     path: str | Path,
     backend: str = BACKEND_JSON,
@@ -168,34 +137,6 @@ def positions_backend(
             db_file or path, SQLITE_TABLE_POSITIONS, PositionRecord
         )
     return JsonStorage(path, PositionRecord)
-
-
-def position_countries_backend(
-    path: str | Path,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
-) -> "Storage[CountryRecord]":
-    """Backend for the position countries table."""
-    name = normalize_backend(backend)
-    if name == BACKEND_SQLITE:
-        return _sqlite_backend(
-            db_file or path, SQLITE_TABLE_POSITION_COUNTRIES, CountryRecord
-        )
-    return JsonStorage(path, CountryRecord)
-
-
-def position_sectors_backend(
-    path: str | Path,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
-) -> "Storage[SectorRecord]":
-    """Backend for the position sectors table."""
-    name = normalize_backend(backend)
-    if name == BACKEND_SQLITE:
-        return _sqlite_backend(
-            db_file or path, SQLITE_TABLE_POSITION_SECTORS, SectorRecord
-        )
-    return JsonStorage(path, SectorRecord)
 
 
 def cache_backend(

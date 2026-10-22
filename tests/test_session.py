@@ -388,7 +388,7 @@ class TestSessionSurvivesAnUpdate(unittest.TestCase):
             assert session is not None
             self.assertEqual(session.user, "alice")
             # And the update really used the same database: it created
-            # the assets table there.
+            # the normalized position tables there.
             conn = sqlite3.connect(db_file)
             try:
                 tables = {
@@ -399,7 +399,9 @@ class TestSessionSurvivesAnUpdate(unittest.TestCase):
                 }
             finally:
                 conn.close()
-            self.assertIn("user_assets", tables)
+            self.assertIn("user_positions", tables)
+            self.assertIn("user_portfolios", tables)
+            self.assertNotIn("user_assets", tables)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Normalize existing SQLite database from blob storage to normalized schema.
+"""Import the JSON stores into the normalized SQLite schema.
 
-Run once after upgrading to the new schema version.
-Idempotent: safe to run multiple times.
+Tables written:
+
+* ``user_portfolios`` — one row per user (portfolio name)
+* ``user_positions``  — one row per position, keyed by
+  ``(username, bucket, position_idx)``, with the ISIN preserved
+* ``cache`` / ``isin_registry`` / ``users`` / ``sessions`` — as before
+
+``user_assets`` is obsolete: it is never created or written, and an old
+table is dropped. A legacy ``positions`` table (auto-increment ``id``)
+is converted to ``user_positions``; the dead ``position_countries`` and
+``position_sectors`` tables and the leftover ``sqlite_sequence`` are
+removed as well.
+
+Idempotent: every store is upserted, and each user/bucket's positions
+are replaced wholesale, so running it again is safe.
 
 Usage::
+
     python scripts/migrate_normalize_db.py --db-file ~/.local/asalloc/asalloc.db
     python scripts/migrate_normalize_db.py --db-file ~/.local/asalloc/asalloc.db --dry-run
 """
@@ -14,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,217 +38,21 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from storage.records import (  # noqa: E402
+    DEFAULT_PORTFOLIO_NAME,
     CacheEntry,
-    CountryRecord,
     IsinRecord,
     PositionRecord,
-    SectorRecord,
     SessionRecord,
-    UserAssets,
     UserPortfolioRecord,
     UserRecord,
 )
+from storage.repositories import PositionRepository  # noqa: E402
 from storage.sqlite_storage import SqliteStorage  # noqa: E402
 
-
-def _fallback_path(candidate: Any, default: Path) -> Path:
-    """The path to use when the caller named none."""
-    if candidate is None:
-        return default
-    return Path(candidate)
-
-
-def _extract_positions(raw: dict[str, Any]) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    """Extract positions from raw user assets data.
-
-    Returns a dict of {user: {bucket: [positions]}} extracted from the raw data.
-    Handles the format where users are top-level keys with portfolio_name and positions.
-    """
-    positions: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for user, user_data in raw.items():
-        if isinstance(user_data, dict) and "positions" in user_data:
-            user_positions: dict[str, list[dict[str, Any]]] = {}
-            for bucket, pos_list in user_data["positions"].items():
-                # Normalize each position to have explicit columns
-                normalized = []
-                for pos in pos_list:
-                    normalized_pos = {
-                        "username": pos.get("username", user),
-                        "name": pos.get("name", ""),
-                        "short_name": pos.get("short_name"),
-                        "isin": pos.get("isin"),
-                        "value": pos.get("value"),
-                        "shares": pos.get("shares"),
-                        "broker": pos.get("broker"),
-                        "dmem": pos.get("dmem"),
-                        "dmem_other": pos.get("dmem_other"),
-                        "usavn": pos.get("usavn"),
-                    }
-                    normalized.append(normalized_pos)
-                user_positions[bucket] = normalized
-            positions[user] = user_positions
-    return positions
-
-
-def _parse_user_assets(key: str, raw: dict[str, Any]) -> UserAssets:
-    """Parse user assets, handling both old format (with positions) and new format (without)."""
-    # Check if this is the old format with positions
-    if "positions" in raw:
-        # Create a copy without positions for the new format
-        payload = {k: v for k, v in raw.items() if k != "positions"}
-        return UserAssets.from_dict(key, payload)
-    return UserAssets.from_dict(key, raw)
-
-
-def migrate(db_file: Path, source_dir: Path, *, dry_run: bool = False) -> list[tuple[str, int]]:
-    """Import every JSON store into the database; returns (table, rows)."""
-    imported: list[tuple[str, int]] = []
-
-    # 1. Create all tables first
-    if not dry_run:
-        tables_to_create = [
-            ("user_portfolios", UserPortfolioRecord),
-            ("positions", PositionRecord),
-            ("cache", CacheEntry),
-            ("isin_registry", IsinRecord),
-            ("users", UserRecord),
-            ("sessions", SessionRecord),
-        ]
-        for table, factory in tables_to_create:
-            backend = SqliteStorage(db_file, table, factory)
-            backend.open()
-            backend.close()
-
-    for filename, table, row_type in [
-        ("assets.json", "user_assets", UserAssets),
-        ("cache.json", "cache", CacheEntry),
-        ("isin.json", "isin_registry", IsinRecord),
-        ("users.json", "users", UserRecord),
-        (".sessions.json", "sessions", SessionRecord),
-    ]:
-        raw = _read_json(source_dir / filename)
-        if dry_run:
-            imported.append((table, len(raw)))
-            continue
-
-        # For the old tables, we just import as-is for backwards compatibility
-        # except user_assets which needs special handling for positions
-        if table == "user_assets":
-            # Extract positions first before stripping them
-            positions_data = _extract_positions(raw)
-            
-            # Create UserAssets without positions
-            payload = {k: v for k, v in raw.items() if k != "positions"}
-            backend = SqliteStorage(db_file, table, row_type)
-            backend.open()
-            count = 0
-            for key, raw_payload in raw.items():
-                try:
-                    row = _parse_user_assets(str(key), raw_payload)
-                except (TypeError, ValueError, KeyError) as exc:
-                    print(f"warning: skipping bad row {key!r} in {filename} ({exc})")
-                    continue
-                backend.put(row)
-                count += 1
-            backend.persist()
-            backend.close()
-            imported.append((table, count))
-            
-            # Save positions data for step 2 - attach to db_file for later access
-            # We'll re-read from source_dir in step 2
-            
-        elif table in ("cache", "isin_registry", "users", "sessions"):
-            backend = SqliteStorage(db_file, table, row_type)
-            backend.open()
-            count = 0
-            for key, payload in raw.items():
-                try:
-                    row = row_type.from_dict(str(key), payload)
-                except (TypeError, ValueError, KeyError) as exc:
-                    print(f"warning: skipping bad row {key!r} in {filename} ({exc})")
-                    continue
-                backend.put(row)
-                count += 1
-            backend.persist()
-            backend.close()
-            imported.append((table, count))
-
-    # 2. Normalize user_assets -> user_portfolios + positions
-    # Positions are stored with explicit columns; countries/sectors are NOT stored
-    # in position_countries/position_sectors (they're cached per ISIN in business logic)
-    if not dry_run:
-        # Re-read the assets JSON to get positions
-        raw = _read_json(source_dir / "assets.json")
-        positions_data = _extract_positions(raw)
-        
-        backend_assets = SqliteStorage(db_file, "user_assets", UserAssets)
-        backend_assets.open()
-        backend_portfolios = SqliteStorage(db_file, "user_portfolios", UserPortfolioRecord)
-        backend_portfolios.open()
-        backend_positions = SqliteStorage(db_file, "positions", PositionRecord)
-        backend_positions.open()
-
-        for user, payload in backend_assets.snapshot().items():
-            # payload is already a dict (parsed by snapshot()) - without positions now
-            portfolio_name = payload.get("portfolio_name", "Portfolio")
-            backend_portfolios.put(UserPortfolioRecord(user, {"portfolio_name": portfolio_name}))
-
-            # Migrate positions with explicit columns only
-            # Get positions from the extracted data (from step 1)
-            user_positions = positions_data.get(user, {})
-            for bucket, pos_list in user_positions.items():
-                for idx, pos in enumerate(pos_list):
-                    _migrate_position_simple(
-                        backend_positions,
-                        username=user,
-                        bucket=bucket,
-                        index=idx,
-                        pos=pos,
-                    )
-
-        backend_portfolios.persist()
-        backend_positions.persist()
-        backend_assets.close()
-        backend_portfolios.close()
-        backend_positions.close()
-
-    return imported
-
-
-def _migrate_position_simple(
-    positions_backend: SqliteStorage,
-    username: str,
-    bucket: str,
-    index: int,
-    pos: dict[str, Any],
-) -> None:
-    """Migrate a single position with explicit columns only.
-
-    Countries and sectors are NOT stored in the DB - they're cached per ISIN
-    and calculated in the business logic update, not in the DB.
-    """
-    # Insert position with explicit columns only
-    # NOTE: We only store the fields that exist in the new normalized schema.
-    # Countries/sectors that were previously in JSON blobs are NOT migrated to
-    # position_countries/position_sectors tables - they need to be handled
-    # by the business logic update process.
-    record = PositionRecord(
-        key="0",
-        username=pos.get("username", username),
-        bucket=bucket,
-        position_index=index,
-        name=pos.get("name", ""),
-        short_name=pos.get("short_name"),
-        isin=pos.get("isin"),
-        value=pos.get("value"),
-        shares=pos.get("shares"),
-        broker=pos.get("broker"),
-        dmem=pos.get("dmem"),
-        dmem_other=pos.get("dmem_other"),
-        usavn=pos.get("usavn"),
-    )
-    positions_backend.put(record)
-    positions_backend.persist()
+POSITION_COLUMNS = (
+    "username, bucket, position_idx, name, short_name, isin, "
+    "value, shares, broker, dmem, usavn, dmem_other"
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -246,9 +65,229 @@ def _read_json(path: Path) -> dict[str, Any]:
     return raw
 
 
+def _table_names(db_file: Path) -> set[str]:
+    with sqlite3.connect(str(db_file)) as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _ensure_user_positions_has_isin(db_file: Path) -> None:
+    """Add columns introduced after the first normalized schema, if needed."""
+    with sqlite3.connect(str(db_file)) as conn:
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(user_positions)").fetchall()
+        }
+        if not columns:
+            return
+        for column, kind in (("short_name", "TEXT"), ("isin", "TEXT")):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE user_positions ADD COLUMN {column} {kind}")
+
+
+def _drop_sqlite_sequence(conn: sqlite3.Connection) -> None:
+    """Remove the internal ``sqlite_sequence`` table when nothing needs it.
+
+    SQLite refuses ``DROP TABLE sqlite_sequence``; with no AUTOINCREMENT
+    table left, deleting its sqlite_master row is the only way to make it
+    disappear from the schema.
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'"
+    ).fetchone() is None:
+        return
+    still_needed = conn.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'"
+    ).fetchone()
+    if still_needed is not None:
+        return
+    conn.execute("PRAGMA writable_schema=ON")
+    try:
+        conn.execute(
+            "DELETE FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'sqlite_sequence'"
+        )
+    finally:
+        conn.execute("PRAGMA writable_schema=OFF")
+
+
+def _migrate_legacy_tables(db_file: Path) -> None:
+    """Convert legacy ``positions`` rows and drop the obsolete tables.
+
+    The old schema also had ``position_countries``/``position_sectors``
+    (children of ``positions``) and an AUTOINCREMENT ``sqlite_sequence``;
+    all of them are dead now. The old ``positions`` table used
+    ``position_index`` instead of ``position_idx`` and may miss
+    ``short_name``/``isin``; rows are copied into the composite-key table
+    and then the legacy tables are removed.
+    """
+    tables = _table_names(db_file)
+    with sqlite3.connect(str(db_file)) as conn:
+        if "positions" in tables and "user_positions" in tables:
+            cursor = conn.execute("SELECT * FROM positions")
+            names = [str(desc[0]) for desc in cursor.description]
+            for values in cursor.fetchall():
+                row = dict(zip(names, values))
+                index = row.get("position_idx", row.get("position_index", 0))
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_positions "
+                    f"({POSITION_COLUMNS}) VALUES ({', '.join('?' * 12)})",
+                    (
+                        row.get("username", ""),
+                        row.get("bucket", ""),
+                        index,
+                        row.get("name", ""),
+                        row.get("short_name", row.get("group")),
+                        row.get("isin"),
+                        row.get("value"),
+                        row.get("shares"),
+                        row.get("broker"),
+                        row.get("dmem"),
+                        row.get("usavn"),
+                        row.get("dmem_other"),
+                    ),
+                )
+            conn.execute("DROP TABLE positions")
+        for obsolete in ("position_countries", "position_sectors", "user_assets"):
+            conn.execute(f"DROP TABLE IF EXISTS {obsolete}")
+        _drop_sqlite_sequence(conn)
+        conn.commit()
+
+
+def _tables_to_create() -> list[tuple[str, type]]:
+    return [
+        ("user_portfolios", UserPortfolioRecord),
+        ("user_positions", PositionRecord),
+        ("cache", CacheEntry),
+        ("isin_registry", IsinRecord),
+        ("users", UserRecord),
+        ("sessions", SessionRecord),
+    ]
+
+
+def _create_tables(db_file: Path) -> None:
+    for table, factory in _tables_to_create():
+        backend = SqliteStorage(db_file, table, factory)
+        backend.open()
+        backend.close()
+
+
+def _count_assets(raw: dict[str, Any]) -> tuple[int, int]:
+    """``(users, positions)`` in an assets.json document."""
+    users = 0
+    positions = 0
+    for user_data in raw.values():
+        if not isinstance(user_data, dict):
+            continue
+        users += 1
+        buckets = user_data.get("positions")
+        if not isinstance(buckets, dict):
+            continue
+        for rows in buckets.values():
+            if isinstance(rows, list):
+                positions += len(rows)
+    return users, positions
+
+
+def migrate(
+    db_file: Path, source_dir: Path, *, dry_run: bool = False
+) -> list[tuple[str, int]]:
+    """Import every JSON store into the database; returns ``(table, rows)``."""
+    assets = _read_json(source_dir / "assets.json")
+    jcache = _read_json(source_dir / "cache.json")
+    isin = _read_json(source_dir / "isin.json")
+    users = _read_json(source_dir / "users.json")
+    sessions = _read_json(source_dir / ".sessions.json")
+    asset_users, asset_positions = _count_assets(assets)
+
+    if dry_run:
+        return [
+            ("user_portfolios", asset_users),
+            ("user_positions", asset_positions),
+            ("cache", len(jcache)),
+            ("isin_registry", len(isin)),
+            ("users", len(users)),
+            ("sessions", len(sessions)),
+        ]
+
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+    _create_tables(db_file)
+    _ensure_user_positions_has_isin(db_file)
+    _migrate_legacy_tables(db_file)
+
+    imported: list[tuple[str, int]] = []
+
+    # Plain stores: one row per key.
+    for filename, table, row_type, document in (
+        ("cache.json", "cache", CacheEntry, jcache),
+        ("isin.json", "isin_registry", IsinRecord, isin),
+        ("users.json", "users", UserRecord, users),
+        (".sessions.json", "sessions", SessionRecord, sessions),
+    ):
+        backend = SqliteStorage(db_file, table, row_type)
+        backend.open()
+        count = 0
+        for key, payload in document.items():
+            try:
+                row = row_type.from_dict(str(key), payload)
+            except (TypeError, ValueError, KeyError) as exc:
+                print(f"warning: skipping bad row {key!r} in {filename} ({exc})")
+                continue
+            backend.put(row)
+            count += 1
+        backend.persist()
+        backend.close()
+        imported.append((table, count))
+
+    # Assets: portfolio names + positions (ISIN preserved, uppercase key
+    # accepted from the JSON format).
+    portfolios = SqliteStorage(
+        db_file, "user_portfolios", UserPortfolioRecord
+    )
+    portfolios.open()
+    positions_backend = SqliteStorage(
+        db_file, "user_positions", PositionRecord
+    )
+    position_repo = PositionRepository(positions_backend)
+
+    portfolio_count = 0
+    position_count = 0
+    for user, user_data in assets.items():
+        if not isinstance(user_data, dict):
+            print(f"warning: skipping bad user {user!r} in assets.json")
+            continue
+        name = user_data.get("portfolio_name", DEFAULT_PORTFOLIO_NAME)
+        if not isinstance(name, str):
+            name = DEFAULT_PORTFOLIO_NAME
+        portfolios.put(UserPortfolioRecord(str(user), portfolio_name=name))
+        portfolio_count += 1
+
+        buckets = user_data.get("positions")
+        if not isinstance(buckets, dict):
+            continue
+        for bucket, rows in buckets.items():
+            if not isinstance(rows, list):
+                print(f"warning: skipping bad bucket {bucket!r} for {user!r}")
+                continue
+            position_repo.batch_upsert_positions(str(user), str(bucket), rows)
+            position_count += len(rows)
+
+    portfolios.persist()
+    position_repo.persist()
+    portfolios.close()
+    position_repo.close()
+
+    imported.append(("user_portfolios", portfolio_count))
+    imported.append(("user_positions", position_count))
+    return imported
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Normalize the SQLite database from blob storage to normalized schema."
+        description="Import the JSON stores into the normalized SQLite schema."
     )
     parser.add_argument(
         "--db-file",
@@ -265,14 +304,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Only report what would be imported.",
+        help="Only report what would be imported (touches nothing).",
     )
     args = parser.parse_args(argv)
 
     source_dir = args.source_dir or args.db_file.parent
     try:
         imported = migrate(args.db_file, source_dir, dry_run=args.dry_run)
-    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError, sqlite3.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     for table, count in imported:

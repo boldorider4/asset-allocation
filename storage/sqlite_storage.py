@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """SQLite backend for the :mod:`storage.storage` abstractions.
 
-One table per store, one row per key::
+Most stores are one table with one JSON payload per key::
 
     CREATE TABLE <table> (key TEXT PRIMARY KEY, payload TEXT NOT NULL)
 
 The payload is the row's JSON form (``to_dict()``), so a row written
-by one backend reads back identically in the other.
+by one backend reads back identically in the other. ``user_positions``
+is the exception: it is normalized, one row per position, keyed by
+``(username, bucket, position_idx)``, with typed columns and an ISIN
+index. ``user_portfolios`` holds one portfolio name per user.
 
 SQLite runs the database *inside* the process: no server, no idle
 load, nothing to supervise. WAL mode lets the web server read while
@@ -34,7 +37,7 @@ import threading
 from pathlib import Path
 from typing import Any, TypeVar
 
-from storage.records import AssetBucket
+from storage.records import AssetBucket, PositionRecord
 from storage.storage import Storage, StorageObject
 
 __all__ = ["SqliteStorage"]
@@ -199,13 +202,15 @@ class SqliteStorage(Storage[T]):
         """
         with self._lock:
             conn = self._require_conn()
-            # The positions table uses 'id' as primary key instead of 'key'
-            # and has explicit columns instead of a payload JSON blob
-            if self._table == "positions":
+            # user_positions has explicit columns and a composite primary
+            # key instead of the generic (key, payload) layout.
+            if self._table == "user_positions":
                 rows = conn.execute(
-                    f"SELECT id as key, username, bucket, position_index, name, short_name, "
-                    "isin, value, shares, broker, dmem, dmem_other, usavn FROM "
-                    f"{self._quoted_table()}"
+                    f"SELECT {self._position_columns()} FROM {self._quoted_table()}"
+                ).fetchall()
+            elif self._table == "isin_registry":
+                rows = conn.execute(
+                    f"SELECT {self._isin_columns()} FROM {self._quoted_table()}"
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -213,23 +218,13 @@ class SqliteStorage(Storage[T]):
                 ).fetchall()
         out: dict[str, Any] = {}
         for row in rows:
-            if self._table == "positions":
-                # For positions table, create a dict from the explicit columns
-                # row is a sqlite3.Row with columns: key, username, bucket, etc.
-                out[row["key"]] = {
-                    "username": row["username"],
-                    "bucket": row["bucket"],
-                    "position_index": row["position_index"],
-                    "name": row["name"],
-                    "short_name": row["short_name"],
-                    "isin": row["isin"],
-                    "value": row["value"],
-                    "shares": row["shares"],
-                    "broker": row["broker"],
-                    "dmem": row["dmem"],
-                    "dmem_other": row["dmem_other"],
-                    "usavn": row["usavn"],
-                }
+            if self._table == "user_positions":
+                key = PositionRecord.encode_key(
+                    row["username"], row["bucket"], row["position_idx"]
+                )
+                out[key] = self._position_row_to_dict(row)
+            elif self._table == "isin_registry":
+                out[str(row["isin"])] = self._isin_row_to_dict(row)
             else:
                 # For other tables, row has key and payload columns
                 if row["payload"] is None:
@@ -310,8 +305,44 @@ class SqliteStorage(Storage[T]):
         assert self._conn is not None
         return self._conn
 
+    @staticmethod
+    def _isin_columns() -> str:
+        return "isin, issuer, bucket, product_ref"
+
+    @staticmethod
+    def _isin_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "issuer": row["issuer"],
+            "bucket": row["bucket"],
+            "product_ref": row["product_ref"],
+        }
+
     def _quoted_table(self) -> str:
         return f'"{self._table}"'
+
+    @staticmethod
+    def _position_columns() -> str:
+        return (
+            "username, bucket, position_idx, name, short_name, isin, "
+            "value, shares, broker, dmem, usavn, dmem_other"
+        )
+
+    @staticmethod
+    def _position_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "username": row["username"],
+            "bucket": row["bucket"],
+            "position_idx": row["position_idx"],
+            "name": row["name"],
+            "short_name": row["short_name"],
+            "isin": row["isin"],
+            "value": row["value"],
+            "shares": row["shares"],
+            "broker": row["broker"],
+            "dmem": row["dmem"],
+            "usavn": row["usavn"],
+            "dmem_other": row["dmem_other"],
+        }
 
     def _empty_raw(self) -> Any:
         # Bucket rows serialise as bare lists, everything else as objects.
@@ -321,23 +352,12 @@ class SqliteStorage(Storage[T]):
         with self._lock:
             conn = self._require_conn()
             table = self._table
-            if table == "user_assets":
+            if table == "user_positions":
                 conn.execute(
                     f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-            elif table == "user_portfolios":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-            elif table == "positions":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                    "username TEXT NOT NULL, "
+                    "(username TEXT NOT NULL, "
                     "bucket TEXT NOT NULL, "
-                    "position_index INTEGER NOT NULL, "
+                    "position_idx INTEGER NOT NULL, "
                     "name TEXT NOT NULL, "
                     "short_name TEXT, "
                     "isin TEXT, "
@@ -345,41 +365,13 @@ class SqliteStorage(Storage[T]):
                     "shares REAL, "
                     "broker TEXT, "
                     "dmem REAL, "
-                    "dmem_other REAL, "
                     "usavn REAL, "
-                    "UNIQUE(username, bucket, position_index))"
+                    "dmem_other REAL, "
+                    "PRIMARY KEY (username, bucket, position_idx))"
                 )
                 conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_positions_user_bucket "
-                    "ON positions(username, bucket)"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_positions_isin "
-                    "ON positions(isin)"
-                )
-            elif table == "position_countries":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE, "
-                    "name TEXT NOT NULL, "
-                    "weight_pct REAL NOT NULL, "
-                    "PRIMARY KEY (position_id, name))"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_position_countries_position "
-                    "ON position_countries(position_id)"
-                )
-            elif table == "position_sectors":
-                conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                    "(position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE, "
-                    "name TEXT NOT NULL, "
-                    "weight_pct REAL NOT NULL, "
-                    "PRIMARY KEY (position_id, name))"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_position_sectors_position "
-                    "ON position_sectors(position_id)"
+                    "CREATE INDEX IF NOT EXISTS idx_user_positions_isin "
+                    "ON user_positions(isin)"
                 )
             elif table == "cache":
                 conn.execute(
@@ -435,9 +427,32 @@ class SqliteStorage(Storage[T]):
             return None
 
     def get(self, key: str) -> T | None:
-        """``SELECT payload FROM <table> WHERE key = ?``."""
+        """``SELECT`` one row by its (possibly composite) key."""
         with self._lock:
             conn = self._require_conn()
+            if self._table == "user_positions":
+                username, bucket, index = PositionRecord.decode_key(key)
+                row = conn.execute(
+                    f"SELECT {self._position_columns()} FROM {self._quoted_table()} "
+                    "WHERE username = ? AND bucket = ? AND position_idx = ?",
+                    (username, bucket, index),
+                ).fetchone()
+                if row is None:
+                    return None
+                return self._factory.from_dict(  # type: ignore[return-value]
+                    str(key), self._position_row_to_dict(row)
+                )
+            if self._table == "isin_registry":
+                row = conn.execute(
+                    f"SELECT {self._isin_columns()} FROM {self._quoted_table()} "
+                    "WHERE isin = ?",
+                    (str(key),),
+                ).fetchone()
+                if row is None:
+                    return None
+                return self._factory.from_dict(  # type: ignore[return-value]
+                    str(key), self._isin_row_to_dict(row)
+                )
             row = conn.execute(
                 f"SELECT payload FROM {self._quoted_table()} WHERE key = ?",
                 (str(key),),
@@ -453,6 +468,17 @@ class SqliteStorage(Storage[T]):
             existing = self.get(key)
             if existing is not None:
                 return existing
+            if self._table == "user_positions":
+                # A position row is meaningless without its fields.
+                raise KeyError(f"position row {key!r} does not exist")
+            if self._table == "isin_registry":
+                obj = self._factory.from_dict(key, {})  # type: ignore[assignment]
+                self._require_conn().execute(
+                    f"INSERT OR IGNORE INTO {self._quoted_table()} "
+                    "(isin, issuer, bucket, product_ref) VALUES (?, NULL, NULL, NULL)",
+                    (key,),
+                )
+                return self.get(key) or obj
             obj = self._factory.from_dict(key, self._empty_raw())  # type: ignore[assignment]
             self._require_conn().execute(
                 f"INSERT OR IGNORE INTO {self._quoted_table()} (key, payload) "
@@ -464,24 +490,36 @@ class SqliteStorage(Storage[T]):
             return self.get(key) or obj
 
     def put(self, obj: T) -> None:
-        """``INSERT INTO <table> (key, payload) VALUES (?, ?)``
-        ``ON CONFLICT(key) DO UPDATE SET payload = excluded.payload``."""
+        """Insert or replace one row (upsert on the table's primary key)."""
         with self._lock:
-            # Handle tables with auto-incrementing primary keys (e.g., positions table)
-            if self._table == "positions" and obj.key == "0":
-                # New record: insert without ID, let SQLite auto-assign
+            if self._table == "user_positions":
+                d = obj.to_dict()
                 self._require_conn().execute(
-                    f"""INSERT INTO {self._quoted_table()}
-                    (username, bucket, position_index, name, short_name, isin, value, shares, broker, dmem, dmem_other, usavn)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    f"INSERT INTO {self._quoted_table()} "
+                    "(username, bucket, position_idx, name, short_name, isin, "
+                    "value, shares, broker, dmem, usavn, dmem_other) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(username, bucket, position_idx) DO UPDATE SET "
+                    "name = excluded.name, short_name = excluded.short_name, "
+                    "isin = excluded.isin, value = excluded.value, "
+                    "shares = excluded.shares, broker = excluded.broker, "
+                    "dmem = excluded.dmem, usavn = excluded.usavn, "
+                    "dmem_other = excluded.dmem_other",
                     (
-                        obj.username, obj.bucket, obj.position_index, obj.name,
-                        obj.short_name, obj.isin, obj.value, obj.shares,
-                        obj.broker, obj.dmem, obj.dmem_other, obj.usavn
+                        d.get("username"),
+                        d.get("bucket"),
+                        d.get("position_idx"),
+                        d.get("name", ""),
+                        d.get("short_name"),
+                        d.get("isin"),
+                        d.get("value"),
+                        d.get("shares"),
+                        d.get("broker"),
+                        d.get("dmem"),
+                        d.get("usavn"),
+                        d.get("dmem_other"),
                     ),
                 )
-                # Update object's key with the auto-assigned ID
-                obj._key = str(self._require_conn().execute("SELECT last_insert_rowid()").fetchone()[0])
             # Handle isin_registry table which uses 'isin' column instead of 'key'
             elif self._table == "isin_registry":
                 d = obj.to_dict()
@@ -489,7 +527,7 @@ class SqliteStorage(Storage[T]):
                     f"INSERT INTO {self._quoted_table()} (isin, issuer, bucket, product_ref) VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(isin) DO UPDATE SET issuer = excluded.issuer, "
                     "bucket = excluded.bucket, product_ref = excluded.product_ref",
-                    (obj.key, d.get("issuer", ""), d.get("bucket", ""), d.get("product_ref", "")),
+                    (obj.key, d.get("issuer"), d.get("bucket"), d.get("product_ref")),
                 )
             else:
                 self._require_conn().execute(
@@ -501,6 +539,16 @@ class SqliteStorage(Storage[T]):
     def add(self, obj: T) -> None:
         """Plain ``INSERT``; a duplicate surfaces as ``KeyError``."""
         with self._lock:
+            if self._table == "user_positions":
+                if obj.key in self:
+                    raise KeyError(f"row {obj.key!r} already exists")
+                self.put(obj)
+                return
+            if self._table == "isin_registry":
+                if obj.key in self:
+                    raise KeyError(f"row {obj.key!r} already exists")
+                self.put(obj)
+                return
             try:
                 self._require_conn().execute(
                     f"INSERT INTO {self._quoted_table()} (key, payload) "
@@ -519,16 +567,44 @@ class SqliteStorage(Storage[T]):
             return obj
 
     def remove(self, key: str) -> None:
-        """``DELETE FROM <table> WHERE key = ?`` (no error when missing)."""
+        """Delete one row by key (no error when missing)."""
         with self._lock:
-            self._require_conn().execute(
+            conn = self._require_conn()
+            if self._table == "user_positions":
+                username, bucket, index = PositionRecord.decode_key(key)
+                conn.execute(
+                    f"DELETE FROM {self._quoted_table()} "
+                    "WHERE username = ? AND bucket = ? AND position_idx = ?",
+                    (username, bucket, index),
+                )
+                return
+            if self._table == "isin_registry":
+                conn.execute(
+                    f"DELETE FROM {self._quoted_table()} WHERE isin = ?", (str(key),)
+                )
+                return
+            conn.execute(
                 f"DELETE FROM {self._quoted_table()} WHERE key = ?", (str(key),)
             )
 
     def __contains__(self, key: object) -> bool:
-        """``SELECT 1 FROM <table> WHERE key = ?``."""
+        """True when the row exists."""
         with self._lock:
             conn = self._require_conn()
+            if self._table == "user_positions":
+                username, bucket, index = PositionRecord.decode_key(str(key))
+                row = conn.execute(
+                    f"SELECT 1 FROM {self._quoted_table()} "
+                    "WHERE username = ? AND bucket = ? AND position_idx = ?",
+                    (username, bucket, index),
+                ).fetchone()
+                return row is not None
+            if self._table == "isin_registry":
+                row = conn.execute(
+                    f"SELECT 1 FROM {self._quoted_table()} WHERE isin = ?",
+                    (str(key),),
+                ).fetchone()
+                return row is not None
             row = conn.execute(
                 f"SELECT 1 FROM {self._quoted_table()} WHERE key = ?", (str(key),)
             ).fetchone()

@@ -3105,14 +3105,14 @@ class TestDatabaseBackendRoute(unittest.TestCase):
 
     def _seed(self) -> None:
         """The stores in the database: the portfolio, the quotes, the account."""
-        from storage.records import CacheEntry, PositionRecord, CountryRecord, SectorRecord, UserPortfolioRecord, UserRecord, UserAssets
+        from storage.records import (
+            CacheEntry,
+            PositionRecord,
+            UserPortfolioRecord,
+            UserRecord,
+        )
         from storage.sqlite_storage import SqliteStorage
 
-        assets = SqliteStorage(self.db, "user_assets", UserAssets)
-        assets.open()
-        # Use LegacyUserAssets for the old format (with positions)
-        from storage.records import LegacyUserAssets
-        assets.put(LegacyUserAssets(_USER, user_payload(_ASSETS)))
         cache = SqliteStorage(self.db, "cache", CacheEntry)
         cache.open()
         for isin, entry in _CACHE.items():
@@ -3121,68 +3121,36 @@ class TestDatabaseBackendRoute(unittest.TestCase):
         users.open()
         users.put(UserRecord(_USER, {"password": ""}))
         users.persist()
-        
-        # Also populate the new normalized tables for the SQLite backend
-        from storage.records import UserPortfolioRecord, PositionRecord, CountryRecord, SectorRecord
+
         portfolios = SqliteStorage(self.db, "user_portfolios", UserPortfolioRecord)
         portfolios.open()
-        portfolios.put(UserPortfolioRecord(_USER, {"portfolio_name": "Portfolio"}))
+        portfolios.put(
+            UserPortfolioRecord(_USER, {"portfolio_name": "Portfolio"})
+        )
 
-        positions = SqliteStorage(self.db, "positions", PositionRecord)
+        positions = SqliteStorage(self.db, "user_positions", PositionRecord)
         positions.open()
-        countries = SqliteStorage(self.db, "position_countries", CountryRecord)
-        countries.open()
-        sectors = SqliteStorage(self.db, "position_sectors", SectorRecord)
-        sectors.open()
-
-        # Seed positions from _ASSETS
         for bucket, positions_data in _ASSETS.items():
             for idx, pos in enumerate(positions_data):
-                position_record = PositionRecord(
-                    key="0",
-                    username=_USER,
-                    bucket=bucket,
-                    position_index=idx,
-                    name=pos.get("name", ""),
-                    short_name=pos.get("short_name"),
-                    isin=pos.get("ISIN"),
-                    value=pos.get("value"),
-                    shares=pos.get("shares"),
-                    broker=pos.get("broker"),
-                    dmem=pos.get("DMEM"),
-                    dmem_other=pos.get("DMEM_OTHER"),
-                    usavn=pos.get("USAVN"),
+                positions.put(
+                    PositionRecord(
+                        username=_USER,
+                        bucket=bucket,
+                        position_idx=idx,
+                        name=pos.get("name", ""),
+                        short_name=pos.get("short_name"),
+                        isin=pos.get("ISIN"),
+                        value=pos.get("value"),
+                        shares=pos.get("shares"),
+                        broker=pos.get("broker"),
+                        dmem=pos.get("DMEM"),
+                        dmem_other=pos.get("DMEM_OTHER"),
+                        usavn=pos.get("USAVN"),
+                    )
                 )
-                positions.put(position_record)
-                position_id = position_record.id
-
-                # Add countries
-                if "countries" in pos and pos["countries"]:
-                    for c in pos["countries"]:
-                        countries.put(CountryRecord(
-                            key="0",
-                            position_id=position_id,
-                            name=c["name"],
-                            weight_pct=c["weight_pct"] * 100,
-                        ))
-                # Add sectors
-                if "sectors" in pos and pos["sectors"]:
-                    for s in pos["sectors"]:
-                        sectors.put(SectorRecord(
-                            key="0",
-                            position_id=position_id,
-                            name=s["name"],
-                            weight_pct=s["weight_pct"] * 100,
-                        ))
 
         portfolios.persist()
         positions.persist()
-        countries.persist()
-        sectors.persist()
-        portfolios.close()
-        positions.close()
-        countries.close()
-        sectors.close()
 
     def _get(self, path: str) -> tuple[int, str]:
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
@@ -3231,7 +3199,8 @@ class TestDatabaseBackendRoute(unittest.TestCase):
         self.assertAlmostEqual(data["value"], 12.0 * 99.5)
 
     def test_the_edit_is_stored_in_the_database(self) -> None:
-        from storage.records import UserAssets
+        from storage.records import PositionRecord
+        from storage.repositories import PositionRepository
         from storage.sqlite_storage import SqliteStorage
 
         status, body = self._post(
@@ -3243,12 +3212,12 @@ class TestDatabaseBackendRoute(unittest.TestCase):
             }
         )
         self.assertEqual(status, 200, body)
-        store = SqliteStorage(self.db, "user_assets", UserAssets)
-        store.open()
-        row = store.get(_USER)
-        assert row is not None
-        shares = row.positions()["equity_portfolio"][1]["shares"]
-        self.assertAlmostEqual(shares, 199.0 / 99.5)
+        repo = PositionRepository(
+            SqliteStorage(self.db, "user_positions", PositionRecord)
+        )
+        rows = repo.get_for_bucket(_USER, "equity_portfolio")
+        self.assertAlmostEqual(rows[1]["shares"], 199.0 / 99.5)
+        self.assertEqual(rows[1]["ISIN"], _ASSETS["equity_portfolio"][1]["ISIN"])
 
 
 if __name__ == "__main__":

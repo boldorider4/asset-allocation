@@ -31,13 +31,10 @@ from storage.records import DEFAULT_PORTFOLIO_NAME
 from storage.wiring import (
     BACKEND_JSON,
     BACKEND_SQLITE,
-    assets_backend,
     cache_backend,
     isin_backend,
     normalize_backend,
     positions_backend,
-    position_countries_backend,
-    position_sectors_backend,
     user_portfolios_backend,
 )
 
@@ -399,16 +396,6 @@ class RuntimeContext:
                     self.config.server.backend,
                     self.config.server.db_file,
                 ),
-                position_countries_backend(
-                    self.config.assets_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                ),
-                position_sectors_backend(
-                    self.config.assets_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                ),
             )
             portfolio_repo = UserPortfolioRepository(
                 user_portfolios_backend(
@@ -464,14 +451,28 @@ class RuntimeContext:
 
     def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
         """Short-lived repository bound to an explicit path (not the config file)."""
-        from storage.repositories import AssetRepository
+        from storage.repositories import (
+            AssetRepository,
+            PositionRepository,
+            UserPortfolioRepository,
+        )
 
+        path = Path(path)
         return AssetRepository(
             self.config.user,
-            assets_backend(
-                Path(path),
-                self.config.server.backend,
-                self.config.server.db_file,
+            position_repo=PositionRepository(
+                positions_backend(
+                    path,
+                    self.config.server.backend,
+                    self.config.server.db_file,
+                )
+            ),
+            portfolio_repo=UserPortfolioRepository(
+                user_portfolios_backend(
+                    path,
+                    self.config.server.backend,
+                    self.config.server.db_file,
+                )
             ),
         )
 

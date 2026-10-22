@@ -32,10 +32,7 @@ from storage.repositories import AssetRepository, UnknownUser
 from storage.wiring import (
     BACKEND_JSON,
     BACKEND_SQLITE,
-    assets_backend,
     cache_backend,
-    position_countries_backend,
-    position_sectors_backend,
     positions_backend,
     user_portfolios_backend,
 )
@@ -179,8 +176,6 @@ def _assets_repo(
 
     position_repo = PositionRepository(
         positions_backend(assets_path, backend, db_file),
-        position_countries_backend(assets_path, backend, db_file),
-        position_sectors_backend(assets_path, backend, db_file),
     )
     portfolio_repo = UserPortfolioRepository(
         user_portfolios_backend(assets_path, backend, db_file),
