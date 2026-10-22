@@ -181,9 +181,21 @@ def _update_status_payload() -> dict:
     }
 
 
+def _fallback_path(candidate: Any, default: Path) -> Path:
+    """The path to use when the caller named none.
+
+    The ini's own value wins over the built-in default, so a store
+    without a location still points at the deployment's file and not
+    at the repository's.
+    """
+    if candidate is None:
+        return default
+    return Path(candidate)
+
+
 def _update_worker(
-    assets_file: str,
-    cache_file: str,
+    assets_file: str | None,
+    cache_file: str | None,
     fat: bool,
     directory: str,
     user: str,
@@ -198,13 +210,23 @@ def _update_worker(
     Only picklable arguments cross the boundary; the ``RuntimeContext``
     and log suppression are constructed here. Update/plotter defaults
     come from the ini file (``fat`` upgrades them like explicit CLI
-    flags); explicit handler arguments always win. Sends ``{"ok", "error"}``
-    down the pipe; a killed child sends nothing and the parent reads the
-    exit code instead. The send lands in the OS pipe buffer, so it
-    survives the child dying with no flush dance.
+    flags); explicit handler arguments always win. The store paths may
+    be missing: with the database backend the stores live in the one
+    database file, and the ini (or the built-in default) names the
+    loose JSON files otherwise. Sends ``{"ok", "error"}`` down the pipe;
+    a killed child sends nothing and the parent reads the exit code
+    instead. The send lands in the OS pipe buffer, so it survives the
+    child dying with no flush dance.
     """
     from cli.update import main as run_update
-    from cli.context import AppConfig, PlotterConfig, RuntimeContext, ServerConfig
+    from cli.context import (
+        AppConfig,
+        DEFAULT_ASSETS_PATH,
+        DEFAULT_CACHE_PATH,
+        PlotterConfig,
+        RuntimeContext,
+        ServerConfig,
+    )
     from position.factory import UpdateCancelled
 
     try:
@@ -226,8 +248,12 @@ def _update_worker(
         (True, True, True) if fat else ini_fetch
     )
     config = AppConfig(
-        assets_file=Path(assets_file),
-        cache_file=Path(cache_file),
+        assets_file=Path(assets_file) if assets_file else _fallback_path(
+            getattr(ini_cfg, "assets_file", None), DEFAULT_ASSETS_PATH
+        ),
+        cache_file=Path(cache_file) if cache_file else _fallback_path(
+            getattr(ini_cfg, "cache_file", None), DEFAULT_CACHE_PATH
+        ),
         fetch_prices=fetch_prices,
         fetch_geosplit=fetch_geosplit,
         fetch_sectorsplit=fetch_sectorsplit,
@@ -407,6 +433,32 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if self._backend == BACKEND_POSTGRES:
             return True
         return all(paths)
+
+    def _cache_map(self) -> dict[str, Any]:
+        """The price cache as a plain map (empty when it is unavailable).
+
+        The cache is one of the stores: with the database backend it is
+        a table of the same file, so it is there even though no
+        ``--cache-file`` was given. Only a store that is not configured
+        at all yields an empty map - and then an edit cannot recompute
+        the sibling figure from a quote.
+        """
+        from .constituents import cache_lookup
+
+        if not self._store_configured(self._cache_file):
+            return {}
+        try:
+            return cache_lookup(
+                self._cache_file,
+                self._backend,
+                self._postgres_dsn,
+                self._db_file,
+            )
+        except Exception as exc:
+            # A broken cache must not fail the edit: the cell is still
+            # stored, only the sibling figure stays as it was.
+            logger.warning("cache unavailable (%s); no price to recompute with", exc)
+            return {}
 
     def _clear_empty_user_charts(self, user: str) -> None:
         """A user without positions has no charts: clear their chart dir.
@@ -737,16 +789,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if not self._store_configured(self._assets_file):
                 raise RuntimeError("assets store not configured")
-            cache: dict[str, Any] = {}
-            if self._cache_file:
-                from .constituents import cache_lookup
-
-                cache = cache_lookup(
-                    self._cache_file,
-                    self._backend,
-                    self._postgres_dsn,
-                    self._db_file,
-                )
+            cache = self._cache_map()
             result = store_constituent_value(
                 self._assets_file,
                 payload.get("bucket"),
@@ -1049,8 +1092,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             proc = _spawn_update_process(
                 _update_worker,
                 (
-                    str(self._assets_file),
-                    str(self._cache_file),
+                    # None stays None: the worker then takes the path
+                    # from the ini (or the default), not from the
+                    # string "None".
+                    self._assets_file,
+                    self._cache_file,
                     fat,
                     str(self.directory),
                     session.user,
@@ -1215,16 +1261,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if not self._store_configured(self._assets_file):
                 raise RuntimeError("assets store not configured")
-            cache: dict[str, Any] = {}
-            if self._cache_file:
-                from .constituents import cache_lookup
-
-                cache = cache_lookup(
-                    self._cache_file,
-                    self._backend,
-                    self._postgres_dsn,
-                    self._db_file,
-                )
+            cache = self._cache_map()
             display = add_constituent(
                 self._assets_file,
                 payload.get("bucket"),

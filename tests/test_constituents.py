@@ -3070,5 +3070,121 @@ class TestUpdateUnits(unittest.TestCase):
         proc.kill.assert_called_once_with()
 
 
+class TestDatabaseBackendRoute(unittest.TestCase):
+    """The route with the database backend: every store is one table.
+
+    The server is started the way the sqlite backend starts it: no
+    per-store files, just the database. The price cache is a table
+    there too, so an edit finds the quote and recomputes the sibling
+    figure - the red flare means it did not.
+    """
+
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.root = tmp / "visualizer"
+        self.root.mkdir()
+        (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
+        (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
+        self.db = tmp / "asalloc.db"
+        self._seed()
+        handler = functools.partial(
+            DashboardHandler,
+            directory=str(self.root),
+            backend="sqlite",
+            db_file=str(self.db),
+        )
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.addCleanup(self._httpd.shutdown)
+        # Log in: the session lives in the database too.
+        self.cookie = _login_cookie(self.port, _USER)
+
+    def _seed(self) -> None:
+        """The stores in the database: the portfolio, the quotes, the account."""
+        from storage.records import CacheEntry, UserAssets, UserRecord
+        from storage.sqlite_storage import SqliteStorage
+
+        assets = SqliteStorage(self.db, "user_assets", UserAssets)
+        assets.open()
+        assets.put(UserAssets(_USER, user_payload(_ASSETS)))
+        cache = SqliteStorage(self.db, "cache", CacheEntry)
+        cache.open()
+        for isin, entry in _CACHE.items():
+            cache.put(CacheEntry(isin, entry))
+        users = SqliteStorage(self.db, "users", UserRecord)
+        users.open()
+        users.put(UserRecord(_USER, {"password": ""}))
+
+    def _get(self, path: str) -> tuple[int, str]:
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        req.add_header("Cookie", self.cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def _post(self, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/constituents",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        req.add_header("Cookie", self.cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_the_page_shows_the_quotes_from_the_database(self) -> None:
+        status, body = self._get("/constituents")
+        self.assertEqual(status, 200, body)
+        self.assertIn("Amundi Core", body)
+        self.assertIn("81.25", body)
+
+    def test_an_edit_recomputes_the_sibling_figure(self) -> None:
+        # The quote is in the database: the edit finds it and
+        # recomputes the value (no red flare).
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 1,
+                "field": "shares",
+                "value": "12",
+            }
+        )
+        self.assertEqual(status, 200, body)
+        data = json.loads(body)
+        self.assertTrue(data["recomputed"], body)
+        self.assertEqual(data["shares"], 12.0)
+        self.assertAlmostEqual(data["value"], 12.0 * 99.5)
+
+    def test_the_edit_is_stored_in_the_database(self) -> None:
+        from storage.records import UserAssets
+        from storage.sqlite_storage import SqliteStorage
+
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 1,
+                "field": "value",
+                "value": "199",
+            }
+        )
+        self.assertEqual(status, 200, body)
+        store = SqliteStorage(self.db, "user_assets", UserAssets)
+        store.open()
+        row = store.get(_USER)
+        assert row is not None
+        shares = row.positions()["equity_portfolio"][1]["shares"]
+        self.assertAlmostEqual(shares, 199.0 / 99.5)
+
+
 if __name__ == "__main__":
     unittest.main()
