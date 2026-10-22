@@ -121,14 +121,23 @@ def read_session(
     """The session for the given cookie, or None when there is none.
 
     An expired session counts as no session: the record is dropped and
-    the caller sends the browser to the login page.
+    the caller sends the browser to the login page. A session row that
+    cannot be read at all (a damaged row) counts as no session too: it
+    is dropped, so the browser gets a fresh login instead of a broken
+    request.
     """
     session_id = session_id_from_cookie(cookie_header_value)
     if not session_id:
         return None
     repo = _repo(workspace, backend, postgres_dsn, db_file)
     repo.open()
-    record = repo.get(session_id)
+    try:
+        record = repo.get(session_id)
+    except Exception as exc:
+        # A damaged row must never take a request down: the session is
+        # gone, the browser logs in again.
+        logger.warning("session %s unreadable (%s)", session_id[:8], exc)
+        record = None
     if record is None:
         # Either there is no session or it expired: drop the stale row
         # so the store does not keep it around.
@@ -186,3 +195,30 @@ def logout(
     repo.open()
     if repo.drop(session_id):
         repo.persist()
+
+
+def clear_sessions(
+    workspace: str | Path,
+    *,
+    backend: str = BACKEND_JSON,
+    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path | None = None,
+    expired_only: bool = False,
+) -> int:
+    """Drop sessions; returns how many were removed.
+
+    Without ``expired_only`` every session goes (everybody is logged
+    out); with it only the sessions past their expiry are dropped.
+    Works on every backend: the JSON store loses its
+    ``<workspace>/.sessions.json`` rows, the SQLite backend its
+    ``sessions`` table rows.
+    """
+    repo = _repo(workspace, backend, postgres_dsn, db_file)
+    repo.open()
+    if expired_only:
+        return repo.purge_expired()
+    keys = list(repo.snapshot().keys())
+    for key in keys:
+        repo.drop(key)
+    repo.persist()
+    return len(keys)

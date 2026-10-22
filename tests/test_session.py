@@ -17,6 +17,7 @@ from storage.wiring import BACKEND_JSON, BACKEND_SQLITE
 from visual.web.backend.session import (
     COOKIE_NAME,
     SESSION_TTL_SECONDS,
+    clear_sessions,
     login,
     logout,
     read_session,
@@ -164,6 +165,114 @@ class TestSessionStoreBackends(unittest.TestCase):
                             tmp, _cookie("sid"), backend=name, db_file=db_file
                         )
                     )
+
+
+class TestBrokenSessionRow(unittest.TestCase):
+    """A damaged session row is no session, not a broken request."""
+
+    def test_a_row_without_a_payload_reads_as_no_session(self) -> None:
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "asalloc.db"
+            login(tmp, "sid", "alice", backend=BACKEND_SQLITE, db_file=db_file)
+            # A row whose payload is gone (a table from an older
+            # schema, or a damaged one): the browser must land on the
+            # login page, not on a traceback.
+            conn = sqlite3.connect(db_file)
+            try:
+                conn.execute("DROP TABLE sessions")
+                conn.execute(
+                    "CREATE TABLE sessions (key TEXT PRIMARY KEY, payload TEXT)"
+                )
+                conn.execute("INSERT INTO sessions (key, payload) VALUES ('sid', NULL)")
+                conn.commit()
+            finally:
+                conn.close()
+            self.assertIsNone(
+                read_session(tmp, _cookie("sid"), backend=BACKEND_SQLITE, db_file=db_file)
+            )
+            # ...and the damaged row is cleaned up, not left behind.
+            conn = sqlite3.connect(db_file)
+            try:
+                rows = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(rows, 0)
+
+    def test_a_damaged_row_does_not_kill_the_request(self) -> None:
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "asalloc.db"
+            login(tmp, "sid", "alice", backend=BACKEND_SQLITE, db_file=db_file)
+            conn = sqlite3.connect(db_file)
+            try:
+                conn.execute("UPDATE sessions SET payload = 'not json' WHERE key = 'sid'")
+                conn.commit()
+            finally:
+                conn.close()
+            self.assertIsNone(
+                read_session(tmp, _cookie("sid"), backend=BACKEND_SQLITE, db_file=db_file)
+            )
+
+
+class TestClearSessions(unittest.TestCase):
+    """``asalloc clear-sessions``: everybody logs in again."""
+
+    def test_it_clears_the_sessions_of_the_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "asalloc.db"
+            login(tmp, "one", "alice", backend=BACKEND_SQLITE, db_file=db_file)
+            login(tmp, "two", "bob", backend=BACKEND_SQLITE, db_file=db_file)
+            cleared = clear_sessions(
+                tmp, backend=BACKEND_SQLITE, db_file=db_file
+            )
+            self.assertEqual(cleared, 2)
+            self.assertIsNone(
+                read_session(tmp, _cookie("one"), backend=BACKEND_SQLITE, db_file=db_file)
+            )
+            self.assertIsNone(
+                read_session(tmp, _cookie("two"), backend=BACKEND_SQLITE, db_file=db_file)
+            )
+
+    def test_it_clears_the_sessions_of_the_json_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            login(tmp, "one", "alice")
+            login(tmp, "two", "bob")
+            self.assertEqual(clear_sessions(tmp), 2)
+            self.assertIsNone(read_session(tmp, _cookie("one")))
+
+    def test_only_the_expired_ones_can_be_cleared(self) -> None:
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "asalloc.db"
+            login(tmp, "live", "alice", backend=BACKEND_SQLITE, db_file=db_file)
+            login(tmp, "dead", "bob", backend=BACKEND_SQLITE, db_file=db_file)
+            conn = sqlite3.connect(db_file)
+            try:
+                conn.execute(
+                    "UPDATE sessions SET payload = ? WHERE key = 'dead'",
+                    (json.dumps({"user": "bob", "expires_at": time.time() - 1}),),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            cleared = clear_sessions(
+                tmp, backend=BACKEND_SQLITE, db_file=db_file, expired_only=True
+            )
+            self.assertEqual(cleared, 1)
+            # The live session is still there.
+            session = read_session(
+                tmp, _cookie("live"), backend=BACKEND_SQLITE, db_file=db_file
+            )
+            assert session is not None
+            self.assertEqual(session.user, "alice")
+
+    def test_clearing_nothing_is_fine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(clear_sessions(tmp), 0)
 
 
 class TestSessionSurvivesAnUpdate(unittest.TestCase):
