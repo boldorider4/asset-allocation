@@ -11,8 +11,9 @@ the generic layout::
     CREATE TABLE <table> (key TEXT PRIMARY KEY, payload TEXT NOT NULL)
 
 The payload is the row's JSON form (``to_dict()``), so a row written by
-one backend reads back identically in the other. Legacy ``(key, payload)``
-versions of the application tables are upgraded in place on first open.
+one backend reads back identically in the other. A legacy ``(key, payload)``
+application table is rejected unless the caller explicitly opts into the
+one-time migration (see ``migrate_legacy``).
 
 SQLite runs the database *inside* the process: no server, no idle
 load, nothing to supervise. WAL mode lets the web server read while
@@ -57,17 +58,20 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=StorageObject)
 
-#: Application tables with explicit columns (and their primary key first).
-NORMALIZED_COLUMNS: dict[str, tuple[str, ...]] = {
+#: Explicit-column tables with one primary key and a simple record mapping.
+#:
+#: ``user_positions`` is excluded because its key is composite and its rows
+#: need a bespoke mapping; ``isin_registry`` keeps its existing path.
+SINGLE_KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "user_portfolios": ("username", "portfolio_name"),
     "users": ("username", "password"),
     "cache": ("isin", "price", "countries", "sectors"),
     "sessions": ("session_id", "username", "incognito", "expires_at"),
 }
 
-#: The primary-key column of every normalized application table.
-NORMALIZED_KEYS: dict[str, str] = {
-    table: columns[0] for table, columns in NORMALIZED_COLUMNS.items()
+#: The primary-key column of every table in :data:`SINGLE_KEY_COLUMNS`.
+PRIMARY_KEY_COLUMNS: dict[str, str] = {
+    table: columns[0] for table, columns in SINGLE_KEY_COLUMNS.items()
 }
 
 #: How long a statement waits for a lock before giving up (seconds).
@@ -160,11 +164,17 @@ class SqliteStorage(Storage[T]):
     """Transactional SQLite store."""
 
     def __init__(
-        self, path: str | Path, table: str, object_factory: type[T]
+        self,
+        path: str | Path,
+        table: str,
+        object_factory: type[T],
+        *,
+        migrate_legacy: bool = False,
     ) -> None:
         self._path = Path(path).resolve()
         self._table = table
         self._factory: type[T] = object_factory
+        self._migrate_legacy = migrate_legacy
         self._conn: sqlite3.Connection | None = None
         # The lock that serializes this store's use of the file's
         # connection (one per file, shared by all its tables).
@@ -197,7 +207,12 @@ class SqliteStorage(Storage[T]):
             if self._conn is not None:
                 return self
             self._conn = _shared_connection(self._path)
-            self._ensure_table()
+            try:
+                self._ensure_table()
+            except BaseException:
+                self._conn = None
+                _release_connection(self._path)
+                raise
             return self
 
     def commit(self) -> None:
@@ -236,7 +251,7 @@ class SqliteStorage(Storage[T]):
                 rows = conn.execute(
                     f"SELECT {self._isin_columns()} FROM {self._quoted_table()}"
                 ).fetchall()
-            elif self._table in NORMALIZED_COLUMNS:
+            elif self._table in SINGLE_KEY_COLUMNS:
                 rows = conn.execute(
                     f"SELECT {self._normalized_columns()} "
                     f"FROM {self._quoted_table()}"
@@ -254,8 +269,8 @@ class SqliteStorage(Storage[T]):
                 out[key] = self._position_row_to_dict(row)
             elif self._table == "isin_registry":
                 out[str(row["isin"])] = self._isin_row_to_dict(row)
-            elif self._table in NORMALIZED_COLUMNS:
-                key = str(row[NORMALIZED_KEYS[self._table]])
+            elif self._table in SINGLE_KEY_COLUMNS:
+                key = str(row[PRIMARY_KEY_COLUMNS[self._table]])
                 try:
                     out[key] = self._normalized_row_to_dict(row)
                 except (TypeError, ValueError, KeyError) as exc:
@@ -385,7 +400,7 @@ class SqliteStorage(Storage[T]):
         }
 
     def _normalized_columns(self) -> str:
-        return ", ".join(NORMALIZED_COLUMNS[self._table])
+        return ", ".join(SINGLE_KEY_COLUMNS[self._table])
 
     def _normalized_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         """Convert one explicit-column row to the record's JSON payload."""
@@ -449,7 +464,7 @@ class SqliteStorage(Storage[T]):
         )
 
     def _normalized_insert_sql(self) -> str:
-        columns = NORMALIZED_COLUMNS[self._table]
+        columns = SINGLE_KEY_COLUMNS[self._table]
         placeholders = ", ".join("?" for _ in columns)
         return (
             f"INSERT INTO {self._quoted_table()} ({', '.join(columns)}) "
@@ -457,8 +472,8 @@ class SqliteStorage(Storage[T]):
         )
 
     def _normalized_upsert_sql(self) -> str:
-        columns = NORMALIZED_COLUMNS[self._table]
-        primary_key = NORMALIZED_KEYS[self._table]
+        columns = SINGLE_KEY_COLUMNS[self._table]
+        primary_key = PRIMARY_KEY_COLUMNS[self._table]
         placeholders = ", ".join("?" for _ in columns)
         updates = ", ".join(
             f"{column} = excluded.{column}"
@@ -480,7 +495,7 @@ class SqliteStorage(Storage[T]):
     def _upgrade_legacy_table(self) -> None:
         """Rebuild a legacy ``(key, payload)`` application table in place."""
         table = self._table
-        if table not in NORMALIZED_COLUMNS or "payload" not in self._table_columns():
+        if table not in SINGLE_KEY_COLUMNS or "payload" not in self._table_columns():
             return
         conn = self._require_conn()
         logger.info("upgrading legacy table %r to explicit columns", table)
@@ -596,8 +611,28 @@ class SqliteStorage(Storage[T]):
         with self._lock:
             conn = self._require_conn()
             self._create_table(conn)
-            self._upgrade_legacy_table()
+            self._ensure_supported_schema()
             conn.commit()
+
+    def _ensure_supported_schema(self) -> None:
+        """Reject legacy application tables unless migration is requested."""
+        if self._table not in SINGLE_KEY_COLUMNS:
+            return
+        actual = self._table_columns()
+        if "payload" in actual:
+            if self._migrate_legacy:
+                self._upgrade_legacy_table()
+                return
+            raise ValueError(
+                f"table {self._table!r} has a legacy (key, payload) schema; "
+                "run scripts/migrate_normalize_db.py before opening it"
+            )
+        missing = set(SINGLE_KEY_COLUMNS[self._table]) - actual
+        if missing:
+            raise ValueError(
+                f"table {self._table!r} is missing columns: "
+                f"{', '.join(sorted(missing))}"
+            )
 
     def _decode(self, key: str, payload: Any) -> T | None:
         """The row for a raw payload; None when the payload is unusable.
@@ -652,8 +687,8 @@ class SqliteStorage(Storage[T]):
                 return self._factory.from_dict(  # type: ignore[return-value]
                     str(key), self._isin_row_to_dict(row)
                 )
-            if self._table in NORMALIZED_COLUMNS:
-                primary_key = NORMALIZED_KEYS[self._table]
+            if self._table in SINGLE_KEY_COLUMNS:
+                primary_key = PRIMARY_KEY_COLUMNS[self._table]
                 row = conn.execute(
                     f"SELECT {self._normalized_columns()} "
                     f"FROM {self._quoted_table()} WHERE {primary_key} = ?",
@@ -700,11 +735,11 @@ class SqliteStorage(Storage[T]):
                     (key,),
                 )
                 return self.get(key) or obj
-            if self._table in NORMALIZED_COLUMNS:
+            if self._table in SINGLE_KEY_COLUMNS:
                 obj = self._factory.from_dict(  # type: ignore[assignment]
                     key, self._empty_raw()
                 )
-                columns = NORMALIZED_COLUMNS[self._table]
+                columns = SINGLE_KEY_COLUMNS[self._table]
                 placeholders = ", ".join("?" for _ in columns)
                 self._require_conn().execute(
                     f"INSERT OR IGNORE INTO {self._quoted_table()} "
@@ -762,7 +797,7 @@ class SqliteStorage(Storage[T]):
                     "bucket = excluded.bucket, product_ref = excluded.product_ref",
                     (obj.key, d.get("issuer"), d.get("bucket"), d.get("product_ref")),
                 )
-            elif self._table in NORMALIZED_COLUMNS:
+            elif self._table in SINGLE_KEY_COLUMNS:
                 self._require_conn().execute(
                     self._normalized_upsert_sql(), self._normalized_values(obj)
                 )
@@ -786,7 +821,7 @@ class SqliteStorage(Storage[T]):
                     raise KeyError(f"row {obj.key!r} already exists")
                 self.put(obj)
                 return
-            if self._table in NORMALIZED_COLUMNS:
+            if self._table in SINGLE_KEY_COLUMNS:
                 if obj.key in self:
                     raise KeyError(f"row {obj.key!r} already exists")
                 self.put(obj)
@@ -825,8 +860,8 @@ class SqliteStorage(Storage[T]):
                     f"DELETE FROM {self._quoted_table()} WHERE isin = ?", (str(key),)
                 )
                 return
-            if self._table in NORMALIZED_COLUMNS:
-                primary_key = NORMALIZED_KEYS[self._table]
+            if self._table in SINGLE_KEY_COLUMNS:
+                primary_key = PRIMARY_KEY_COLUMNS[self._table]
                 conn.execute(
                     f"DELETE FROM {self._quoted_table()} WHERE {primary_key} = ?",
                     (str(key),),
@@ -854,8 +889,8 @@ class SqliteStorage(Storage[T]):
                     (str(key),),
                 ).fetchone()
                 return row is not None
-            if self._table in NORMALIZED_COLUMNS:
-                primary_key = NORMALIZED_KEYS[self._table]
+            if self._table in SINGLE_KEY_COLUMNS:
+                primary_key = PRIMARY_KEY_COLUMNS[self._table]
                 row = conn.execute(
                     f"SELECT 1 FROM {self._quoted_table()} "
                     f"WHERE {primary_key} = ?",

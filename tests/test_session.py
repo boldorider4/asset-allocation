@@ -162,7 +162,7 @@ class TestSessionStoreBackends(unittest.TestCase):
 class TestBrokenSessionRow(unittest.TestCase):
     """A damaged session row is no session, not a broken request."""
 
-    def test_a_legacy_row_without_a_payload_reads_as_no_session(self) -> None:
+    def test_a_legacy_sessions_table_is_rejected(self) -> None:
         import sqlite3
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -178,17 +178,13 @@ class TestBrokenSessionRow(unittest.TestCase):
                 conn.commit()
             finally:
                 conn.close()
-            # The legacy table is upgraded on first use; the unusable row
-            # is dropped, so the browser lands on the login page.
-            self.assertIsNone(
-                read_session(tmp, _cookie("sid"), backend=BACKEND_SQLITE, db_file=db_file)
-            )
-            conn = sqlite3.connect(db_file)
-            try:
-                rows = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-            finally:
-                conn.close()
-            self.assertEqual(rows, 0)
+            with self.assertRaisesRegex(ValueError, "legacy"):
+                read_session(
+                    tmp,
+                    _cookie("sid"),
+                    backend=BACKEND_SQLITE,
+                    db_file=db_file,
+                )
 
     def test_a_damaged_row_does_not_kill_the_request(self) -> None:
         import sqlite3

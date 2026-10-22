@@ -185,7 +185,7 @@ class TestNormalizedApplicationTables(unittest.TestCase):
         store.remove("sid")
         self.assertNotIn("sid", store)
 
-    def test_legacy_payload_tables_are_upgraded(self) -> None:
+    def _write_legacy_payloads(self) -> None:
         payloads = {
             "user_portfolios": {"portfolio_name": "Alice Fund"},
             "users": {"password": "pw"},
@@ -210,19 +210,44 @@ class TestNormalizedApplicationTables(unittest.TestCase):
                     (f"{table}-key", json.dumps(payload)),
                 )
 
-        expected = {
+    @staticmethod
+    def _legacy_tables() -> dict[str, tuple[str, type]]:
+        return {
             "user_portfolios": ("user_portfolios-key", UserPortfolioRecord),
             "users": ("users-key", UserRecord),
             "cache": ("cache-key", CacheEntry),
             "sessions": ("sessions-key", SessionRecord),
         }
-        for table, (key, factory) in expected.items():
+
+    def test_legacy_payload_tables_are_rejected(self) -> None:
+        self._write_legacy_payloads()
+        for table, (_key, factory) in self._legacy_tables().items():
             with self.subTest(table=table):
                 store = _store(self.path, table, factory)
-                store.open()
-                self.assertIn(key, store)
+                try:
+                    with self.assertRaisesRegex(ValueError, "legacy"):
+                        store.open()
+                    self.assertFalse(store.connected)
+                    with self.assertRaisesRegex(ValueError, "legacy"):
+                        store.open()
+                finally:
+                    store.close()
+                self.assertIn("payload", _columns(self.path, table))
+
+    def test_legacy_payload_tables_can_be_upgraded_when_requested(self) -> None:
+        self._write_legacy_payloads()
+        for table, (key, factory) in self._legacy_tables().items():
+            with self.subTest(table=table):
+                store = SqliteStorage(
+                    self.path, table, factory, migrate_legacy=True
+                )
+                try:
+                    store.open()
+                    self.assertIn(key, store)
+                finally:
+                    store.close()
                 self.assertNotIn("payload", _columns(self.path, table))
-                store.close()
+
         cache = _store(self.path, "cache", CacheEntry)
         cache.open()
         try:

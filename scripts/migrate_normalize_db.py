@@ -175,7 +175,7 @@ def _tables_to_create() -> list[tuple[str, type]]:
 
 def _create_tables(db_file: Path) -> None:
     for table, factory in _tables_to_create():
-        backend = SqliteStorage(db_file, table, factory)
+        backend = SqliteStorage(db_file, table, factory, migrate_legacy=True)
         backend.open()
         backend.close()
 
