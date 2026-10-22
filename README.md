@@ -58,6 +58,8 @@ The store itself is backend-agnostic: the code above the storage layer only talk
 
 **SQLite.** The database runs *inside* the process: no server, no idle load, nothing to supervise — which is what a 24/7 Raspberry Pi wants. WAL mode lets the web server read while the update writes, and every table of a database shares one connection (two connections would deadlock against each other's write transaction). The tables are `user_assets`, `cache`, `isin_registry`, `users` and `sessions`; the payload of a row is its JSON form, so a row written by one backend reads back identically in the other.
 
+The shared connection is used by the server's request threads, so its use is **serialized with a lock**: Python's `sqlite3` keeps its prepared statements on the connection, and one thread resetting a statement another thread is stepping corrupts the row that thread reads (an empty row, or a `NULL` payload where a row was expected). The lock is what makes the one-connection-per-file design safe on a multi-threaded server.
+
 To move an existing installation over, import the JSON stores once and flip the backend:
 
 ```bash
@@ -187,13 +189,20 @@ Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you t
 
 **Login.** The login screen asks for a **User** (an account in `users.json` — see [Users file](#users-file)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
 
-The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
+The session lives in a cookie (`asalloc_sid`) and is persisted server-side (the `sessions` table of the database, or `.sessions.json` in the visualizer workspace with the json backend), so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
+
+**Clearing the sessions.** `asalloc clear-sessions` drops every session (everybody has to log in again); `--expired-only` drops only the ones past their expiry. The store is the one the backend names, so the command always clears the sessions the running server uses:
+
+```bash
+asalloc clear-sessions --config ~/.local/asalloc/config.ini
+asalloc clear-sessions --config ~/.local/asalloc/config.ini --expired-only
+```
 
 `http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 
 The charts are titled with the **portfolio name** from the store: the growth charts read "<Portfolio Name>: Geo Breakdown" and "<Portfolio Name>: Sector Breakdown" (the name is edited at the end of the constituents page; the next Dashboard click runs the lite update that re-titles them), while the whole-net-worth chart stays "Complete Portfolio".
 
-`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH --users-file PATH` to point the endpoint at other files (without the flags, the paths come from `config.ini`).
+`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH --users-file PATH` to point the endpoint at other files (without the flags, the paths come from `config.ini`); with the `sqlite` backend the one database holds them all and `asalloc serve --db-file PATH` points the endpoint at it.
 
 The last block of the page edits the **Portfolio Name** (the field at the end of the page). It persists via `POST /api/constituents/name` and stages an update like the other edits, so the next **Dashboard** click runs the lite update that puts the name into the charts.
 
