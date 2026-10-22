@@ -14,6 +14,17 @@ SQLite runs the database *inside* the process: no server, no idle
 load, nothing to supervise. WAL mode lets the web server read while
 the update writes, and ``busy_timeout`` makes a writer-writer
 collision wait a moment instead of failing.
+
+One connection per database file, shared by every table of that
+file, and **guarded by a lock**: the web server is multi-threaded
+and Python's ``sqlite3`` module does *not* make a shared connection
+thread-safe. Its prepared-statement cache lives on the connection,
+and the throwaway cursor ``Connection.execute`` returns resets that
+statement when it is garbage collected — so one thread could reset a
+statement another thread was stepping ("bad parameter or other API
+misuse", empty rows, a ``NULL`` payload where a row was expected).
+The lock serializes the connection's use, which is what makes the
+shared connection safe again.
 """
 
 from __future__ import annotations
@@ -21,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -36,13 +48,37 @@ T = TypeVar("T", bound=StorageObject)
 #: How long a statement waits for a lock before giving up (seconds).
 BUSY_TIMEOUT_SECONDS = 5.0
 
-#: The open connections, one per database file.
+#: The open connections, one per database file, with the lock that
+#: serializes their use.
 #:
 #: Every table of a database *shares* one connection: a second
 #: connection would deadlock against the first one's write transaction
 #: (SQLite's busy handler cannot break that deadlock, it only times
 #: out). One connection per process, one transaction, no surprises.
-_CONNECTIONS: dict[str, tuple[sqlite3.Connection, int]] = {}
+#:
+#: The lock is not optional: the web server is multi-threaded, and
+#: Python's sqlite3 module does not serialize a *shared* connection
+#: (see the module docstring). Every statement runs under it.
+_CONNECTIONS: dict[str, tuple[sqlite3.Connection, int, threading.RLock]] = {}
+
+
+#: The locks, one per database file (see :func:`_lock_for`).
+_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _lock_for(path: Path) -> threading.RLock:
+    """The lock that serializes the use of a database file.
+
+    One lock per file, so two different databases never wait for
+    each other. Re-entrant: a store method may call another one
+    (an upsert gets, merges and puts) without deadlocking itself.
+    """
+    key = str(path)
+    lock = _LOCKS.get(key)
+    if lock is None:
+        lock = threading.RLock()
+        _LOCKS[key] = lock
+    return lock
 
 
 def _shared_connection(path: Path) -> sqlite3.Connection:
@@ -50,8 +86,8 @@ def _shared_connection(path: Path) -> sqlite3.Connection:
     key = str(path)
     entry = _CONNECTIONS.get(key)
     if entry is not None:
-        conn, refs = entry
-        _CONNECTIONS[key] = (conn, refs + 1)
+        conn, refs, _lock = entry
+        _CONNECTIONS[key] = (conn, refs + 1, _lock)
         return conn
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(
@@ -67,8 +103,8 @@ def _shared_connection(path: Path) -> sqlite3.Connection:
         # in an explicit transaction (see __enter__).
         isolation_level=None,
         # The web server is multi-threaded and the connection is shared
-        # per process: sqlite3 serializes the statements on the
-        # connection itself, so this is safe.
+        # per process: the lock around every statement (not sqlite3)
+        # serializes the access, so this is safe.
         check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
@@ -77,7 +113,7 @@ def _shared_connection(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_SECONDS * 1000)}")
     conn.execute("PRAGMA synchronous=NORMAL")
-    _CONNECTIONS[key] = (conn, 1)
+    _CONNECTIONS[key] = (conn, 1, _lock_for(path))
     return conn
 
 
@@ -87,9 +123,9 @@ def _release_connection(path: Path) -> None:
     entry = _CONNECTIONS.get(key)
     if entry is None:
         return
-    conn, refs = entry
+    conn, refs, _lock = entry
     if refs > 1:
-        _CONNECTIONS[key] = (conn, refs - 1)
+        _CONNECTIONS[key] = (conn, refs - 1, _lock)
         return
     del _CONNECTIONS[key]
     conn.close()
@@ -105,6 +141,9 @@ class SqliteStorage(Storage[T]):
         self._table = table
         self._factory: type[T] = object_factory
         self._conn: sqlite3.Connection | None = None
+        # The lock that serializes this store's use of the file's
+        # connection (one per file, shared by all its tables).
+        self._lock = _lock_for(self._path)
 
     @property
     def path(self) -> Path:
@@ -129,21 +168,24 @@ class SqliteStorage(Storage[T]):
         connection is kept as it is, so the per-process holder can call
         it on every use.
         """
-        if self._conn is not None:
+        with self._lock:
+            if self._conn is not None:
+                return self
+            self._conn = _shared_connection(self._path)
+            self._ensure_table()
             return self
-        self._conn = _shared_connection(self._path)
-        self._ensure_table()
-        return self
 
     def commit(self) -> None:
         """Commit the open transaction (a no-op without one)."""
-        if self._conn is not None and self._conn.in_transaction:
-            self._conn.commit()
+        with self._lock:
+            if self._conn is not None and self._conn.in_transaction:
+                self._conn.commit()
 
     def rollback(self) -> None:
         """Roll the open transaction back (a no-op without one)."""
-        if self._conn is not None and self._conn.in_transaction:
-            self._conn.rollback()
+        with self._lock:
+            if self._conn is not None and self._conn.in_transaction:
+                self._conn.rollback()
 
     # -- backend-neutral lifecycle (Storage ABC) ------------------------
     def open(self) -> SqliteStorage[T]:
@@ -152,12 +194,37 @@ class SqliteStorage(Storage[T]):
         return self
 
     def snapshot(self) -> dict[str, Any]:
-        """Full-table scan as ``{key: payload}`` (bulk-only, not hot-path)."""
-        conn = self._require_conn()
-        rows = conn.execute(
-            f"SELECT key, payload FROM {self._quoted_table()}"
-        ).fetchall()
-        return {row["key"]: json.loads(row["payload"]) for row in rows}
+        """Full-table scan as ``{key: payload}`` (bulk-only, not hot-path).
+
+        A broken row (no payload, or a payload that is not JSON) is
+        reported and left out: the rest of the store is still usable.
+        """
+        with self._lock:
+            conn = self._require_conn()
+            rows = conn.execute(
+                f"SELECT key, payload FROM {self._quoted_table()}"
+            ).fetchall()
+        out: dict[str, Any] = {}
+        for row in rows:
+            payload = row["payload"]
+            if payload is None:
+                logger.warning(
+                    "row %r of table %r has no payload; leaving it out",
+                    row["key"],
+                    self._table,
+                )
+                continue
+            try:
+                out[row["key"]] = json.loads(payload)
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "row %r of table %r has an unreadable payload (%s); "
+                    "leaving it out",
+                    row["key"],
+                    self._table,
+                    exc,
+                )
+        return out
 
     def persist(self) -> None:
         """Make the staged writes durable.
@@ -175,22 +242,35 @@ class SqliteStorage(Storage[T]):
         other stores of the same database file: the last store to close
         it closes it for good.
         """
-        if self._conn is not None:
-            self._conn = None
-            _release_connection(self._path)
+        with self._lock:
+            if self._conn is not None:
+                self._conn = None
+                _release_connection(self._path)
 
     def __enter__(self) -> SqliteStorage[T]:
-        self.connect()
-        # The context manager is the one place that groups statements:
-        # an explicit transaction (autocommit is on, so it is ours).
-        self._require_conn().execute("BEGIN")
+        # The lock is held for the whole block: the explicit
+        # transaction below belongs to this thread alone, so no other
+        # thread's statement can slip into it (nor reset the
+        # connection's statement cache under it).
+        self._lock.acquire()
+        try:
+            self.connect()
+            # The context manager is the one place that groups statements:
+            # an explicit transaction (autocommit is on, so it is ours).
+            self._require_conn().execute("BEGIN")
+        except BaseException:
+            self._lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        conn = self._conn
-        if conn is not None and conn.in_transaction:
-            conn.execute("COMMIT" if exc_type is None else "ROLLBACK")
-        self.close()
+        try:
+            conn = self._conn
+            if conn is not None and conn.in_transaction:
+                conn.execute("COMMIT" if exc_type is None else "ROLLBACK")
+            self.close()
+        finally:
+            self._lock.release()
 
     # -- point access (Storage ABC) -------------------------------------
     def _require_conn(self) -> sqlite3.Connection:
@@ -213,77 +293,111 @@ class SqliteStorage(Storage[T]):
         return [] if self._factory is AssetBucket else {}
 
     def _ensure_table(self) -> None:
-        conn = self._require_conn()
-        conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-            "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._require_conn()
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
+                "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+            )
+            conn.commit()
+
+    def _decode(self, key: str, payload: Any) -> T | None:
+        """The row for a raw payload; None when the payload is unusable.
+
+        A row whose payload is NULL (or is not JSON) is broken: it is
+        reported and treated as *no row*, so one damaged row can never
+        take a request down with a decoding error.
+        """
+        if payload is None:
+            logger.warning(
+                "row %r of table %r has no payload; treating it as missing",
+                key,
+                self._table,
+            )
+            return None
+        try:
+            return self._factory.from_dict(str(key), json.loads(payload))
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.warning(
+                "row %r of table %r has an unreadable payload (%s); "
+                "treating it as missing",
+                key,
+                self._table,
+                exc,
+            )
+            return None
 
     def get(self, key: str) -> T | None:
         """``SELECT payload FROM <table> WHERE key = ?``."""
-        conn = self._require_conn()
-        row = conn.execute(
-            f"SELECT payload FROM {self._quoted_table()} WHERE key = ?",
-            (str(key),),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._factory.from_dict(str(key), json.loads(row["payload"]))
+        with self._lock:
+            conn = self._require_conn()
+            row = conn.execute(
+                f"SELECT payload FROM {self._quoted_table()} WHERE key = ?",
+                (str(key),),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._decode(str(key), row["payload"])
 
     def get_or_create(self, key: str) -> T:
         """``SELECT``, else ``INSERT`` an empty payload (ignoring a race)."""
-        key = str(key)
-        existing = self.get(key)
-        if existing is not None:
-            return existing
-        obj = self._factory.from_dict(key, self._empty_raw())  # type: ignore[assignment]
-        self._require_conn().execute(
-            f"INSERT OR IGNORE INTO {self._quoted_table()} (key, payload) "
-            "VALUES (?, ?)",
-            (key, json.dumps(obj.to_dict())),
-        )
-        # The row may have been written by someone else meanwhile: the
-        # stored one wins.
-        return self.get(key) or obj
+        with self._lock:
+            key = str(key)
+            existing = self.get(key)
+            if existing is not None:
+                return existing
+            obj = self._factory.from_dict(key, self._empty_raw())  # type: ignore[assignment]
+            self._require_conn().execute(
+                f"INSERT OR IGNORE INTO {self._quoted_table()} (key, payload) "
+                "VALUES (?, ?)",
+                (key, json.dumps(obj.to_dict())),
+            )
+            # The row may have been written by someone else meanwhile: the
+            # stored one wins.
+            return self.get(key) or obj
 
     def put(self, obj: T) -> None:
         """``INSERT INTO <table> (key, payload) VALUES (?, ?)``
         ``ON CONFLICT(key) DO UPDATE SET payload = excluded.payload``."""
-        self._require_conn().execute(
-            f"INSERT INTO {self._quoted_table()} (key, payload) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
-            (obj.key, json.dumps(obj.to_dict())),
-        )
+        with self._lock:
+            self._require_conn().execute(
+                f"INSERT INTO {self._quoted_table()} (key, payload) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET payload = excluded.payload",
+                (obj.key, json.dumps(obj.to_dict())),
+            )
 
     def add(self, obj: T) -> None:
         """Plain ``INSERT``; a duplicate surfaces as ``KeyError``."""
-        try:
-            self._require_conn().execute(
-                f"INSERT INTO {self._quoted_table()} (key, payload) "
-                "VALUES (?, ?)",
-                (obj.key, json.dumps(obj.to_dict())),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise KeyError(f"row {obj.key!r} already exists") from exc
+        with self._lock:
+            try:
+                self._require_conn().execute(
+                    f"INSERT INTO {self._quoted_table()} (key, payload) "
+                    "VALUES (?, ?)",
+                    (obj.key, json.dumps(obj.to_dict())),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise KeyError(f"row {obj.key!r} already exists") from exc
 
     def upsert(self, key: str, partial: dict[str, Any]) -> T:
         """Get-or-create ``key``, merge ``partial`` into it, return it."""
-        obj = self.get_or_create(key)
-        obj.merge(partial)
-        self.put(obj)
-        return obj
+        with self._lock:
+            obj = self.get_or_create(key)
+            obj.merge(partial)
+            self.put(obj)
+            return obj
 
     def remove(self, key: str) -> None:
         """``DELETE FROM <table> WHERE key = ?`` (no error when missing)."""
-        self._require_conn().execute(
-            f"DELETE FROM {self._quoted_table()} WHERE key = ?", (str(key),)
-        )
+        with self._lock:
+            self._require_conn().execute(
+                f"DELETE FROM {self._quoted_table()} WHERE key = ?", (str(key),)
+            )
 
     def __contains__(self, key: object) -> bool:
         """``SELECT 1 FROM <table> WHERE key = ?``."""
-        conn = self._require_conn()
-        row = conn.execute(
-            f"SELECT 1 FROM {self._quoted_table()} WHERE key = ?", (str(key),)
-        ).fetchone()
-        return row is not None
+        with self._lock:
+            conn = self._require_conn()
+            row = conn.execute(
+                f"SELECT 1 FROM {self._quoted_table()} WHERE key = ?", (str(key),)
+            ).fetchone()
+            return row is not None

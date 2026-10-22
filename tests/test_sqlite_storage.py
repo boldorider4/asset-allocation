@@ -267,6 +267,107 @@ class TestConcurrency(unittest.TestCase):
         self.assertIsNotNone(row)
 
 
+class TestConcurrentUse(unittest.TestCase):
+    """The shared connection must survive the server's request threads.
+
+    The web server is multi-threaded and every table of a database
+    shares one connection. Python's ``sqlite3`` does not make that safe
+    on its own: its prepared-statement cache lives on the connection,
+    and the throwaway cursor ``Connection.execute`` returns resets that
+    statement when it is garbage collected - so one thread could reset
+    a statement another thread was stepping ("bad parameter or other
+    API misuse", empty rows, a ``NULL`` payload where a row was
+    expected). The backend serializes the connection's use with a
+    lock; this is the test that says it does.
+    """
+
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        self.path = Path(self._holder.name) / "store.db"
+        store = _store(self.path)
+        store.open()
+        store.put(UserRecord("seed", {"password": "x"}))
+        store.close()
+
+    def test_readers_and_writers_do_not_corrupt_each_other(self) -> None:
+        import re
+        import threading
+
+        errors: list[BaseException] = []
+        stop = threading.Event()
+        # The row the readers watch: the writers replace it over and
+        # over, so a reader must always see one of those two shapes -
+        # never a torn or empty one.
+        valid = re.compile(r"^(x|p\d+)$")
+
+        def reader() -> None:
+            store = _store(self.path)
+            store.open()
+            try:
+                while not stop.is_set():
+                    try:
+                        record = store.get("seed")
+                        if record is None or not valid.match(record.password):
+                            errors.append(
+                                AssertionError(f"row read back wrong: {record!r}")
+                            )
+                    except BaseException as exc:  # noqa: BLE001 - reported below
+                        errors.append(exc)
+                        return
+            finally:
+                store.close()
+
+        def writer() -> None:
+            store = _store(self.path)
+            store.open()
+            try:
+                count = 0
+                while not stop.is_set():
+                    count += 1
+                    try:
+                        store.put(UserRecord("seed", {"password": f"p{count}"}))
+                    except BaseException as exc:  # noqa: BLE001 - reported below
+                        errors.append(exc)
+                        return
+            finally:
+                store.close()
+
+        threads = [threading.Thread(target=reader) for _ in range(4)]
+        threads += [threading.Thread(target=writer) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        stop.wait(3.0)
+        stop.set()
+        for thread in threads:
+            thread.join(5.0)
+        self.assertEqual(errors, [], f"{len(errors)} error(s) under concurrency")
+        # The store is still usable and holds whole rows.
+        store = _store(self.path)
+        store.open()
+        record = store.get("seed")
+        assert record is not None
+        self.assertTrue(valid.match(record.password))
+
+    def test_a_row_without_a_payload_reads_as_missing(self) -> None:
+        # A damaged row must not take a request down with a decoding
+        # error: it reads as *no row* and is reported.
+        conn = sqlite3.connect(self.path)
+        try:
+            conn.execute("DROP TABLE rows")
+            conn.execute("CREATE TABLE rows (key TEXT PRIMARY KEY, payload TEXT)")
+            conn.execute("INSERT INTO rows (key, payload) VALUES ('broken', NULL)")
+            conn.commit()
+        finally:
+            conn.close()
+        store = _store(self.path)
+        store.open()
+        self.assertIsNone(store.get("broken"))
+        # ...and the rest of the store still works.
+        store.put(UserRecord("alice", {"password": "x"}))
+        self.assertIsNotNone(store.get("alice"))
+
+
 class TestParityWithThePostgresStub(unittest.TestCase):
     """The SQLite backend mirrors the stub: same methods, same parameters."""
 
