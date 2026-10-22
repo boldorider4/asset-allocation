@@ -17,9 +17,8 @@ given; a new account gets an empty password when none is given.
 
 The backend decides how the account is written: ``json`` (the default)
 modifies the file, ``sqlite`` writes to the ``users`` table of the
-database given by ``--db-file``.
-
-The script touches **only** the file you pass.
+database given by ``--db-file``. With the SQLite backend the matching
+``user_portfolios`` row is created too when the user has none yet.
 """
 
 from __future__ import annotations

@@ -8,6 +8,7 @@ name.
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,27 @@ class TestAddUsersScript(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8")),
                 {"default": {"password": "keep"}, "alice": {"password": ""}},
             )
+
+    def test_sqlite_account_gets_a_portfolio_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "asalloc.db"
+            result = _run_script(
+                str(db_file),
+                "alice",
+                "--backend",
+                "sqlite",
+                "--db-file",
+                str(db_file),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            conn = sqlite3.connect(db_file)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT username FROM user_portfolios").fetchall(),
+                    [("alice",)],
+                )
+            finally:
+                conn.close()
 
     def test_existing_account_keeps_its_password(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +158,27 @@ class TestAddUserCommand(unittest.TestCase):
                 json.loads(users.read_text(encoding="utf-8")),
                 {"alice": {"password": ""}},
             )
+
+    def test_sqlite_account_gets_a_portfolio_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_file = root / "asalloc.db"
+            ini = root / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n"
+                f"db_file = {db_file}\n",
+                encoding="utf-8",
+            )
+            result = self._run("--config", str(ini), "--user", "alice")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            conn = sqlite3.connect(db_file)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT username FROM user_portfolios").fetchall(),
+                    [("alice",)],
+                )
+            finally:
+                conn.close()
 
     def test_the_users_file_comes_from_the_ini(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
