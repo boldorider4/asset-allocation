@@ -14,7 +14,11 @@ from cli.update import main as run_update
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.logger import attach_color_stderr_handler_for_module, configure_cli_logging
 import cli.stores
-from cli.stores import db_file, resolve_store_locations
+from cli.stores import (
+    StoreLocationMissing,
+    db_file,
+    resolve_store_locations,
+)
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -291,6 +295,48 @@ def cmd_serve(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_clear_sessions(args: argparse.Namespace) -> None:
+    """Drop the browser sessions (everybody logs in again).
+
+    The sessions live in the store the backend names: the ``sessions``
+    table of the database (sqlite) or the ``.sessions.json`` file in
+    the served directory (json). The location comes from the same
+    config.ini the server reads, so the command always clears the
+    sessions the running server uses.
+    """
+    from visual.web.backend.session import clear_sessions
+
+    ini_path = getattr(args, "config", None)
+    try:
+        cfg = load_server_config(ini_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        database = db_file(
+            cfg.backend,
+            ini_path=ini_path,
+            flag_value=getattr(args, "db_file", None),
+        )
+    except StoreLocationMissing as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    expired_only = bool(getattr(args, "expired_only", False))
+    try:
+        cleared = clear_sessions(
+            cfg.directory,
+            backend=cfg.backend,
+            postgres_dsn=cfg.postgres_dsn,
+            db_file=database,
+            expired_only=expired_only,
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"error: could not clear the sessions: {exc}", file=sys.stderr)
+        sys.exit(1)
+    what = "expired session(s)" if expired_only else "session(s)"
+    print(f"cleared {cleared} {what}")
+
+
 def _add_config_flag(
     parser: argparse.ArgumentParser, *, default=None, required: bool = False
 ) -> None:
@@ -542,6 +588,34 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_config_flag(stop_serve, default=argparse.SUPPRESS)
     stop_serve.set_defaults(func=cmd_stop)
+
+    clear_sessions_parser = subparsers.add_parser(
+        "clear-sessions",
+        help="Drop the browser sessions (everybody has to log in again).",
+        epilog=(
+            "The sessions live in the store the backend names: the "
+            "'sessions' table of the database (sqlite) or the "
+            ".sessions.json file in the served directory (json). The "
+            "location comes from config.ini, like the server's."
+        ),
+    )
+    _add_config_flag(clear_sessions_parser, default=argparse.SUPPRESS)
+    clear_sessions_parser.add_argument(
+        "--db-file",
+        type=Path,
+        dest="db_file",
+        default=None,
+        help=(
+            "SQLite database with every store (the sqlite backend - "
+            "default: from config.ini [server] db_file)."
+        ),
+    )
+    clear_sessions_parser.add_argument(
+        "--expired-only",
+        action="store_true",
+        help="Only drop the sessions that are past their expiry.",
+    )
+    clear_sessions_parser.set_defaults(func=cmd_clear_sessions)
 
     args = parser.parse_args(argv)
     configure_cli_logging(getattr(logging, getattr(args, "log_level", None) or "ERROR"))

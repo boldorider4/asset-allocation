@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import subprocess
 import tempfile
@@ -354,6 +355,98 @@ class TestConfigFlag(unittest.TestCase):
                 main(["--config", str(ini), "stop-serve"])
                 main(["stop-serve", "--config", str(ini)])
         self.assertEqual(seen, [Path(ini), Path(ini)])
+
+
+class TestClearSessions(unittest.TestCase):
+    """``asalloc clear-sessions``: everybody logs in again."""
+
+    def _ini_with_database(self, tmp: Path) -> Path:
+        ini = tmp / "config.ini"
+        ini.write_text(
+            "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n"
+            f"db_file = {tmp / 'asalloc.db'}\n",
+            encoding="utf-8",
+        )
+        return ini
+
+    def test_it_clears_the_sessions_of_the_database(self) -> None:
+        import sqlite3
+
+        from visual.web.backend.session import login, read_session
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ini = self._ini_with_database(root)
+            db_file = root / "asalloc.db"
+            login(root / "vis", "sid", "alice", backend="sqlite", db_file=db_file)
+            conn = sqlite3.connect(db_file)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 1
+                )
+            finally:
+                conn.close()
+            with patch("sys.stdout", new_callable=io.StringIO) as out:
+                main(["--config", str(ini), "clear-sessions"])
+            self.assertIn("cleared 1 session", out.getvalue())
+            conn = sqlite3.connect(db_file)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0
+                )
+            finally:
+                conn.close()
+            self.assertIsNone(
+                read_session(root / "vis", "asalloc_sid=sid", backend="sqlite", db_file=db_file)
+            )
+
+    def test_it_clears_the_sessions_of_the_json_store(self) -> None:
+        import json
+
+        from visual.web.backend.session import login, read_session, store_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ini = root / "config.ini"
+            (root / "vis").mkdir()
+            ini.write_text(
+                "[server]\nport = 8765\ndirectory = vis\nbackend = json\n",
+                encoding="utf-8",
+            )
+            login(root / "vis", "sid", "alice")
+            with patch("sys.stdout", new_callable=io.StringIO) as out:
+                main(["--config", str(ini), "clear-sessions"])
+            self.assertIn("cleared 1 session", out.getvalue())
+            self.assertEqual(
+                json.loads(store_path(root / "vis").read_text(encoding="utf-8")), {}
+            )
+            self.assertIsNone(read_session(root / "vis", "asalloc_sid=sid"))
+
+    def test_only_the_expired_ones_can_be_cleared(self) -> None:
+        from visual.web.backend.session import login
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ini = self._ini_with_database(root)
+            db_file = root / "asalloc.db"
+            login(root / "vis", "sid", "alice", backend="sqlite", db_file=db_file)
+            with patch("sys.stdout", new_callable=io.StringIO) as out:
+                main(["--config", str(ini), "clear-sessions", "--expired-only"])
+            # The live session is not expired: it stays.
+            self.assertIn("cleared 0 expired session", out.getvalue())
+
+    def test_a_database_without_a_location_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ini = root / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n",
+                encoding="utf-8",
+            )
+            with patch("sys.stderr", new_callable=io.StringIO) as err:
+                with self.assertRaises(SystemExit):
+                    main(["--config", str(ini), "clear-sessions"])
+            self.assertIn("db_file", err.getvalue())
 
 
 class TestServerConfig(unittest.TestCase):
