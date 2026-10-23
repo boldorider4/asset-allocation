@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -23,7 +24,9 @@ attach_color_stderr_handler_for_module(logger)
 _SSGA_PRODUCT_URL = (
     "https://www.ssga.com/de/en_gb/intermediary/etfs/{slug}"
 )
+_SSGA_SUGGEST_URL = "https://www.ssga.com/public-api/aem/v2/suggest"
 _SSGA_EXISTS_TIMEOUT_S = 10
+_SSGA_SUGGEST_TIMEOUT_S = 10
 _SSGA_FETCH_TIMEOUT_S = 30
 
 _GEO_INPUT_RE = re.compile(
@@ -58,12 +61,90 @@ _NON_COUNTRY_LABELS: frozenset[str] = frozenset(
 
 
 _SSGA_PRODUCT_EXISTS: dict[str, bool] = {}
+_SSGA_PRODUCT_REFS: dict[str, str | None] = {}
 
 
 def _ssga_product_url(slug: str | None) -> str | None:
     if not slug:
         return None
     return _SSGA_PRODUCT_URL.format(slug=slug)
+
+
+def _slug_from_product_link(link: object) -> str | None:
+    if not isinstance(link, str):
+        return None
+    parts = [part for part in urllib.parse.urlparse(link).path.split("/") if part]
+    try:
+        index = parts.index("etfs")
+    except ValueError:
+        return None
+    if index + 1 >= len(parts):
+        return None
+    return parts[index + 1] or None
+
+
+def _slug_from_suggest_payload(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    suggests = payload.get("suggests")
+    if isinstance(suggests, dict):
+        investments = suggests.get("Investments")
+        if isinstance(investments, list):
+            for item in investments:
+                if not isinstance(item, dict):
+                    continue
+                slug = _slug_from_product_link(item.get("link"))
+                if slug:
+                    return slug
+    results = payload.get("results")
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            slug = _slug_from_product_link(item.get("l"))
+            if slug:
+                return slug
+    return None
+
+
+def ssga_product_ref_for_isin(isin: str) -> str | None:
+    """Infer the SSGA product slug for ``isin`` via the public search API."""
+    if not isin:
+        return None
+    if isin in _SSGA_PRODUCT_REFS:
+        return _SSGA_PRODUCT_REFS[isin]
+    query = urllib.parse.urlencode(
+        {
+            "q": isin,
+            "geoloc": "de:en_gb",
+            "roleproduct": "intermediary",
+            "site": "ssga",
+        }
+    )
+    req = urllib.request.Request(
+        f"{_SSGA_SUGGEST_URL}?{query}",
+        headers={
+            **_ssga_html_headers(),
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    slug: str | None = None
+    try:
+        with urllib.request.urlopen(req, timeout=_SSGA_SUGGEST_TIMEOUT_S) as resp:
+            if 200 <= getattr(resp, "status", 200) < 400:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+                slug = _slug_from_suggest_payload(payload)
+    except urllib.error.HTTPError as e:
+        logger.info("SSGA product search for %s returned HTTP %s", isin, e.code)
+    except urllib.error.URLError as e:
+        logger.warning("SSGA product search failed for %s (%s)", isin, e)
+    except OSError as e:
+        logger.warning("SSGA product search connection failed for %s (%s)", isin, e)
+    except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
+        logger.warning("SSGA product search parse failed for %s (%s)", isin, e)
+    _SSGA_PRODUCT_REFS[isin] = slug
+    return slug
 
 
 def _ssga_html_headers() -> dict[str, str]:

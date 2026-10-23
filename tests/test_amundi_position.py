@@ -346,6 +346,13 @@ class TestAmundiFactoryRouting(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        for target in (
+            "position.factory.ishares_product_ref_for_isin",
+            "position.factory.ssga_product_ref_for_isin",
+        ):
+            resolver = patch(target, return_value=None)
+            resolver.start()
+            self.addCleanup(resolver.stop)
 
     def _factory(self, **kwargs):
         defaults = {
@@ -410,13 +417,12 @@ class TestAmundiFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, AmundiPosition)
 
-    def test_without_fetch_geosplit_skips_amundi_probe(self) -> None:
+    def test_without_fetch_geosplit_still_uses_amundi(self) -> None:
         self.ctx.config.fetch_geosplit = False
-        with patch("position.factory.amundi_product_url_exists") as exists:
-            pos = self._factory()
-        exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, AmundiPosition)
+        with patch("position.factory.amundi_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory()
+        self.assertIsInstance(pos, AmundiPosition)
 
 
 if __name__ == "__main__":

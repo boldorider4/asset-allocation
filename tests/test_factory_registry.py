@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Two-pass issuer dispatch in ``position.factory``.
+"""Issuer dispatch in ``position.factory``.
 
-Pass 1 consults the ISIN registry and constructs a DB hit with no URL
-probes. Pass 2 (unknown issuer, or a build that yielded no usable data)
-runs the vendor probes once via the helper and registers the outcome.
-Anything unresolved falls back to the generic constructors.
+A registry hit with a specialized issuer constructs without URL probes.
+An unknown issuer runs the vendor probes once and registers the outcome,
+including any inferred product ref. Anything unresolved falls back to
+the generic constructors.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from tests.store_helpers import read_isin  # noqa: E402
 from position.blackrock_position import BlackRockPosition  # noqa: E402
 from position.factory import factory  # noqa: E402
 from position.justetf_position import JustETFPosition  # noqa: E402
+from position.state_street_position import StateStreetPosition  # noqa: E402
 from position.xtrackers_position import XtrackersPosition  # noqa: E402
 from position.yfinance_position import YFinancePosition  # noqa: E402
 
@@ -77,6 +78,32 @@ class TestRegistryDbHit(unittest.TestCase):
         for mock in (dws, ishares, amundi, ssga, ubs, invesco, landg):
             mock.assert_not_called()
 
+    def test_known_issuer_uses_specialized_without_split_fetch(self) -> None:
+        ctx = _ctx()
+        ctx.config.fetch_geosplit = False
+        ctx.isin_registry.register_isin(
+            "IE00BTJRMP35", issuer="dws", bucket="equity_portfolio"
+        )
+        with (
+            patch(
+                "position.factory._probe_issuer_for_isin",
+                side_effect=AssertionError("probe must not run on a DB hit"),
+            ),
+            patch.object(
+                JustETFPosition,
+                "_fetch_countries_with_retries",
+                side_effect=AssertionError("must not scrape countries"),
+            ),
+        ):
+            pos = factory(
+                isin="IE00BTJRMP35",
+                name="Xtrackers",
+                shares=1,
+                price=10.0,
+                ctx=ctx,
+            )
+        self.assertIsInstance(pos, XtrackersPosition)
+
     def test_falsy_isin_skips_registry(self) -> None:
         ctx = _ctx()
         before = ctx.isin_registry.snapshot()
@@ -114,12 +141,46 @@ class TestProbePhase(unittest.TestCase):
             patch("position.factory.ubs_product_url_exists", return_value=False),
             patch("position.factory.invesco_product_url_exists", return_value=False),
             patch("position.factory.landg_product_url_exists", return_value=False),
+            patch("position.factory.ishares_product_ref_for_isin", return_value="264659"),
             patch("position.factory.ishares_product_url_exists", return_value=True),
             _no_fetch(),
         ):
             pos = factory(isin="XX000PROBE1", name="iShares Whatever", shares=1, price=10.0, ctx=ctx)
         self.assertIsInstance(pos, BlackRockPosition)
         self.assertEqual(ctx.isin_registry.get_issuer_for_isin("XX000PROBE1"), "ishares")
+        self.assertEqual(
+            ctx.isin_registry.get_product_ref_for_isin("XX000PROBE1"), "264659"
+        )
+
+    def test_ssga_probe_registers_product_ref(self) -> None:
+        ctx = _ctx()
+        with (
+            patch("position.factory.dws_product_url_exists", return_value=False),
+            patch("position.factory.ishares_product_ref_for_isin", return_value=None),
+            patch("position.factory.amundi_product_url_exists", return_value=False),
+            patch(
+                "position.factory.ssga_product_ref_for_isin",
+                return_value="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+            ),
+            patch("position.factory.ssga_product_url_exists", return_value=True),
+            patch("position.factory.ubs_product_url_exists", return_value=False),
+            patch("position.factory.invesco_product_url_exists", return_value=False),
+            patch("position.factory.landg_product_url_exists", return_value=False),
+            _no_fetch(),
+        ):
+            pos = factory(
+                isin="XX000PROBE2",
+                name="SPDR Whatever",
+                shares=1,
+                price=10.0,
+                ctx=ctx,
+            )
+        self.assertIsInstance(pos, StateStreetPosition)
+        self.assertEqual(ctx.isin_registry.get_issuer_for_isin("XX000PROBE2"), "ssga")
+        self.assertEqual(
+            ctx.isin_registry.get_product_ref_for_isin("XX000PROBE2"),
+            "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        )
 
     def test_empty_build_falls_back_without_db_downgrade(self) -> None:
         # A DB-hit build that yields no data (both flags on) falls back
@@ -131,7 +192,10 @@ class TestProbePhase(unittest.TestCase):
             "IE00BKM4GZ66", issuer="ishares", bucket="equity_portfolio"
         )
         with (
-            patch("position.factory._probe_issuer_for_isin", return_value=None),
+            patch(
+                "position.factory._probe_issuer_for_isin",
+                side_effect=AssertionError("probe must not run on a DB hit"),
+            ),
             patch.object(JustETFPosition, "_fetch_countries_with_retries", return_value=[]),
             patch.object(JustETFPosition, "_fetch_sectors_with_retries", return_value=[]),
         ):
@@ -154,7 +218,10 @@ class TestProbePhase(unittest.TestCase):
             "IE00BKM4GZ66", issuer="ishares", bucket="equity_portfolio"
         )
         with (
-            patch("position.factory._probe_issuer_for_isin", return_value=None),
+            patch(
+                "position.factory._probe_issuer_for_isin",
+                side_effect=AssertionError("probe must not run on a DB hit"),
+            ),
             patch.dict(factory_mod._ISSUER_POSITION, {"ishares": Boom}),
             patch.object(JustETFPosition, "_fetch_countries_with_retries", return_value=[]),
         ):
@@ -173,6 +240,7 @@ class TestRegistryFlush(unittest.TestCase):
             patch("position.factory.ubs_product_url_exists", return_value=False),
             patch("position.factory.invesco_product_url_exists", return_value=False),
             patch("position.factory.landg_product_url_exists", return_value=False),
+            patch("position.factory.ishares_product_ref_for_isin", return_value="264659"),
             patch("position.factory.ishares_product_url_exists", return_value=True),
             _no_fetch(),
         ):

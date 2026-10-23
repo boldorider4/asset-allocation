@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from cli.logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
@@ -22,7 +24,13 @@ _ISHARES_HOLDINGS_URL = (
     "https://www.ishares.com/ch/individual/en/products/{product_id}"
     "/fund/1495092304805.ajax?fileType=csv"
 )
+_ISHARES_SCREENER_URL = (
+    "https://www.ishares.com/ch/individual/en/product-screener/"
+    "product-screener-v3.jsn?dcrPath=/templatedata/config/product-screener-v3/"
+    "data/en/ch/product-screener/product-screener&siteEntryPassthrough=true"
+)
 _ISHARES_EXISTS_TIMEOUT_S = 10
+_ISHARES_SCREENER_TIMEOUT_S = 30
 _ISHARES_FETCH_TIMEOUT_S = 30
 
 
@@ -36,6 +44,7 @@ _ISHARES_COUNTRY_ALIASES: dict[str, str] = {
 }
 
 _ISHARES_PRODUCT_EXISTS: dict[str, bool] = {}
+_ISHARES_PRODUCT_REFS: dict[str, str] | None = None
 
 
 def _ishares_holdings_url(product_id: str | None) -> str | None:
@@ -48,6 +57,101 @@ def _content_type_is_csv(content_type: str | None) -> bool:
     if not content_type:
         return False
     return "csv" in content_type.lower()
+
+
+def _product_id_from_page_url(url: object) -> str | None:
+    if not isinstance(url, str):
+        return None
+    parts = [part for part in urllib.parse.urlparse(url).path.split("/") if part]
+    try:
+        index = parts.index("products")
+    except ValueError:
+        return None
+    if index + 1 >= len(parts):
+        return None
+    return parts[index + 1] or None
+
+
+def _product_refs_from_screener(payload: object) -> dict[str, str] | None:
+    """Map ISIN -> iShares product id from the CH product-screener payload."""
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    table = data.get("tableData")
+    if not isinstance(table, dict):
+        return None
+    columns = table.get("columns")
+    rows = table.get("data")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return None
+    names = [
+        column.get("name") if isinstance(column, dict) else None
+        for column in columns
+    ]
+    try:
+        isin_i = names.index("isin")
+        product_i = names.index("portfolioId")
+        page_i = names.index("productPageUrl")
+    except ValueError:
+        return None
+    refs: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        raw_isin = row[isin_i] if isin_i < len(row) else None
+        if not isinstance(raw_isin, str) or not raw_isin.strip():
+            continue
+        raw_product = row[product_i] if product_i < len(row) else None
+        product_id: str | None = None
+        if isinstance(raw_product, (int, str)):
+            text = str(raw_product).strip()
+            product_id = text or None
+        if product_id is None:
+            page_url = row[page_i] if page_i < len(row) else None
+            product_id = _product_id_from_page_url(page_url)
+        if product_id is not None:
+            refs[raw_isin.strip()] = product_id
+    return refs
+
+
+def ishares_product_ref_for_isin(isin: str) -> str | None:
+    """Infer the iShares product id for ``isin`` from the product screener."""
+    global _ISHARES_PRODUCT_REFS
+    if not isin:
+        return None
+    if _ISHARES_PRODUCT_REFS is not None:
+        return _ISHARES_PRODUCT_REFS.get(isin)
+    req = urllib.request.Request(
+        _ISHARES_SCREENER_URL,
+        headers=JustETFPosition._HEADERS,
+        method="GET",
+    )
+    payload: Any = None
+    try:
+        with urllib.request.urlopen(req, timeout=_ISHARES_SCREENER_TIMEOUT_S) as resp:
+            if not 200 <= getattr(resp, "status", 200) < 400:
+                return None
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        logger.info("iShares product screener returned HTTP %s", e.code)
+        return None
+    except urllib.error.URLError as e:
+        logger.warning("iShares product screener lookup failed for %s (%s)", isin, e)
+        return None
+    except OSError as e:
+        logger.warning("iShares product screener connection failed for %s (%s)", isin, e)
+        return None
+    except (json.JSONDecodeError, TypeError, ValueError, UnicodeError) as e:
+        logger.warning("iShares product screener parse failed for %s (%s)", isin, e)
+        return None
+    refs = _product_refs_from_screener(payload)
+    if refs is None:
+        logger.warning("iShares product screener payload has no product refs")
+        return None
+    _ISHARES_PRODUCT_REFS = refs
+    return refs.get(isin)
 
 
 def ishares_product_url_exists(isin: str, product_id: str | None = None) -> bool:

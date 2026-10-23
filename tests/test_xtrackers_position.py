@@ -249,6 +249,13 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        for target in (
+            "position.factory.ishares_product_ref_for_isin",
+            "position.factory.ssga_product_ref_for_isin",
+        ):
+            resolver = patch(target, return_value=None)
+            resolver.start()
+            self.addCleanup(resolver.stop)
 
     def _factory(self, **kwargs):
         defaults = {
@@ -327,13 +334,12 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, AmundiPosition)
         self.assertNotIsInstance(pos, XtrackersPosition)
 
-    def test_without_fetch_geosplit_skips_dws_probe(self) -> None:
+    def test_without_fetch_geosplit_still_uses_xtrackers(self) -> None:
         self.ctx.config.fetch_geosplit = False
-        with patch("position.factory.dws_product_url_exists") as exists:
-            pos = self._factory()
-        exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, XtrackersPosition)
+        with patch("position.factory.dws_product_url_exists", return_value=True):
+            with self._no_country_scrape():
+                pos = self._factory()
+        self.assertIsInstance(pos, XtrackersPosition)
 
 
 if __name__ == "__main__":

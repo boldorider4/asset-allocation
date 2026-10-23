@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from utils import save_position_in_cache
 from cli.common import (
@@ -20,6 +20,7 @@ from cli.common import (
 from position.amundi_position import AmundiPosition, amundi_product_url_exists
 from position.blackrock_position import (
     BlackRockPosition,
+    ishares_product_ref_for_isin,
     ishares_product_url_exists,
 )
 from position.invesco_position import InvescoPosition, invesco_product_url_exists
@@ -27,6 +28,7 @@ from position.justetf_position import JustETFPosition
 from position.l_and_g_position import LAndGPosition, landg_product_url_exists
 from position.state_street_position import (
     StateStreetPosition,
+    ssga_product_ref_for_isin,
     ssga_product_url_exists,
 )
 from position.ubs_position import UBSPosition, ubs_product_url_exists
@@ -112,29 +114,37 @@ def _validate_data_for_flags(fetch_geosplit: bool, fetch_sectorsplit: bool) -> b
     return bool(fetch_geosplit and fetch_sectorsplit)
 
 
-def _probe_issuer_for_isin(isin: str, name: str | None, registry) -> str | None:  # type: ignore[no-untyped-def]
-    """Infer the issuer slug for an unregistered ISIN via vendor probes.
+class _IssuerProbe(NamedTuple):
+    issuer: str
+    product_ref: str | None = None
+
+
+def _probe_issuer_for_isin(isin: str, name: str | None, registry) -> _IssuerProbe | None:  # type: ignore[no-untyped-def]
+    """Infer the issuer slug (and product ref where needed) for an ISIN.
 
     Ordered like the historical dispatch chain. First-run-only cost:
     hits are registered, so later runs take the DB path and skip probes
-    entirely. ``ishares``/``ssga`` resolve without network (their URLs
-    need a registry product ref, so unknown ISINs short-circuit). A
-    UBS-ish name alone also suffices (HA4 fallback inside the class).
+    entirely. ``ishares``/``ssga`` URLs need a product ref, so their
+    product search is consulted when the registry has none. A UBS-ish
+    name alone also suffices (HA4 fallback inside the class).
     """
     if dws_product_url_exists(isin):
-        return "dws"
-    if ishares_product_url_exists(isin, registry.get_product_ref_for_isin(isin)):
-        return "ishares"
+        return _IssuerProbe("dws")
+    registry_ref = registry.get_product_ref_for_isin(isin)
+    ishares_ref = registry_ref or ishares_product_ref_for_isin(isin)
+    if ishares_ref and ishares_product_url_exists(isin, ishares_ref):
+        return _IssuerProbe("ishares", ishares_ref)
     if amundi_product_url_exists(isin):
-        return "amundi"
-    if ssga_product_url_exists(isin, registry.get_product_ref_for_isin(isin)):
-        return "ssga"
+        return _IssuerProbe("amundi")
+    ssga_ref = registry_ref or ssga_product_ref_for_isin(isin)
+    if ssga_ref and ssga_product_url_exists(isin, ssga_ref):
+        return _IssuerProbe("ssga", ssga_ref)
     if ubs_product_url_exists(isin) or _name_looks_like_ubs(name):
-        return "ubs"
+        return _IssuerProbe("ubs")
     if invesco_product_url_exists(isin):
-        return "invesco"
+        return _IssuerProbe("invesco")
     if landg_product_url_exists(isin):
-        return "landg"
+        return _IssuerProbe("landg")
     return None
 
 
@@ -208,15 +218,13 @@ def factory(
     }
     position: JustETFPosition | YFinancePosition
 
-    # Issuer-driven dispatch in two passes. Pass 1 consults the ISIN
-    # registry and constructs a DB hit directly — no URL probes. Pass 2
-    # (unknown issuer, or a DB-hit build that yielded no data) runs the
-    # vendor probes once via the helper and registers the outcome.
-    # Anything unresolved falls back to the generic JustETF/YFinance
-    # constructors below. DWS reachability GETs and holdings scrapes are
-    # only needed when refreshing splits; cached splits use generic
-    # positions like any other ETF.
-    fetch_splits = fetch_geosplit or fetch_sectorsplit
+    # Issuer-driven dispatch. A registry hit with a specialized issuer
+    # constructs directly, without URL probes. An unknown issuer runs the
+    # vendor probes once and records both the issuer and any inferred
+    # product ref. Generic issuers (and failed specialized builds) fall
+    # back to JustETF/YFinance. Specialized classes are chosen regardless
+    # of split-fetch flags: with splits disabled they only use cached
+    # rows, and price lookup stays on the parent JustETF path.
     registry = ctx.isin_registry
     issuer = registry.get_issuer_for_isin(isin) if isin else None
     if isin and isin not in registry:
@@ -252,29 +260,31 @@ def factory(
         return candidate
 
     validate_data = _validate_data_for_flags(fetch_geosplit, fetch_sectorsplit)
-    position_cls: type[JustETFPosition] | None = None
-    if fetch_splits and issuer in _ISSUER_POSITION:
+    position: JustETFPosition | YFinancePosition | None = None
+    if issuer in _ISSUER_POSITION:
+        position_cls = _ISSUER_POSITION[issuer]
         logger.info(
             "Factory: using %s for %s (registry)",
-            _ISSUER_POSITION[issuer].__name__,
+            position_cls.__name__,
             isin,
         )
-        built = _build_specialized(_ISSUER_POSITION[issuer], validate_data=validate_data)
-        position_cls = _ISSUER_POSITION[issuer] if built is not None else None
-        position = built  # type: ignore[assignment]
-    if position_cls is None and fetch_splits and isin and issuer not in ("justetf", "yfinance"):
+        position = _build_specialized(position_cls, validate_data=validate_data)
+    elif isin and issuer is None:
         inferred = _probe_issuer_for_isin(isin, name, registry)
         if inferred is not None:
+            position_cls = _ISSUER_POSITION[inferred.issuer]
             logger.info(
                 "Factory: using %s for %s (probed)",
-                _ISSUER_POSITION[inferred].__name__,
+                position_cls.__name__,
                 isin,
             )
-            registry.set_issuer_for_isin(isin, inferred)
-            built = _build_specialized(_ISSUER_POSITION[inferred], validate_data=validate_data)
-            position_cls = _ISSUER_POSITION[inferred] if built is not None else None
-            position = built  # type: ignore[assignment]
-    if position_cls is None:
+            registry.set_issuer_for_isin(isin, inferred.issuer)
+            if inferred.product_ref is not None:
+                registry.register_isin(
+                    isin, product_ref=inferred.product_ref
+                )
+            position = _build_specialized(position_cls, validate_data=validate_data)
+    if position is None:
         if position_source == YFINANCE:
             position = YFinancePosition(isin, **ctor_kwargs)
             if isin:

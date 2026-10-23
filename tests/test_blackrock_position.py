@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import urllib.error
@@ -11,10 +12,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from position.amundi_position import AmundiPosition
+import position.blackrock_position as blackrock_mod
 from position.blackrock_position import (
     BlackRockPosition,
     _ISHARES_PRODUCT_EXISTS,
     _ishares_holdings_url,
+    _product_refs_from_screener,
+    ishares_product_ref_for_isin,
     ishares_product_url_exists,
 )
 from position.factory import factory
@@ -46,6 +50,31 @@ def _csv_response(body: str = _HOLDINGS_CSV) -> MagicMock:
     resp.__enter__.return_value = resp
     resp.__exit__.return_value = False
     return resp
+
+
+def _json_response(payload: object, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status = status
+    resp.headers = {"Content-Type": "application/json"}
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+def _screener_payload(*rows: list[object]) -> dict[str, object]:
+    return {
+        "data": {
+            "tableData": {
+                "columns": [
+                    {"name": "isin"},
+                    {"name": "portfolioId"},
+                    {"name": "productPageUrl"},
+                ],
+                "data": list(rows),
+            }
+        }
+    }
 
 
 class TestHoldingsCsvAggregation(unittest.TestCase):
@@ -202,6 +231,52 @@ class TestIsharesProductUrl(unittest.TestCase):
         opener.assert_called_once()
 
 
+class TestIsharesProductRef(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_refs = blackrock_mod._ISHARES_PRODUCT_REFS
+        blackrock_mod._ISHARES_PRODUCT_REFS = None
+        self.addCleanup(
+            setattr, blackrock_mod, "_ISHARES_PRODUCT_REFS", self._orig_refs
+        )
+
+    def test_maps_isin_to_product_id(self) -> None:
+        payload = _screener_payload(
+            ["IE00BKM4GZ66", 264659, "/ch/individual/en/products/264659/fund"]
+        )
+        self.assertEqual(
+            _product_refs_from_screener(payload), {"IE00BKM4GZ66": "264659"}
+        )
+
+    def test_falls_back_to_product_page_url(self) -> None:
+        payload = _screener_payload(
+            ["IE00BKM4GZ66", None, "/ch/individual/en/products/264659/fund"]
+        )
+        self.assertEqual(
+            _product_refs_from_screener(payload), {"IE00BKM4GZ66": "264659"}
+        )
+
+    def test_resolves_from_screener_and_memoizes_map(self) -> None:
+        payload = _screener_payload(
+            ["IE00BKM4GZ66", 264659, "/ch/individual/en/products/264659/fund"]
+        )
+        with patch("urllib.request.urlopen", return_value=_json_response(payload)) as opener:
+            self.assertEqual(ishares_product_ref_for_isin(_ISIN), "264659")
+            self.assertEqual(ishares_product_ref_for_isin("IE00MISSING00"), None)
+        opener.assert_called_once()
+
+    def test_lookup_failure_returns_none(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("timeout"),
+        ):
+            self.assertIsNone(ishares_product_ref_for_isin(_ISIN))
+
+    def test_empty_isin_skips_network(self) -> None:
+        with patch("urllib.request.urlopen") as opener:
+            self.assertIsNone(ishares_product_ref_for_isin(""))
+        opener.assert_not_called()
+
+
 class TestBlackRockCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -255,6 +330,13 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        for target in (
+            "position.factory.ishares_product_ref_for_isin",
+            "position.factory.ssga_product_ref_for_isin",
+        ):
+            resolver = patch(target, return_value=None)
+            resolver.start()
+            self.addCleanup(resolver.stop)
 
     def _factory(self, **kwargs):
         defaults = {
@@ -273,15 +355,17 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         )
 
     def test_allowlisted_isin_and_existing_url_use_blackrock(self) -> None:
-        with patch("position.factory.ishares_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory()
+        with patch("position.factory.ishares_product_ref_for_isin", return_value="264659"):
+            with patch("position.factory.ishares_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory()
         self.assertIsInstance(pos, BlackRockPosition)
 
     def test_allowlisted_isin_ignores_name(self) -> None:
-        with patch("position.factory.ishares_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory(name="Core MSCI EM IMI UCITS ETF")
+        with patch("position.factory.ishares_product_ref_for_isin", return_value="264659"):
+            with patch("position.factory.ishares_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(name="Core MSCI EM IMI UCITS ETF")
         self.assertIsInstance(pos, BlackRockPosition)
 
     def test_ishares_in_name_alone_stays_justetf(self) -> None:
@@ -323,13 +407,13 @@ class TestBlackRockFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, AmundiPosition)
         self.assertNotIsInstance(pos, BlackRockPosition)
 
-    def test_without_fetch_geosplit_skips_ishares_probe(self) -> None:
+    def test_without_fetch_geosplit_still_uses_blackrock(self) -> None:
         self.ctx.config.fetch_geosplit = False
-        with patch("position.factory.ishares_product_url_exists") as exists:
-            pos = self._factory()
-        exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, BlackRockPosition)
+        with patch("position.factory.ishares_product_ref_for_isin", return_value="264659"):
+            with patch("position.factory.ishares_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory()
+        self.assertIsInstance(pos, BlackRockPosition)
 
 
 if __name__ == "__main__":

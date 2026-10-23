@@ -18,6 +18,9 @@ from position.justetf_position import JustETFPosition
 from position.state_street_position import (
     StateStreetPosition,
     _SSGA_PRODUCT_EXISTS,
+    _SSGA_PRODUCT_REFS,
+    _slug_from_suggest_payload,
+    ssga_product_ref_for_isin,
     ssga_product_url_exists,
 )
 from cli.context import AppConfig, RuntimeContext, ServerConfig
@@ -97,6 +100,16 @@ def _html_response(body: bytes, status: int = 200) -> MagicMock:
     resp.status = status
     resp.headers = {"Content-Type": "text/html;charset=utf-8"}
     resp.read.return_value = body
+    resp.__enter__.return_value = resp
+    resp.__exit__.return_value = False
+    return resp
+
+
+def _json_response(payload: object, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status = status
+    resp.headers = {"Content-Type": "application/json"}
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
     resp.__enter__.return_value = resp
     resp.__exit__.return_value = False
     return resp
@@ -227,6 +240,71 @@ class TestSsgaProductExists(unittest.TestCase):
         self.assertEqual(opener.call_count, 1)
 
 
+class TestSsgaProductRef(unittest.TestCase):
+    _SLUG = "state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy"
+
+    def setUp(self) -> None:
+        _SSGA_PRODUCT_REFS.clear()
+
+    def tearDown(self) -> None:
+        _SSGA_PRODUCT_REFS.clear()
+
+    def test_slug_from_investment_suggestion(self) -> None:
+        payload = {
+            "suggests": {
+                "Investments": [
+                    {
+                        "link": (
+                            "https://www.ssga.com/de/en_gb/intermediary/etfs/"
+                            f"{self._SLUG}"
+                        )
+                    }
+                ]
+            }
+        }
+        self.assertEqual(_slug_from_suggest_payload(payload), self._SLUG)
+
+    def test_slug_from_generic_results(self) -> None:
+        payload = {
+            "results": [
+                {"l": "https://www.ssga.com/de/en_gb/intermediary/etfs/" + self._SLUG}
+            ]
+        }
+        self.assertEqual(_slug_from_suggest_payload(payload), self._SLUG)
+
+    def test_resolves_from_search_and_memoizes(self) -> None:
+        payload = {
+            "suggests": {
+                "Investments": [
+                    {
+                        "link": (
+                            "https://www.ssga.com/de/en_gb/intermediary/etfs/"
+                            f"{self._SLUG}"
+                        )
+                    }
+                ]
+            }
+        }
+        with patch(
+            "urllib.request.urlopen", return_value=_json_response(payload)
+        ) as opener:
+            self.assertEqual(ssga_product_ref_for_isin(_ISIN), self._SLUG)
+            self.assertEqual(ssga_product_ref_for_isin(_ISIN), self._SLUG)
+        opener.assert_called_once()
+
+    def test_lookup_failure_returns_none(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("timeout"),
+        ):
+            self.assertIsNone(ssga_product_ref_for_isin(_ISIN))
+
+    def test_empty_isin_skips_network(self) -> None:
+        with patch("urllib.request.urlopen") as opener:
+            self.assertIsNone(ssga_product_ref_for_isin(""))
+        opener.assert_not_called()
+
+
 class TestSsgaCountryFetch(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -317,6 +395,13 @@ class TestSsgaFactoryRouting(unittest.TestCase):
         )
         self.ctx.cache = {}
         self.ctx.cache_loaded = True
+        for target in (
+            "position.factory.ishares_product_ref_for_isin",
+            "position.factory.ssga_product_ref_for_isin",
+        ):
+            resolver = patch(target, return_value=None)
+            resolver.start()
+            self.addCleanup(resolver.stop)
 
     def _factory(self, **kwargs):
         defaults = {
@@ -335,24 +420,33 @@ class TestSsgaFactoryRouting(unittest.TestCase):
         )
 
     def test_allowlisted_isin_and_existing_url_use_ssga(self) -> None:
-        with patch("position.factory.ssga_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory()
+        with patch(
+            "position.factory.ssga_product_ref_for_isin",
+            return_value="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        ):
+            with patch("position.factory.ssga_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory()
         self.assertIsInstance(pos, StateStreetPosition)
 
     def test_allowlisted_isin_ignores_name(self) -> None:
-        with patch("position.factory.ssga_product_url_exists", return_value=True):
-            with self._no_country_scrape():
-                pos = self._factory(name="S&P 400 US Mid Cap UCITS ETF")
+        with patch(
+            "position.factory.ssga_product_ref_for_isin",
+            return_value="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        ):
+            with patch("position.factory.ssga_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory(name="S&P 400 US Mid Cap UCITS ETF")
         self.assertIsInstance(pos, StateStreetPosition)
 
     def test_spdr_in_name_alone_stays_justetf(self) -> None:
-        with patch("position.factory.ssga_product_url_exists") as exists:
-            with self._no_country_scrape():
-                pos = self._factory(
-                    isin="LU0290358497",
-                    name="SPDR MSCI World UCITS ETF",
-                )
+        with patch("position.factory._probe_issuer_for_isin", return_value=None):
+            with patch("position.factory.ssga_product_url_exists") as exists:
+                with self._no_country_scrape():
+                    pos = self._factory(
+                        isin="LU0290358497",
+                        name="SPDR MSCI World UCITS ETF",
+                    )
         exists.assert_not_called()
         self.assertIsInstance(pos, JustETFPosition)
         self.assertNotIsInstance(pos, StateStreetPosition)
@@ -378,13 +472,16 @@ class TestSsgaFactoryRouting(unittest.TestCase):
         self.assertIsInstance(pos, AmundiPosition)
         self.assertNotIsInstance(pos, StateStreetPosition)
 
-    def test_without_fetch_geosplit_skips_ssga_probe(self) -> None:
+    def test_without_fetch_geosplit_still_uses_ssga(self) -> None:
         self.ctx.config.fetch_geosplit = False
-        with patch("position.factory.ssga_product_url_exists") as exists:
-            pos = self._factory()
-        exists.assert_not_called()
-        self.assertIsInstance(pos, JustETFPosition)
-        self.assertNotIsInstance(pos, StateStreetPosition)
+        with patch(
+            "position.factory.ssga_product_ref_for_isin",
+            return_value="state-street-spdr-sp-400-us-mid-cap-ucits-etf-acc-spy4-gy",
+        ):
+            with patch("position.factory.ssga_product_url_exists", return_value=True):
+                with self._no_country_scrape():
+                    pos = self._factory()
+        self.assertIsInstance(pos, StateStreetPosition)
 
 
 if __name__ == "__main__":
