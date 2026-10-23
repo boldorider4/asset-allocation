@@ -5,14 +5,13 @@ Run from repo root::
 
     pytest tests/test_utils.py -v
 
-The write test deliberately reads the produced file with the stdlib
-``json`` module (not ``load_portfolio``) so the round-trip assertion does
-not silently confirm a bug shared by the loader.
+The write test seeds and reads the SQLite database through the same
+repository the app uses, so the round-trip assertion exercises the real
+store rather than a test-only file format.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -24,10 +23,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from cli.context import AppConfig, RuntimeContext  # noqa: E402
-from assets_helpers import (  # noqa: E402
-    read_user_buckets,
-    write_user_buckets,
+from tests.assets_helpers import read_user_buckets  # noqa: E402
+from tests.store_helpers import (  # noqa: E402
+    db_path,
+    make_context,
+    read_positions,
 )
 
 SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
@@ -35,58 +35,61 @@ SAMPLE_ASSETS = REPO_ROOT / "assets.sample.json"
 
 class TestLoadPortfolio(unittest.TestCase):
     def test_loads_sample_assets(self) -> None:
-        data = read_user_buckets(SAMPLE_ASSETS)
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(
+                tmp, portfolio=read_user_buckets(SAMPLE_ASSETS)
+            )
+            ctx.load_portfolio()
+            data = ctx.portfolio
 
-        self.assertIsInstance(data, dict)
-        for bucket in (
-            "equity_portfolio",
-            "bond_portfolio",
-            "fixed_maturity_bond_portfolio",
-            "cash_portfolio",
-            "commodity_portfolio",
-        ):
-            self.assertIn(bucket, data)
-            self.assertIsInstance(data[bucket], list)
+            self.assertIsInstance(data, dict)
+            for bucket in (
+                "equity_portfolio",
+                "bond_portfolio",
+                "fixed_maturity_bond_portfolio",
+                "cash_portfolio",
+                "commodity_portfolio",
+            ):
+                self.assertIn(bucket, data)
+                self.assertIsInstance(data[bucket], list)
 
-        equity = data["equity_portfolio"]
-        self.assertEqual(len(equity), 4)
+            equity = data["equity_portfolio"]
+            self.assertEqual(len(equity), 4)
 
-        amundi_world = equity[0]
-        self.assertEqual(amundi_world["name"], "Amundi Core MSCI World UCITS ETF (Acc)")
-        self.assertEqual(amundi_world["ISIN"], "IE000BI8OT95")
-        self.assertEqual(amundi_world["shares"], 220)
-        self.assertIsNone(amundi_world["value"])
-        self.assertEqual(amundi_world["broker"], "scalable")
-        self.assertEqual(amundi_world["usavn"], 0.88)
+            amundi_world = equity[0]
+            self.assertEqual(amundi_world["name"], "Amundi Core MSCI World UCITS ETF (Acc)")
+            self.assertEqual(amundi_world["ISIN"], "IE000BI8OT95")
+            self.assertEqual(amundi_world["shares"], 2200)
+            self.assertIsNone(amundi_world["value"])
+            self.assertEqual(amundi_world["broker"], "scalable")
+            self.assertEqual(amundi_world["usavn"], 0.88)
 
-        spdr_midcap = equity[1]
-        self.assertEqual(spdr_midcap["ISIN"], "IE00B4YBJ215")
-        self.assertEqual(spdr_midcap["value"], 9469.5)
-        self.assertEqual(spdr_midcap["dmem"], 1)
+            spdr_midcap = equity[1]
+            self.assertEqual(spdr_midcap["ISIN"], "IE00B4YBJ215")
+            self.assertEqual(spdr_midcap["value"], 9469.5)
+            self.assertEqual(spdr_midcap["dmem"], 1)
 
-        bond = data["bond_portfolio"][0]
-        self.assertEqual(bond["ISIN"], "LU2233156582")
-        self.assertEqual(bond["shares"], 100)
+            bond = data["bond_portfolio"][0]
+            self.assertEqual(bond["ISIN"], "LU2233156582")
+            self.assertEqual(bond["shares"], 9000)
 
-        gold = data["commodity_portfolio"][0]
-        self.assertEqual(gold["short_name"], "Gold")
-        self.assertEqual(gold["shares"], 20)
-        self.assertEqual(gold["dmem"], 0.88)
+            gold = data["commodity_portfolio"][0]
+            self.assertEqual(gold["short_name"], "Gold")
+            self.assertEqual(gold["shares"], 200)
+            self.assertEqual(gold["dmem"], 0.88)
 
 
-class TestWritePortfolioToFile(unittest.TestCase):
+class TestWritePortfolioToDatabase(unittest.TestCase):
     def setUp(self) -> None:
         # Fresh isolated context per test: no shared module state.
         self._holder = tempfile.TemporaryDirectory()
         self.addCleanup(self._holder.cleanup)
         tmp = Path(self._holder.name)
-        self.ctx = RuntimeContext(
-            config=AppConfig(
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
-            )
+        self.db = db_path(tmp)
+        self.ctx = make_context(
+            tmp, portfolio=read_user_buckets(SAMPLE_ASSETS)
         )
-        self.ctx.portfolio.update(read_user_buckets(SAMPLE_ASSETS))
+        self.ctx.load_portfolio()
 
     def test_mutations_round_trip_through_disk(self) -> None:
         mutated_value = 12345.67
@@ -97,14 +100,8 @@ class TestWritePortfolioToFile(unittest.TestCase):
         self.ctx.portfolio["bond_portfolio"][0]["shares"] = mutated_shares
         self.ctx.portfolio["commodity_portfolio"][0]["short_name"] = "TestGold"
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_path = Path(tmpdir) / "assets.json"
-            write_user_buckets(out_path, self.ctx.portfolio)
-
-            self.assertTrue(out_path.exists())
-
-            with out_path.open(encoding="utf-8") as f:
-                written = json.load(f)["default"]["positions"]
+        self.ctx.persist_portfolio()
+        written = read_positions(self.db)
 
         self.assertEqual(written["equity_portfolio"][0]["value"], mutated_value)
         self.assertIsNone(written["equity_portfolio"][0]["shares"])
@@ -114,7 +111,7 @@ class TestWritePortfolioToFile(unittest.TestCase):
         untouched = written["equity_portfolio"][1]
         self.assertEqual(untouched["ISIN"], "IE00B4YBJ215")
         self.assertEqual(untouched["value"], 9469.5)
-        self.assertEqual(untouched["shares"], 45)
+        self.assertEqual(untouched["shares"], 450)
 
 
 if __name__ == "__main__":

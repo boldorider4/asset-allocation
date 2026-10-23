@@ -3,39 +3,47 @@
 
 * :mod:`storage.storage` — backend-agnostic ``Storage`` / ``StorageObject``.
 * :mod:`storage.records` — backend-agnostic row types (``DictRow``,
-  ``CacheEntry``, ``AssetBucket``, ``UserAssets``, ``IsinRecord``).
-* :mod:`storage.json_storage` / :mod:`storage.memory_storage` /
-  :mod:`storage.postgres_storage` — backends.
-* :mod:`storage.wiring` — the composition point choosing the backend.
+  ``CacheEntry``, ``AssetBucket``, ``IsinRecord``, ``UserRecord``,
+  ``SessionRecord``, ``PositionRecord``, ``UserPortfolioRecord``).
+* :mod:`storage.memory_storage` / :mod:`storage.sqlite_storage` — backends.
+  :mod:`storage.json_storage` remains available for direct import and
+  one-time import tooling.
+* :mod:`storage.wiring` — the composition point building the SQLite backend.
 * :mod:`storage.repositories` — domain logic over any backend
-  (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``).
+  (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``,
+  ``PositionRepository``, ``UserPortfolioRepository``,
+  ``UsersRepository``, ``SessionsRepository``).
 """
 
-from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
-from storage.postgres_storage import PostgresStorage
 from storage.records import (
     DEFAULT_PORTFOLIO_NAME,
     AssetBucket,
     CacheEntry,
     DictRow,
     IsinRecord,
-    UserAssets,
+    PositionRecord,
+    SessionRecord,
+    UserPortfolioRecord,
     UserRecord,
 )
 from storage.repositories import (
     AssetRepository,
     CacheRepository,
     IsinRegistry,
-    UnknownUser,
+    PositionRepository,
+    SessionsRepository,
+    UserPortfolioRepository,
     UsersRepository,
 )
+from storage.sqlite_storage import SqliteStorage
 from storage.storage import Storage, StorageObject
 from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_POSTGRES,
-    assets_backend,
-    normalize_backend,
+    cache_backend,
+    isin_backend,
+    positions_backend,
+    sessions_backend,
+    user_portfolios_backend,
     users_backend,
 )
 
@@ -46,20 +54,25 @@ __all__ = [
     "DictRow",
     "CacheEntry",
     "AssetBucket",
-    "UserAssets",
     "IsinRecord",
     "UserRecord",
-    "JsonStorage",
+    "SessionRecord",
+    "PositionRecord",
+    "UserPortfolioRecord",
     "MemoryStorage",
-    "PostgresStorage",
+    "SqliteStorage",
     "CacheRepository",
     "AssetRepository",
     "IsinRegistry",
+    "PositionRepository",
+    "UserPortfolioRepository",
     "UsersRepository",
+    "SessionsRepository",
     "UnknownUser",
-    "assets_backend",
+    "cache_backend",
+    "isin_backend",
+    "positions_backend",
+    "sessions_backend",
+    "user_portfolios_backend",
     "users_backend",
-    "normalize_backend",
-    "BACKEND_JSON",
-    "BACKEND_POSTGRES",
 ]

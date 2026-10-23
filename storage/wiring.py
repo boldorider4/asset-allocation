@@ -1,128 +1,121 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Composition point: which backend stores the assets.
+"""Composition point: the SQLite stores.
 
 Everything above this line (repositories, the runtime context, the web
 backend, the scrapers) talks to the *repository* and never to a concrete
-backend. This module is the single place where the concrete backend is
-built, so moving the assets store to Postgres is one line here.
+backend. This module is the single place where the concrete SQLite
+backend is built.
 
-Configuration lives with the application: the backend name and the
-Postgres DSN are read from ``config.ini`` by the app layer (see
+The SQLite file is read from ``config.ini`` by the app layer (see
 ``cli.context``) and passed in. This module reads no files and knows no
 settings.
 
-The row type stays ``UserAssets`` (one row per user, payload = that
-user's portfolio buckets), which maps onto the Postgres stub's intended
-layout ``(key TEXT PRIMARY KEY, payload JSONB)`` with ``key`` = user.
+Most stores map onto explicit-column SQLite tables: ``user_portfolios``
+(one row per user), ``user_positions`` (one row per position with a
+composite key), ``users`` (one account per row), ``cache`` (price and
+split weights per ISIN) and ``sessions`` (one browser session per id).
+The generic layout ``(key TEXT PRIMARY KEY, payload TEXT NOT NULL)`` is
+kept for custom/test tables only.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from storage.json_storage import JsonStorage
-from storage.postgres_storage import PostgresStorage
-from storage.records import UserAssets, UserRecord
+from storage.records import (
+    CacheEntry,
+    IsinRecord,
+    PositionRecord,
+    SessionRecord,
+    UserPortfolioRecord,
+    UserRecord,
+)
+from storage.sqlite_storage import SqliteStorage
 
 if TYPE_CHECKING:
     from storage.storage import Storage
 
 __all__ = [
-    "BACKEND_JSON",
-    "BACKEND_POSTGRES",
-    "DEFAULT_POSTGRES_DSN",
-    "POSTGRES_TABLE",
-    "POSTGRES_USERS_TABLE",
-    "SUPPORTED_BACKENDS",
-    "assets_backend",
-    "normalize_backend",
+    "SQLITE_TABLE_USER_PORTFOLIOS",
+    "SQLITE_TABLE_POSITIONS",
+    "SQLITE_TABLE_CACHE",
+    "SQLITE_TABLE_ISIN",
+    "SQLITE_TABLE_USERS",
+    "SQLITE_TABLE_SESSIONS",
+    "cache_backend",
+    "isin_backend",
+    "positions_backend",
+    "sessions_backend",
+    "user_portfolios_backend",
     "users_backend",
 ]
 
-logger = logging.getLogger(__name__)
+#: Tables of the SQLite database (one per store).
+SQLITE_TABLE_USER_PORTFOLIOS = "user_portfolios"
+SQLITE_TABLE_POSITIONS = "user_positions"
+SQLITE_TABLE_CACHE = "cache"
+SQLITE_TABLE_ISIN = "isin_registry"
+SQLITE_TABLE_USERS = "users"
+SQLITE_TABLE_SESSIONS = "sessions"
 
-#: Backend names the application may configure.
-BACKEND_JSON = "json"
-BACKEND_POSTGRES = "postgres"
-SUPPORTED_BACKENDS: tuple[str, ...] = (BACKEND_JSON, BACKEND_POSTGRES)
-
-#: Where the Postgres backend will keep its rows.
-POSTGRES_TABLE = "user_assets"
-#: Where the Postgres backend will keep the user accounts.
-POSTGRES_USERS_TABLE = "users"
-#: Connection string used when the configuration does not carry one.
-DEFAULT_POSTGRES_DSN = "postgresql://localhost/asalloc"
+#: One backend per process: a DB connection is expensive to open and
+#: the state lives in the database, so the same (path, table) must
+#: always land on the same connection.
+_DB_BACKENDS: dict[tuple[str, str, str], "Storage"] = {}
 
 
-def normalize_backend(name: str | None) -> str:
-    """Canonical backend name; unknown names fall back to ``json``.
+def _sqlite_backend(
+    db_file: str | Path, table: str, factory: type
+) -> "Storage":
+    """The SQLite backend for ``(db_file, table)``; one connection per process."""
+    key = (str(db_file), table, getattr(factory, "__name__", str(factory)))
+    backend = _DB_BACKENDS.get(key)
+    if backend is None:
+        backend = SqliteStorage(db_file, table, factory)  # type: ignore[arg-type]
+        _DB_BACKENDS[key] = backend
+    return backend
 
-    Pure: it reads no configuration, the caller passes the configured
-    value in.
-    """
-    candidate = (name or "").strip().lower()
-    if candidate in SUPPORTED_BACKENDS:
-        return candidate
-    logger.warning(
-        "unknown assets backend %r (supported: %s); using %r",
-        candidate,
-        ", ".join(SUPPORTED_BACKENDS),
-        BACKEND_JSON,
+
+def user_portfolios_backend(
+    db_file: str | Path,
+) -> "Storage[UserPortfolioRecord]":
+    """Backend for the user portfolio names (one row per user)."""
+    return _sqlite_backend(
+        db_file, SQLITE_TABLE_USER_PORTFOLIOS, UserPortfolioRecord
     )
-    return BACKEND_JSON
 
 
-def assets_backend(
-    path: str | Path,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> "Storage[UserAssets]":
-    """Backend for the assets store (one row per user).
+def positions_backend(
+    db_file: str | Path,
+) -> "Storage[PositionRecord]":
+    """Backend for the normalized positions table."""
+    return _sqlite_backend(db_file, SQLITE_TABLE_POSITIONS, PositionRecord)
 
-    The JSON backend is strict: a malformed row raises instead of being
-    skipped, so a broken assets file fails loudly rather than looking
-    like an empty portfolio.
-    """
-    name = normalize_backend(backend)
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "assets backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            POSTGRES_TABLE,
-        )
-        return PostgresStorage(dsn, POSTGRES_TABLE, UserAssets)
-    return JsonStorage(path, UserAssets, strict=True)
+
+def cache_backend(
+    db_file: str | Path,
+) -> "Storage[CacheEntry]":
+    """Backend for the per-ISIN cache (price, countries, sectors)."""
+    return _sqlite_backend(db_file, SQLITE_TABLE_CACHE, CacheEntry)
+
+
+def isin_backend(
+    db_file: str | Path,
+) -> "Storage[IsinRecord]":
+    """Backend for the ISIN registry (issuer, bucket, vendor ref)."""
+    return _sqlite_backend(db_file, SQLITE_TABLE_ISIN, IsinRecord)
+
+
+def sessions_backend(
+    db_file: str | Path,
+) -> "Storage[SessionRecord]":
+    """Backend for the browser sessions (one row per session id)."""
+    return _sqlite_backend(db_file, SQLITE_TABLE_SESSIONS, SessionRecord)
 
 
 def users_backend(
-    path: str | Path,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
+    db_file: str | Path,
 ) -> "Storage[UserRecord]":
-    """Backend for the user accounts (one row per user name).
-
-    Same backend selector as the assets store, so moving the accounts
-    to Postgres is one config line. The row key is the user name (the
-    primary key of the future table), the payload is the password.
-
-    The JSON backend is strict: a malformed account raises instead of
-    being skipped, so a broken users file fails loudly instead of
-    quietly locking everybody out.
-    """
-    name = normalize_backend(backend)
-    if name == BACKEND_POSTGRES:
-        dsn = (postgres_dsn or "").strip() or DEFAULT_POSTGRES_DSN
-        logger.error(
-            "users backend %r is selected but not implemented yet; the "
-            "store will fail to open (dsn=%s, table=%s)",
-            name,
-            dsn,
-            POSTGRES_USERS_TABLE,
-        )
-        return PostgresStorage(dsn, POSTGRES_USERS_TABLE, UserRecord)
-    return JsonStorage(path, UserRecord, strict=True)
+    """Backend for the user accounts (one row per user name)."""
+    return _sqlite_backend(db_file, SQLITE_TABLE_USERS, UserRecord)

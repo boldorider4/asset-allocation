@@ -36,7 +36,7 @@ clean: web-clean
 
 serve: web
 	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
-	asalloc serve --assets-file $(INSTALL_ROOT)/assets.json --cache-file $(INSTALL_ROOT)/cache.json
+	asalloc serve --db-file $(INSTALL_ROOT)/asalloc.db
 
 stop-serve:
 	@command -v asalloc >/dev/null 2>&1 || { echo "asalloc is not callable; run 'make install' first." >&2; exit 1; }
@@ -52,7 +52,7 @@ service:
 	systemctl --user daemon-reload
 	systemctl --user enable --now asalloc-serve.service
 	systemctl --user enable --now asalloc-update.timer
-	@echo "Installed user units. Place holdings at $(INSTALL_ROOT)/assets.json"
+	@echo "Installed user units. Import holdings with scripts/migrate_normalize_db.py --db-file $(INSTALL_ROOT)/asalloc.db"
 	@echo "asalloc-lite-update.service was copied but left disabled for the admin to start manually"
 	@echo "Headless hosts: sudo loginctl enable-linger $$USER"
 

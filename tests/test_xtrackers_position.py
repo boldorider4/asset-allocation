@@ -19,7 +19,7 @@ from position.xtrackers_position import (
     _DWS_PRODUCT_EXISTS,
     dws_product_url_exists,
 )
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 
 _ISIN = "IE00BTJRMP35"
 _SLUG = "IE00BTJRMP35-msci-emerging-markets-ucits-etf-1c"
@@ -204,9 +204,7 @@ class TestXtrackersCountryFetch(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -246,9 +244,7 @@ class TestXtrackersFactoryRouting(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

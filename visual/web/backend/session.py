@@ -2,11 +2,8 @@
 """Browser sessions for the visualizer server.
 
 A session is identified by a cookie (``asalloc_sid``) and persisted in
-the server workspace, so it survives restarts but not idling: a session
-expires 30 minutes after it was created::
-
-    <workspace>/.sessions.json  ->  {"<sid>": {"user": ..., "incognito": ...,
-                                            "expires_at": ...}}
+the SQLite database, so it survives restarts but not idling: a session
+expires 30 minutes after it was created.
 
 The session carries the *user* whose holdings and charts are served
 (there is no per-request user parameter any more) and the incognito
@@ -15,16 +12,14 @@ state the user last chose.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import secrets
-import threading
-import time
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any
+
+from storage.repositories import SessionsRepository
+from storage.wiring import sessions_backend
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +29,6 @@ COOKIE_NAME = "asalloc_sid"
 SESSION_TTL_SECONDS = 30 * 60
 #: The cookie dies with the session it points at.
 COOKIE_MAX_AGE = SESSION_TTL_SECONDS
-#: Store file inside the served workspace.
-STORE_FILENAME = ".sessions.json"
-
-_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -47,11 +38,6 @@ class Session:
     user: str
     incognito: bool = False
     expires_at: float = 0.0
-
-
-def store_path(workspace: str | Path) -> Path:
-    """Path of the session store inside the server workspace."""
-    return Path(workspace) / STORE_FILENAME
 
 
 def new_session_id() -> str:
@@ -72,30 +58,6 @@ def clear_cookie_header() -> str:
     return f"{COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
 
 
-def _read_store(path: Path) -> dict[str, Any]:
-    try:
-        with path.open(encoding="utf-8") as f:
-            raw = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("session store %s unreadable (%s); starting empty", path, exc)
-        return {}
-    if not isinstance(raw, dict):
-        logger.warning("session store %s must be an object; starting empty", path)
-        return {}
-    return raw
-
-
-def _write_store(path: Path, store: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(store, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
-
-
 def session_id_from_cookie(header: str | None) -> str | None:
     """The session id carried by a ``Cookie`` header, if any."""
     if not header:
@@ -112,52 +74,51 @@ def session_id_from_cookie(header: str | None) -> str | None:
     return value or None
 
 
-def _is_expired(entry: dict[str, Any], now: float | None = None) -> bool:
-    """True when the session record is past its expiry.
-
-    A record without an expiry predates the timeout: it counts as
-    expired, so upgrading the server ends the old unbounded sessions.
-    """
-    expires_at = entry.get("expires_at")
-    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
-        return True
-    return float(expires_at) <= (time.time() if now is None else now)
+def _repo(db_file: str | Path) -> SessionsRepository:
+    """The session repository for this database."""
+    return SessionsRepository(sessions_backend(db_file))
 
 
 def read_session(
-    workspace: str | Path, cookie_header_value: str | None
+    db_file: str | Path,
+    cookie_header_value: str | None,
 ) -> Session | None:
     """The session for the given cookie, or None when there is none.
 
     An expired session counts as no session: the record is dropped and
-    the caller sends the browser to the login page.
+    the caller sends the browser to the login page. A session row that
+    cannot be read at all (a damaged row) counts as no session too: it
+    is dropped, so the browser gets a fresh login instead of a broken
+    request.
     """
     session_id = session_id_from_cookie(cookie_header_value)
     if not session_id:
         return None
-    path = store_path(workspace)
-    with _lock:
-        store = _read_store(path)
-        entry = store.get(session_id)
-        if not isinstance(entry, dict):
-            return None
-        if _is_expired(entry):
-            store.pop(session_id, None)
-            _write_store(path, store)
-            logger.info("session %s expired; dropped it", session_id[:8])
-            return None
-    user = str(entry.get("user") or "").strip()
-    if not user:
+    repo = _repo(db_file)
+    repo.open()
+    try:
+        record = repo.get(session_id)
+    except Exception as exc:
+        # A damaged row must never take a request down: the session is
+        # gone, the browser logs in again.
+        logger.warning("session %s unreadable (%s)", session_id[:8], exc)
+        record = None
+    if record is None:
+        # Either there is no session or it expired: drop the stale row
+        # so the store does not keep it around.
+        if repo.drop(session_id):
+            repo.persist()
+            logger.info("dropped the session %s (expired or unknown)", session_id[:8])
         return None
     return Session(
-        user=user,
-        incognito=bool(entry.get("incognito")),
-        expires_at=float(entry.get("expires_at") or 0.0),
+        user=record.user,
+        incognito=record.incognito,
+        expires_at=record.expires_at,
     )
 
 
 def login(
-    workspace: str | Path,
+    db_file: str | Path,
     session_id: str,
     user: str,
     *,
@@ -167,27 +128,49 @@ def login(
 
     The session expires ``SESSION_TTL_SECONDS`` after this call.
     """
-    expires_at = time.time() + SESSION_TTL_SECONDS
-    session = Session(
-        user=user, incognito=bool(incognito), expires_at=expires_at
+    repo = _repo(db_file)
+    repo.open()
+    record = repo.start(
+        session_id,
+        user,
+        incognito=incognito,
+        ttl_seconds=SESSION_TTL_SECONDS,
     )
-    path = store_path(workspace)
-    with _lock:
-        store = _read_store(path)
-        store[session_id] = {
-            "user": session.user,
-            "incognito": session.incognito,
-            "expires_at": expires_at,
-        }
-        _write_store(path, store)
-    return session
+    repo.persist()
+    return Session(
+        user=record.user,
+        incognito=record.incognito,
+        expires_at=record.expires_at,
+    )
 
 
-def logout(workspace: str | Path, session_id: str) -> None:
+def logout(
+    db_file: str | Path,
+    session_id: str,
+) -> None:
     """Drop the session for ``session_id`` (no-op when unknown)."""
-    path = store_path(workspace)
-    with _lock:
-        store = _read_store(path)
-        if store.pop(session_id, None) is None:
-            return
-        _write_store(path, store)
+    repo = _repo(db_file)
+    repo.open()
+    if repo.drop(session_id):
+        repo.persist()
+
+
+def clear_sessions(
+    db_file: str | Path,
+    *,
+    expired_only: bool = False,
+) -> int:
+    """Drop sessions; returns how many were removed.
+
+    Without ``expired_only`` every session goes (everybody is logged
+    out); with it only the sessions past their expiry are dropped.
+    """
+    repo = _repo(db_file)
+    repo.open()
+    if expired_only:
+        return repo.purge_expired()
+    keys = list(repo.snapshot().keys())
+    for key in keys:
+        repo.drop(key)
+    repo.persist()
+    return len(keys)

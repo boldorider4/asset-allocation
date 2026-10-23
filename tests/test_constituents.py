@@ -15,14 +15,21 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.store_helpers import (
+    db_path,
+    read_isin,
+    read_positions,
+    write_cache,
+    write_positions,
+    write_users,
+)
 
-from cli.common import DEFAULT_USER_NAME
 from visual.web.backend.constituents import (
     assets_portfolio_name,
     add_constituent,
@@ -35,7 +42,6 @@ from visual.web.backend.constituents import (
     store_portfolio_name,
 )
 from visual.web.backend.serve import DashboardHandler
-from visual.web.backend.session import read_session
 
 #: The user the fixtures know about (the assets store is keyed by user).
 _USER = "default"
@@ -80,28 +86,28 @@ _CACHE = {
 }
 
 
-def _positions(path: Path, user: str = "default") -> dict:
-    """The positions of one user, read from the assets file."""
-    row = json.loads(path.read_text(encoding="utf-8"))[user]
-    return row["positions"]
+def _positions(db_file: Path, user: str = "default") -> dict:
+    """The positions of one user, read back from the database."""
+    return read_positions(db_file, user=user)
 
-def _write_files(tmp: Path) -> tuple[Path, Path]:
-    assets = tmp / "assets.json"
-    cache = tmp / "cache.json"
-    # The assets file is keyed by user: {"<user>": {"<bucket>": [...]}}.
-    assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-    cache.write_text(json.dumps(_CACHE), encoding="utf-8")
-    return assets, cache
+
+def _write_files(tmp: Path, *, user: str = "default") -> Path:
+    """Seed the fixture portfolio and quotes; return the database path."""
+    db_file = db_path(tmp)
+    write_positions(db_file, _ASSETS, user=user)
+    write_cache(db_file, _CACHE)
+    return db_file
 
 
 def _write_users(tmp: Path, users: dict[str, dict[str, str]] | None = None) -> Path:
-    """The accounts that may log in (the users store, not the assets)."""
-    path = tmp / "users.json"
-    path.write_text(
-        json.dumps(users if users is not None else {"default": {"password": ""}}),
-        encoding="utf-8",
+    """The accounts that may log in (the users table, not the assets)."""
+    db_file = db_path(tmp)
+    rows = users if users is not None else {"default": {"password": ""}}
+    write_users(
+        db_file,
+        {name: row.get("password", "") for name, row in rows.items()},
     )
-    return path
+    return db_file
 
 
 def _login_cookie(
@@ -179,8 +185,8 @@ def _stub_spawn_update_process(target, args) -> _StubUpdateProcess:
 class TestLoadConstituents(unittest.TestCase):
     def test_sections_in_canonical_order_with_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         # Every canonical class is always listed (empty when the user
         # holds nothing there), extra buckets come last.
         self.assertEqual(
@@ -206,11 +212,10 @@ class TestLoadConstituents(unittest.TestCase):
             "fixed_maturity_bond_portfolio": [],
         }
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            cache = Path(tmp) / "cache.json"
-            assets.write_text(json.dumps({"default": user_payload(buckets)}), encoding="utf-8")
-            cache.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets, cache)
+            db_file = db_path(tmp)
+            write_positions(db_file, buckets)
+            write_cache(db_file, {})
+            sections = load_constituents(db_file)
         self.assertEqual(
             [label for _, label, _ in sections],
             [
@@ -225,8 +230,8 @@ class TestLoadConstituents(unittest.TestCase):
 
     def test_row_fields_and_cache_price(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertEqual(equity[0]["price"], 81.25)
         self.assertIsNone(equity[0]["value"])
@@ -243,22 +248,19 @@ class TestLoadConstituents(unittest.TestCase):
         self.assertTrue(cash[0]["editable_value"])
         self.assertTrue(cash[0]["no_quote"])
 
-    def test_missing_cache_file_means_no_prices(self) -> None:
+    def test_missing_cache_rows_mean_no_prices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-            sections = load_constituents(assets, Path(tmp) / "nope.json")
+            db_file = db_path(tmp)
+            write_positions(db_file, _ASSETS)
+            sections = load_constituents(db_file)
         equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertIsNone(equity[0]["price"])
 
-    def test_non_object_assets_raises(self) -> None:
+    def test_a_database_without_portfolios_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text("[1, 2]", encoding="utf-8")
-            cache = Path(tmp) / "cache.json"
-            cache.write_text("{}", encoding="utf-8")
-            with self.assertRaises(ValueError):
-                load_constituents(assets, cache)
+            # No portfolios at all is a misconfiguration, not an empty user.
+            with self.assertRaises(RuntimeError):
+                load_constituents(db_path(tmp))
 
 
 class TestPortfolioNameField(unittest.TestCase):
@@ -266,8 +268,8 @@ class TestPortfolioNameField(unittest.TestCase):
 
     def _page(self, name: str = "Portfolio") -> str:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         return render_constituents_page(sections, portfolio_name=name)
 
     def test_the_page_shows_the_name_at_the_end(self) -> None:
@@ -282,38 +284,48 @@ class TestPortfolioNameField(unittest.TestCase):
 
     def test_the_stored_name_is_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            self.assertEqual(assets_portfolio_name(assets, "default"), "Portfolio")
-            store_portfolio_name(assets, "Renamed")
-            self.assertEqual(assets_portfolio_name(assets, "default"), "Renamed")
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            self.assertEqual(assets_portfolio_name(db_file, "default"), "Portfolio")
+            store_portfolio_name(db_file, "Renamed")
+            self.assertEqual(assets_portfolio_name(db_file, "default"), "Renamed")
+            sections = load_constituents(db_file)
             page = render_constituents_page(
-                sections, portfolio_name=assets_portfolio_name(assets, "default")
+                sections, portfolio_name=assets_portfolio_name(db_file, "default")
             )
         self.assertIn('value="Renamed"', page)
 
     def test_storing_the_name_persists_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            result = store_portfolio_name(assets, "  My Portfolio  ")
+            db_file = _write_files(Path(tmp))
+            result = store_portfolio_name(db_file, "  My Portfolio  ")
             self.assertEqual(result, {"name": "My Portfolio"})
-            stored = json.loads(assets.read_text(encoding="utf-8"))["default"]
-            self.assertEqual(stored["portfolio_name"], "My Portfolio")
+            self.assertEqual(
+                assets_portfolio_name(db_file, "default"), "My Portfolio"
+            )
             # The positions are untouched.
-            self.assertIn("equity_portfolio", stored["positions"])
+            self.assertIn("equity_portfolio", read_positions(db_file))
 
     def test_a_blank_name_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
+            db_file = _write_files(Path(tmp))
+            before = (
+                assets_portfolio_name(db_file, "default"),
+                read_positions(db_file),
+            )
             with self.assertRaises(ValueError):
-                store_portfolio_name(assets, "   ")
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+                store_portfolio_name(db_file, "   ")
+            self.assertEqual(
+                (
+                    assets_portfolio_name(db_file, "default"),
+                    read_positions(db_file),
+                ),
+                before,
+            )
 
     def test_the_route_stores_the_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            result = store_portfolio_name(assets, "Renamed")
+            db_file = _write_files(Path(tmp))
+            result = store_portfolio_name(db_file, "Renamed")
             self.assertEqual(result["name"], "Renamed")
 
     def test_the_field_is_left_aligned_and_twice_as_long(self) -> None:
@@ -350,8 +362,8 @@ class TestPortfolioNameField(unittest.TestCase):
 class TestRenderConstituentsPage(unittest.TestCase):
     def _page(self) -> str:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         return render_constituents_page(sections)
 
     def test_thin_rules_divide_sections(self) -> None:
@@ -406,11 +418,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, {})
+            sections = load_constituents(db_file)
         equity = dict((label, rows) for _, label, rows in sections)["Equity"]
         self.assertEqual(equity[0]["short_name"], "Amundi")
         self.assertEqual(equity[0]["isin"], "IE000BI8OT95")
@@ -550,11 +561,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, {})
+            sections = load_constituents(db_file)
         self.assertEqual(
             [label for _, label, _ in sections],
             [
@@ -607,11 +617,10 @@ class TestRenderConstituentsPage(unittest.TestCase):
         }
         cache = {"IE00Y": {"price": 10.0}}
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text(json.dumps(cache), encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, cache)
+            sections = load_constituents(db_file)
         by_label = dict((label, rows) for _, label, rows in sections)
         self.assertTrue(by_label["Fixed Maturity"][0]["editable_shares"])
         self.assertTrue(by_label["Equity"][0]["editable_shares"])
@@ -663,8 +672,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_overview_button_holds_incognito_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         self.assertIn(
             '<a id="overview-link" class="nav-button" href="/dashboard">Dashboard</a>',
             render_constituents_page(sections),
@@ -677,8 +686,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_constituents_has_incognito_button_left_of_dashboard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         plain = render_constituents_page(sections)
         veiled = render_constituents_page(sections, incognito=True)
         for page in (plain, veiled):
@@ -828,8 +837,8 @@ class TestRenderConstituentsPage(unittest.TestCase):
         ):
             self.assertIn(tag, index)
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         page = render_constituents_page(sections)
         for tag in (
             '<script src="app.js"></script>',
@@ -1219,6 +1228,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
             "document.addEventListener("
         )[0]
         self.assertIn("dirty = true", add_flow)
+        self.assertIn("data.needs_full_update", add_flow)
+        self.assertIn("fullUpdateNeeded = true", add_flow)
+        # A missing geo/sector cache stages the fat update instead.
+        refresh_flow = js.split("async function refreshAndGo")[1].split(
+            "function initConstituents"
+        )[0]
+        self.assertIn("if (fullUpdateNeeded)", refresh_flow)
+        self.assertIn('JSON.stringify({ mode: "fat" })', refresh_flow)
+        self.assertIn("fullUpdateNeeded = false", refresh_flow)
         persist = js.split("async function persistOrder")[1].split(
             "document.addEventListener("
         )[0]
@@ -1300,12 +1318,12 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
 class TestStoreConstituentValue(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
-        assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-        return assets
+        db_file = db_path(tmp)
+        write_positions(db_file, _ASSETS)
+        return db_file
 
-    def _read(self, assets: Path):
-        return _positions(assets, "default")
+    def _read(self, db_file: Path):
+        return _positions(db_file, "default")
 
     def test_valid_shares_edit_persists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1318,7 +1336,6 @@ class TestStoreConstituentValue(unittest.TestCase):
             self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
             # Untouched rows survive the round-trip.
             self.assertEqual(data["equity_portfolio"][1]["shares"], 10)
-            json.loads(assets.read_text(encoding="utf-8"))
 
     def test_shares_edit_recomputes_value_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1422,7 +1439,7 @@ class TestStoreConstituentValue(unittest.TestCase):
     def test_rejects_bad_address_field_and_junk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
+            before = read_positions(assets)
             for bucket, index, field, value in [
                 ("nope", 0, "shares", "1"),
                 ("equity_portfolio", 99, "shares", "1"),
@@ -1439,7 +1456,7 @@ class TestStoreConstituentValue(unittest.TestCase):
                 with self.subTest(bucket=bucket, index=index, field=field, value=value):
                     with self.assertRaises(ValueError):
                         store_constituent_value(assets, bucket, index, field, value)
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+            self.assertEqual(read_positions(assets), before)
 
     def test_rejects_locked_cells(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1492,9 +1509,9 @@ class TestStoreConstituentValue(unittest.TestCase):
 
 class TestReorderConstituents(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
-        assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-        return assets
+        db_file = db_path(tmp)
+        write_positions(db_file, _ASSETS)
+        return db_file
 
     def _names(self, assets: Path, bucket: str = "equity_portfolio") -> list:
         data = _positions(assets, "default")
@@ -1511,7 +1528,6 @@ class TestReorderConstituents(unittest.TestCase):
             # Other buckets are untouched.
             data = _positions(assets, "default")
             self.assertEqual(data["cash_portfolio"][0]["name"], "Tagesgeld")
-            json.loads(assets.read_text(encoding="utf-8"))
 
     def test_identity_order_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1523,10 +1539,10 @@ class TestReorderConstituents(unittest.TestCase):
                 _positions(assets, "default"), before
             )
 
-    def test_rejects_bad_orders_and_leaves_file_untouched(self) -> None:
+    def test_rejects_bad_orders_and_leaves_store_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
+            before = read_positions(assets)
             for bucket, order in [
                 ("nope", [0, 1]),
                 ("equity_portfolio", [0, 0]),
@@ -1543,15 +1559,17 @@ class TestReorderConstituents(unittest.TestCase):
                 with self.subTest(bucket=bucket, order=order):
                     with self.assertRaises(ValueError):
                         reorder_constituents(assets, bucket, order)
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+            self.assertEqual(read_positions(assets), before)
 
-    def test_rejects_non_list_bucket(self) -> None:
+    def test_rejects_unknown_user_without_creating_a_portfolio(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text(json.dumps({"default": user_payload({"equity_portfolio": {"a": 1}})}))
-            # The store rejects the malformed bucket while loading it.
-            with self.assertRaises((TypeError, ValueError)):
+            assets = db_path(tmp)
+            write_positions(assets, _ASSETS, user="alice")
+            # A user with no portfolio cannot be reordered, and the failed
+            # call must not silently create one.
+            with self.assertRaises(ValueError):
                 reorder_constituents(assets, "equity_portfolio", [0])
+            self.assertEqual(read_positions(assets, user="default"), {})
 
 
 class TestKnownBrokers(unittest.TestCase):
@@ -1571,17 +1589,20 @@ class TestKnownBrokers(unittest.TestCase):
 class TestFreshUserSections(unittest.TestCase):
     """A user with no assets yet still gets the full set of classes."""
 
-    def _store(self, tmp: Path, payload: object) -> tuple[Path, Path]:
-        assets = tmp / "assets.json"
-        cache = tmp / "cache.json"
-        assets.write_text(json.dumps({"alice": payload}), encoding="utf-8")
-        cache.write_text("{}", encoding="utf-8")
-        return assets, cache
+    def _store(self, tmp: Path, payload: object) -> Path:
+        db_file = db_path(tmp)
+        write_positions(
+            db_file,
+            payload if isinstance(payload, dict) else {},
+            user="alice",
+        )
+        write_cache(db_file, {})
+        return db_file
 
     def test_empty_user_gets_every_canonical_class(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = self._store(Path(tmp), {})
-            sections = load_constituents(assets, cache, "alice")
+            db_file = self._store(Path(tmp), {})
+            sections = load_constituents(db_file, "alice")
         self.assertEqual(
             [label for _, label, _ in sections],
             [
@@ -1597,32 +1618,28 @@ class TestFreshUserSections(unittest.TestCase):
 
     def test_null_user_gets_every_canonical_class(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = self._store(Path(tmp), None)
-            sections = load_constituents(assets, cache, "alice")
+            db_file = self._store(Path(tmp), None)
+            sections = load_constituents(db_file, "alice")
         self.assertEqual(len(sections), 6)
         self.assertTrue(all(rows == [] for _, _, rows in sections))
 
     def test_extra_buckets_of_other_users_are_not_shown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            cache = Path(tmp) / "cache.json"
-            assets.write_text(
-                json.dumps(
-                    {
-                        "alice": user_payload({}),
-                        "bob": user_payload({"crypto_portfolio": [{"name": "C"}]}),
-                    }
-                ),
-                encoding="utf-8",
+            db_file = db_path(tmp)
+            write_positions(db_file, {}, user="alice")
+            write_positions(
+                db_file,
+                {"crypto_portfolio": [{"name": "C"}]},
+                user="bob",
             )
-            cache.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets, cache, "alice")
+            write_cache(db_file, {})
+            sections = load_constituents(db_file, "alice")
         self.assertNotIn("Crypto Portfolio", [label for _, label, _ in sections])
 
     def test_add_button_on_every_section(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = self._store(Path(tmp), {})
-            page = render_constituents_page(load_constituents(assets, cache, "alice"))
+            db_file = self._store(Path(tmp), {})
+            page = render_constituents_page(load_constituents(db_file, "alice"))
         # One "+" per class, so an empty portfolio can be filled.
         self.assertEqual(page.count('class="add-row"'), 6)
         for bucket in (
@@ -1638,9 +1655,14 @@ class TestFreshUserSections(unittest.TestCase):
 
 class TestAddConstituent(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
-        assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-        return assets
+        db_file = db_path(tmp)
+        write_positions(db_file, _ASSETS)
+        return db_file
+
+    def _database(self, tmp: Path) -> Path:
+        db_file = db_path(tmp)
+        write_positions(db_file, {})
+        return db_file
 
     def test_full_row_appends_and_reports_display(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1671,6 +1693,95 @@ class TestAddConstituent(unittest.TestCase):
             # Other buckets are untouched.
             self.assertEqual(len(data["cash_portfolio"]), 2)
 
+    def test_add_registers_isin_with_the_selected_bucket(self) -> None:
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            registry = IsinRegistry(isin_backend(db_file))
+            display = add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="New Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "bond_portfolio",
+            )
+            stored = read_isin(db_file)
+            self.assertEqual(stored["DE0001234567"]["bucket"], "bond_portfolio")
+            self.assertTrue(display["needs_full_update"])
+
+    def test_add_only_fills_a_missing_registry_bucket(self) -> None:
+        from storage import MemoryStorage
+        from storage.records import IsinRecord
+        from storage.repositories import IsinRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            registry = IsinRegistry(MemoryStorage(IsinRecord))
+            registry.register_isin("DE0001234567")
+            add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="New Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "bond_portfolio",
+            )
+
+            existing = IsinRegistry(MemoryStorage(IsinRecord))
+            existing.register_isin("DE0007654321", bucket="equity_portfolio")
+            add_constituent(
+                db_file,
+                "bond_portfolio",
+                name="Existing Equity",
+                isin="DE0007654321",
+                broker="scalable",
+                registry=existing,
+            )
+            self.assertEqual(
+                existing.get_bucket_for_isin("DE0007654321"),
+                "equity_portfolio",
+            )
+
+    def test_add_uses_cache_to_decide_whether_a_full_update_is_needed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            price_only = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="Price Only",
+                isin="DE0001234567",
+                broker="scalable",
+                cache={"DE0001234567": {"price": 10.0}},
+            )
+            self.assertTrue(price_only["needs_full_update"])
+
+            with_splits = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="With Splits",
+                isin="DE0007654321",
+                broker="scalable",
+                cache={
+                    "DE0007654321": {
+                        "price": 10.0,
+                        "countries": {"Germany": 1.0},
+                        "sectors": {"Financials": 1.0},
+                    }
+                },
+            )
+            self.assertFalse(with_splits["needs_full_update"])
+
     def test_minimal_row_defaults_to_nulls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
@@ -1685,10 +1796,10 @@ class TestAddConstituent(unittest.TestCase):
             self.assertFalse(display["editable_shares"])
             self.assertTrue(display["editable_value"])
 
-    def test_rejects_junk_and_leaves_file_untouched(self) -> None:
+    def test_rejects_junk_and_leaves_store_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
+            before = read_positions(assets)
             for kwargs in [
                 {"name": "X", "broker": "nope"},
                 {"name": "   ", "broker": "scalable"},
@@ -1702,8 +1813,8 @@ class TestAddConstituent(unittest.TestCase):
                 with self.subTest(kwargs=kwargs):
                     with self.assertRaises(ValueError):
                         add_constituent(assets, "equity_portfolio", **kwargs)
-            # Junk rows are rejected and leave the file untouched...
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+            # Junk rows are rejected and leave the store untouched...
+            self.assertEqual(read_positions(assets), before)
             # ...while an unknown bucket is created, so the first row of a
             # class the user does not hold yet can be added.
             add_constituent(assets, "nope", name="X", broker="scalable")
@@ -1713,9 +1824,9 @@ class TestAddConstituent(unittest.TestCase):
 
 class TestDeleteConstituent(unittest.TestCase):
     def _assets(self, tmp: Path) -> Path:
-        assets = tmp / "assets.json"
-        assets.write_text(json.dumps({"default": user_payload(_ASSETS)}), encoding="utf-8")
-        return assets
+        db_file = db_path(tmp)
+        write_positions(db_file, _ASSETS)
+        return db_file
 
     def test_delete_removes_row_and_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1729,23 +1840,22 @@ class TestDeleteConstituent(unittest.TestCase):
             )
             # Other buckets are untouched.
             self.assertEqual(len(data["cash_portfolio"]), 2)
-            json.loads(assets.read_text(encoding="utf-8"))
 
     def test_delete_last_row_empties_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text(
-                json.dumps({"default": user_payload({"equity_portfolio": [{"name": "Solo"}]})})
+            assets = db_path(tmp)
+            write_positions(
+                assets, {"equity_portfolio": [{"name": "Solo"}]}
             )
             result = delete_constituent(assets, "equity_portfolio", 0)
             self.assertEqual(result, {"deleted": True, "rows": 0})
             data = _positions(assets, "default")
-            self.assertEqual(data["equity_portfolio"], [])
+            self.assertEqual(data.get("equity_portfolio", []), [])
 
-    def test_rejects_bad_address_and_leaves_file_untouched(self) -> None:
+    def test_rejects_bad_address_and_leaves_store_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             assets = self._assets(Path(tmp))
-            before = assets.read_text(encoding="utf-8")
+            before = read_positions(assets)
             for bucket, index in [
                 ("nope", 0),
                 ("equity_portfolio", 2),
@@ -1757,7 +1867,7 @@ class TestDeleteConstituent(unittest.TestCase):
                 with self.subTest(bucket=bucket, index=index):
                     with self.assertRaises(ValueError):
                         delete_constituent(assets, bucket, index)
-            self.assertEqual(assets.read_text(encoding="utf-8"), before)
+            self.assertEqual(read_positions(assets), before)
 
 
 class TestNumberFormatting(unittest.TestCase):
@@ -1775,11 +1885,10 @@ class TestNumberFormatting(unittest.TestCase):
         }
         cache = {"IE00X": {"price": 81.256}}
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text(json.dumps(cache), encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, cache)
+            sections = load_constituents(db_file)
         return render_constituents_page(sections)
 
     def test_exactly_two_decimals(self) -> None:
@@ -1830,11 +1939,10 @@ class TestNumberFormatting(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, {})
+            sections = load_constituents(db_file)
         page = render_constituents_page(sections)
         self.assertIn('src="icons/alte-leipziger.png"', page)
 
@@ -1851,11 +1959,10 @@ class TestNumberFormatting(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            assets_path = Path(tmp) / "assets.json"
-            cache_path = Path(tmp) / "cache.json"
-            assets_path.write_text(json.dumps({"default": user_payload(assets)}), encoding="utf-8")
-            cache_path.write_text("{}", encoding="utf-8")
-            sections = load_constituents(assets_path, cache_path)
+            db_file = db_path(tmp)
+            write_positions(db_file, assets)
+            write_cache(db_file, {})
+            sections = load_constituents(db_file)
         page = render_constituents_page(sections)
         self.assertIn('src="icons/check24.png"', page)
 
@@ -1871,8 +1978,8 @@ class TestNumberFormatting(unittest.TestCase):
         self.assertIn("td.name", css)
         self.assertIn("text-align: right", css)
         with tempfile.TemporaryDirectory() as tmp:
-            assets, cache = _write_files(Path(tmp))
-            sections = load_constituents(assets, cache)
+            db_file = _write_files(Path(tmp))
+            sections = load_constituents(db_file)
         page = render_constituents_page(sections)
         self.assertIn('<td class="name"', page)
 
@@ -1925,7 +2032,7 @@ class _RouteCase(unittest.TestCase):
         self.root.mkdir()
         (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
         (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
-        self.assets, self.cache = _write_files(tmp)
+        self.db = _write_files(tmp)
         self.users = _write_users(tmp)
         # Updates run in stubbed child processes (threads), so
         # ``cli.update.main`` patches apply and no real worker spawns.
@@ -1946,9 +2053,7 @@ class _RouteCase(unittest.TestCase):
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
-            assets_file=str(self.assets),
-            cache_file=str(self.cache),
-            users_file=str(self.users),
+            db_file=str(self.db),
         )
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.port = self._httpd.server_address[1]
@@ -2070,8 +2175,8 @@ class TestConstituentsRoute(_RouteCase):
 
     def test_constituents_shows_the_session_users_portfolio(self) -> None:
         # The store knows a second user: their session shows their rows.
-        data = json.loads(self.assets.read_text(encoding="utf-8"))
-        data["alice"] = user_payload(
+        write_positions(
+            self.db,
             {
                 "equity_portfolio": [
                     {
@@ -2082,13 +2187,11 @@ class TestConstituentsRoute(_RouteCase):
                         "ISIN": None,
                     }
                 ]
-            }
+            },
+            user="alice",
         )
-        self.assets.write_text(json.dumps(data), encoding="utf-8")
-        # Logging in needs an account in the users store.
-        accounts = json.loads(self.users.read_text(encoding="utf-8"))
-        accounts["alice"] = {"password": ""}
-        self.users.write_text(json.dumps(accounts), encoding="utf-8")
+        # Logging in needs an account in the users table.
+        write_users(self.db, {"alice": ""})
         cookie = self._login("alice")
         status, body = self._get("/constituents", cookie=cookie)
         self.assertEqual(status, 200)
@@ -2121,16 +2224,16 @@ class TestConstituentsRoute(_RouteCase):
     def test_an_expired_session_is_no_session(self) -> None:
         # The session store expires sessions after 30 minutes: an
         # expired cookie is worth nothing, so the login page comes back.
+        import sqlite3
         import time
 
-        from visual.web.backend.session import store_path
-
         cookie = self.cookie
-        path = store_path(self.root)
-        store = json.loads(path.read_text(encoding="utf-8"))
         session_id = cookie.split("=", 1)[1]
-        store[session_id]["expires_at"] = time.time() - 1
-        path.write_text(json.dumps(store), encoding="utf-8")
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE session_id = ?",
+                (time.time() - 1, session_id),
+            )
         status, _, body = self._raw("/api/session", cookie=cookie)
         self.assertEqual(status, 200)
         self.assertIsNone(json.loads(body)["user"])
@@ -2250,7 +2353,7 @@ class TestConstituentsRoute(_RouteCase):
         self.assertEqual(payload["shares"], 230.5)
         self.assertAlmostEqual(payload["value"], 230.5 * 81.25)
         self.assertTrue(payload["recomputed"])
-        data = _positions(self.assets, "default")
+        data = _positions(self.db, "default")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 230.5)
         self.assertAlmostEqual(data["equity_portfolio"][0]["value"], 230.5 * 81.25)
 
@@ -2277,7 +2380,7 @@ class TestConstituentsRoute(_RouteCase):
         payload = json.loads(body)
         self.assertEqual(payload["short_name"], "Amundi")
         self.assertTrue(payload["recomputed"])
-        data = _positions(self.assets, "default")
+        data = _positions(self.db, "default")
         self.assertEqual(data["equity_portfolio"][0]["short_name"], "Amundi")
         self.assertEqual(data["equity_portfolio"][0]["shares"], 220)
 
@@ -2287,14 +2390,14 @@ class TestConstituentsRoute(_RouteCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"order": [1, 0]})
-        data = _positions(self.assets, "default")
+        data = _positions(self.db, "default")
         self.assertEqual(
             [row["name"] for row in data["equity_portfolio"]],
             ["Trade Republic ETF", "Amundi Core"],
         )
 
     def test_post_order_rejects_junk_and_leaves_file_untouched(self) -> None:
-        before = self.assets.read_text(encoding="utf-8")
+        before = read_positions(self.db)
         for payload in [
             {"bucket": "nope", "order": [0, 1]},
             {"bucket": "equity_portfolio", "order": [0, 0]},
@@ -2305,7 +2408,7 @@ class TestConstituentsRoute(_RouteCase):
             with self.subTest(payload=payload):
                 status, _ = self._post_order(payload)
                 self.assertEqual(status, 400)
-        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        self.assertEqual(read_positions(self.db), before)
 
     def test_post_delete_persists_to_disk(self) -> None:
         status, body = self._post_delete(
@@ -2313,14 +2416,14 @@ class TestConstituentsRoute(_RouteCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"deleted": True, "rows": 1})
-        data = _positions(self.assets, "default")
+        data = _positions(self.db, "default")
         self.assertEqual(
             [row["name"] for row in data["equity_portfolio"]],
             ["Trade Republic ETF"],
         )
 
     def test_post_delete_rejects_junk_and_leaves_file_untouched(self) -> None:
-        before = self.assets.read_text(encoding="utf-8")
+        before = read_positions(self.db)
         for payload in [
             {"bucket": "nope", "index": 0},
             {"bucket": "equity_portfolio", "index": 5},
@@ -2331,26 +2434,36 @@ class TestConstituentsRoute(_RouteCase):
             with self.subTest(payload=payload):
                 status, _ = self._post_delete(payload)
                 self.assertEqual(status, 400)
-        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        self.assertEqual(read_positions(self.db), before)
 
     def test_post_name_persists_the_portfolio_name(self) -> None:
         status, body = self._post_name({"name": "My Portfolio"})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"name": "My Portfolio"})
-        stored = json.loads(self.assets.read_text(encoding="utf-8"))["default"]
-        self.assertEqual(stored["portfolio_name"], "My Portfolio")
+        self.assertEqual(
+            assets_portfolio_name(self.db, "default"), "My Portfolio"
+        )
         # The positions are untouched.
-        self.assertIn("equity_portfolio", stored["positions"])
+        self.assertIn("equity_portfolio", read_positions(self.db))
         # The page shows the new name.
         status, page = self._get("/constituents")
         self.assertEqual(status, 200)
         self.assertIn('value="My Portfolio"', page)
 
     def test_post_name_rejects_a_blank_name(self) -> None:
-        before = self.assets.read_text(encoding="utf-8")
+        before = (
+            assets_portfolio_name(self.db, "default"),
+            read_positions(self.db),
+        )
         status, _ = self._post_name({"name": "   "})
         self.assertEqual(status, 400)
-        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        self.assertEqual(
+            (
+                assets_portfolio_name(self.db, "default"),
+                read_positions(self.db),
+            ),
+            before,
+        )
 
     def test_post_name_needs_a_session(self) -> None:
         status, headers, _ = self._raw(
@@ -2378,15 +2491,46 @@ class TestConstituentsRoute(_RouteCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertEqual(payload["index"], 2)
+        self.assertTrue(payload["needs_full_update"])
         self.assertIn("<tr ", payload["row"])
         self.assertIn("New Fund", payload["row"])
         self.assertIn('data-index="2"', payload["row"])
-        data = _positions(self.assets, "default")
+        data = _positions(self.db, "default")
         self.assertEqual(data["equity_portfolio"][2]["name"], "New Fund")
         self.assertEqual(data["equity_portfolio"][2]["ISIN"], "IE000BI8OT95")
+        registry = read_isin(self.db)
+        self.assertEqual(
+            registry["IE000BI8OT95"]["bucket"], "equity_portfolio"
+        )
+
+    def test_post_add_skips_full_update_when_geo_sector_cache_exists(self) -> None:
+        write_cache(
+            self.db,
+            {
+                "DE0001234567": {
+                    "price": 10.0,
+                    "countries": {"Germany": 1.0},
+                    "sectors": {"Financials": 1.0},
+                }
+            },
+        )
+        status, body = self._post_add(
+            {
+                "bucket": "bond_portfolio",
+                "name": "Cached Bond",
+                "isin": "DE0001234567",
+                "value": 100,
+                "broker": "scalable",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertFalse(payload["needs_full_update"])
+        registry = read_isin(self.db)
+        self.assertEqual(registry["DE0001234567"]["bucket"], "bond_portfolio")
 
     def test_post_add_rejects_junk_and_leaves_file_untouched(self) -> None:
-        before = self.assets.read_text(encoding="utf-8")
+        before = read_positions(self.db)
         for payload in [
             {"bucket": "equity_portfolio", "name": "   ", "broker": "scalable"},
             {"bucket": "equity_portfolio", "name": "X", "broker": "nope"},
@@ -2399,12 +2543,12 @@ class TestConstituentsRoute(_RouteCase):
             with self.subTest(payload=payload):
                 status, _ = self._post_add(payload)
                 self.assertEqual(status, 400)
-        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        self.assertEqual(read_positions(self.db), before)
         # An unknown bucket is created instead of rejected, so a fresh user
         # can add a row to a class they hold nothing in yet.
         status, _ = self._post_add({"bucket": "nope", "name": "X", "broker": "scalable"})
         self.assertEqual(status, 200)
-        stored = _positions(self.assets, "default")
+        stored = _positions(self.db, "default")
         self.assertEqual([row["name"] for row in stored["nope"]], ["X"])
 
     def test_get_brokers_lists_marks(self) -> None:
@@ -2444,7 +2588,7 @@ class TestConstituentsRoute(_RouteCase):
                 self.assertEqual(status, 400)
 
     def test_post_rejects_junk_and_leaves_file_untouched(self) -> None:
-        before = self.assets.read_text(encoding="utf-8")
+        before = read_positions(self.db)
         for payload in [
             {"bucket": "nope", "index": 0, "field": "shares", "value": "1"},
             {"bucket": "equity_portfolio", "index": 9, "field": "shares", "value": "1"},
@@ -2456,7 +2600,7 @@ class TestConstituentsRoute(_RouteCase):
             with self.subTest(payload=payload):
                 status, _ = self._post(payload)
                 self.assertEqual(status, 400)
-        self.assertEqual(self.assets.read_text(encoding="utf-8"), before)
+        self.assertEqual(read_positions(self.db), before)
 
     def test_post_unknown_endpoint_is_404(self) -> None:
         req = urllib.request.Request(
@@ -2501,8 +2645,7 @@ class TestConstituentsRoute(_RouteCase):
         self.assertFalse(hasattr(config, "plot_incognito"))
         self.assertEqual(seen["level"], logging.ERROR)
         self.assertEqual(logging.getLogger().level, before)
-        self.assertEqual(str(config.assets_file), str(self.assets))
-        self.assertEqual(str(config.cache_file), str(self.cache))
+        self.assertEqual(str(config.server.db_file), str(self.db))
         # The update runs for the session user (no ?user= parameter).
         self.assertEqual(config.user, _USER)
 
@@ -2554,7 +2697,7 @@ class TestConstituentsRoute(_RouteCase):
             config.plotter_config.output_dir, ini.parent / "plots"
         )
         # Explicit handler arguments still win over ini.
-        self.assertEqual(str(config.assets_file), str(self.assets))
+        self.assertEqual(str(config.server.db_file), str(self.db))
 
     def test_post_update_fat_mode_sets_fetch(self) -> None:
         import logging
@@ -2747,12 +2890,17 @@ class TestConstituentsRoute(_RouteCase):
         ).read_text(encoding="utf-8")
         self.assertIn("sync-spin", css)
 
-    def test_missing_files_yield_502_without_traceback(self) -> None:
+    def test_missing_portfolios_yield_502_without_traceback(self) -> None:
+        import sqlite3
+
+        # The session survives, but the database holds no portfolio at all:
+        # the constituents page cannot render and must fail cleanly.
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DELETE FROM user_portfolios")
         handler = functools.partial(
             DashboardHandler,
             directory=str(self.root),
-            assets_file=str(self.root / "nope.json"),
-            cache_file=str(self.cache),
+            db_file=str(self.db),
         )
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         port = httpd.server_address[1]
@@ -2760,8 +2908,7 @@ class TestConstituentsRoute(_RouteCase):
         thread.start()
         self.addCleanup(httpd.shutdown)
         req = urllib.request.Request(f"http://127.0.0.1:{port}/constituents")
-        # The session store lives in the served directory, so this
-        # server knows the session of the test.
+        # The session lives in the same database, so this server knows it.
         req.add_header("Cookie", self.cookie)
         try:
             urllib.request.urlopen(req)
@@ -3068,6 +3215,218 @@ class TestUpdateUnits(unittest.TestCase):
         self.assertFalse(_terminate_process(proc))
         proc.terminate.assert_called_once_with()
         proc.kill.assert_called_once_with()
+
+
+class TestDatabaseBackendRoute(unittest.TestCase):
+    """The route with the database backend: every store is one table.
+
+    The server is started the way the sqlite backend starts it: no
+    per-store files, just the database. The price cache is a table
+    there too, so an edit finds the quote and recomputes the sibling
+    figure - the red flare means it did not.
+    """
+
+    def setUp(self) -> None:
+        self._holder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._holder.cleanup)
+        tmp = Path(self._holder.name)
+        self.root = tmp / "visualizer"
+        self.root.mkdir()
+        (self.root / "index.html").write_text("DASHBOARD", encoding="utf-8")
+        (self.root / "login.html").write_text("LOGIN PAGE", encoding="utf-8")
+        self.db = tmp / "asalloc.db"
+        self._seed()
+        handler = functools.partial(
+            DashboardHandler,
+            directory=str(self.root),
+            db_file=str(self.db),
+        )
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.addCleanup(self._httpd.shutdown)
+        # Log in: the session lives in the database too.
+        self.cookie = _login_cookie(self.port, _USER)
+
+    def _seed(self) -> None:
+        """The stores in the database: the portfolio, the quotes, the account."""
+        from storage.records import (
+            CacheEntry,
+            PositionRecord,
+            UserPortfolioRecord,
+            UserRecord,
+        )
+        from storage.sqlite_storage import SqliteStorage
+
+        cache = SqliteStorage(self.db, "cache", CacheEntry)
+        cache.open()
+        for isin, entry in _CACHE.items():
+            cache.put(CacheEntry(isin, entry))
+        users = SqliteStorage(self.db, "users", UserRecord)
+        users.open()
+        users.put(UserRecord(_USER, {"password": ""}))
+        users.persist()
+
+        portfolios = SqliteStorage(self.db, "user_portfolios", UserPortfolioRecord)
+        portfolios.open()
+        portfolios.put(
+            UserPortfolioRecord(_USER, {"portfolio_name": "Portfolio"})
+        )
+
+        positions = SqliteStorage(self.db, "user_positions", PositionRecord)
+        positions.open()
+        for bucket, positions_data in _ASSETS.items():
+            for idx, pos in enumerate(positions_data):
+                positions.put(
+                    PositionRecord(
+                        username=_USER,
+                        bucket=bucket,
+                        position_idx=idx,
+                        name=pos.get("name", ""),
+                        short_name=pos.get("short_name"),
+                        isin=pos.get("ISIN"),
+                        value=pos.get("value"),
+                        shares=pos.get("shares"),
+                        broker=pos.get("broker"),
+                        dmem=pos.get("DMEM"),
+                        dmem_other=pos.get("DMEM_OTHER"),
+                        usavn=pos.get("USAVN"),
+                    )
+                )
+
+        portfolios.persist()
+        positions.persist()
+
+    def _get(self, path: str) -> tuple[int, str]:
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        req.add_header("Cookie", self.cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def _post(self, payload: dict) -> tuple[int, str]:
+        return self._post_json("/api/constituents", payload)
+
+    def _post_json(self, path: str, payload: dict) -> tuple[int, str]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        req.add_header("Cookie", self.cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace")
+
+    def test_add_registers_the_bucket_in_the_database(self) -> None:
+        import sqlite3
+
+        status, body = self._post_json(
+            "/api/constituents/add",
+            {
+                "bucket": "bond_portfolio",
+                "name": "New Bond",
+                "isin": "DE0001234567",
+                "value": 100,
+                "broker": "scalable",
+            },
+        )
+        self.assertEqual(status, 200, body)
+        self.assertTrue(json.loads(body)["needs_full_update"])
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT bucket FROM isin_registry WHERE isin = ?",
+                ("DE0001234567",),
+            ).fetchone()
+        self.assertEqual(row, ("bond_portfolio",))
+
+    def test_login_stores_a_thirty_minute_session(self) -> None:
+        import sqlite3
+
+        from visual.web.backend.session import SESSION_TTL_SECONDS
+
+        session_id = self.cookie.split("=", 1)[1]
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT username, incognito, expires_at FROM sessions "
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], _USER)
+        self.assertFalse(bool(row[1]))
+        now = time.time()
+        self.assertGreater(row[2], now)
+        self.assertLessEqual(row[2], now + SESSION_TTL_SECONDS + 5)
+
+    def test_an_expired_session_row_is_dropped(self) -> None:
+        import sqlite3
+
+        session_id = self.cookie.split("=", 1)[1]
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE session_id = ?",
+                (time.time() - 1, session_id),
+            )
+        status, body = self._get("/api/session")
+        self.assertEqual(status, 200, body)
+        self.assertIsNone(json.loads(body)["user"])
+        with sqlite3.connect(self.db) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_the_page_shows_the_quotes_from_the_database(self) -> None:
+        status, body = self._get("/constituents")
+        self.assertEqual(status, 200, body)
+        self.assertIn("Amundi Core", body)
+        self.assertIn("81.25", body)
+
+    def test_an_edit_recomputes_the_sibling_figure(self) -> None:
+        # The quote is in the database: the edit finds it and
+        # recomputes the value (no red flare).
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 1,
+                "field": "shares",
+                "value": "12",
+            }
+        )
+        self.assertEqual(status, 200, body)
+        data = json.loads(body)
+        self.assertTrue(data["recomputed"], body)
+        self.assertEqual(data["shares"], 12.0)
+        self.assertAlmostEqual(data["value"], 12.0 * 99.5)
+
+    def test_the_edit_is_stored_in_the_database(self) -> None:
+        from storage.records import PositionRecord
+        from storage.repositories import PositionRepository
+        from storage.sqlite_storage import SqliteStorage
+
+        status, body = self._post(
+            {
+                "bucket": "equity_portfolio",
+                "index": 1,
+                "field": "value",
+                "value": "199",
+            }
+        )
+        self.assertEqual(status, 200, body)
+        repo = PositionRepository(
+            SqliteStorage(self.db, "user_positions", PositionRecord)
+        )
+        rows = repo.get_for_bucket(_USER, "equity_portfolio")
+        self.assertAlmostEqual(rows[1]["shares"], 199.0 / 99.5)
+        self.assertEqual(rows[1]["ISIN"], _ASSETS["equity_portfolio"][1]["ISIN"])
 
 
 if __name__ == "__main__":

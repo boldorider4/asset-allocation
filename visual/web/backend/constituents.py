@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Constituents view: read-only rendering of the assets file.
+"""Constituents view over the SQLite database.
 
 Separated from the ``asalloc update`` execution path by design: this module
-knows nothing about ``RuntimeContext``, scrapes, or portfolios. It reads
-``assets.json`` and ``cache.json`` from disk on every call, so the page is
-always fresh after an update. Nothing here persists anything anywhere.
+knows nothing about ``RuntimeContext``, scrapes, or portfolios. It reads the
+positions and cache tables on every call, so the page is always fresh after
+an update.
 """
 
 from __future__ import annotations
 
 import html
-import json
+import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from cli.common import (
@@ -28,8 +27,14 @@ from cli.common import (
     USAVN,
     VALUE,
 )
-from storage.repositories import AssetRepository, UnknownUser
-from storage.wiring import BACKEND_JSON, DEFAULT_POSTGRES_DSN, assets_backend
+from storage.repositories import AssetRepository, IsinRegistry, UnknownUser
+from storage.wiring import (
+    cache_backend,
+    positions_backend,
+    user_portfolios_backend,
+)
+
+logger = logging.getLogger(__name__)
 
 # Canonical section order with display labels; unknown bucket keys are
 # appended after these, prettified.
@@ -157,26 +162,22 @@ def _has_isin(isin: Any) -> bool:
     return isinstance(isin, str) and bool(isin.strip())
 
 
-def _assets_repo(
-    assets_path: str | Path,
-    user: str,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> AssetRepository:
-    """Repository over the assets store, scoped to one user."""
+def _assets_repo(db_file: str, user: str) -> AssetRepository:
+    """Repository over the positions store, scoped to one user."""
+    from storage.repositories import AssetRepository, PositionRepository, UserPortfolioRepository
+
+    position_repo = PositionRepository(positions_backend(db_file))
+    portfolio_repo = UserPortfolioRepository(
+        user_portfolios_backend(db_file)
+    )
     return AssetRepository(
-        user, assets_backend(assets_path, backend, postgres_dsn)
+        user, position_repo=position_repo, portfolio_repo=portfolio_repo
     )
 
 
-def assets_positions_left(
-    assets_path: str | Path,
-    user: str,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> int:
+def assets_positions_left(db_file: str, user: str) -> int:
     """How many positions the user still holds (0 = empty portfolio)."""
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     return sum(
         len(rows)
@@ -185,13 +186,8 @@ def assets_positions_left(
     )
 
 
-def ensure_assets_user(
-    assets_path: str | Path,
-    user: str,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> bool:
-    """Make sure the assets store holds a row for ``user``.
+def ensure_assets_user(db_file: str, user: str) -> bool:
+    """Make sure the store holds a portfolio row for ``user``.
 
     Returns True when a row was created. A user who logs in for the
     first time gets an empty portfolio row, so the dashboard and the
@@ -200,40 +196,34 @@ def ensure_assets_user(
     An existing portfolio is never touched: the row is only created
     when the user has none yet.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     if repo.exists():
         return False
-    # No buckets yet: restore() creates the (empty) row for this user.
-    repo.restore({})
+    # No buckets yet: create the (empty) portfolio row itself. A bare
+    # restore({}) writes no row, because the portfolio name is optional.
+    created = repo.portfolio_repo.ensure_exists(user)
     repo.persist()
-    return True
+    return created
 
 
-def assets_portfolio_name(
-    assets_path: str | Path,
-    user: str,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
-) -> str:
+def assets_portfolio_name(db_file: str, user: str) -> str:
     """The name of the user's portfolio (the charts are titled with it)."""
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     return repo.portfolio_name
 
 
 def store_portfolio_name(
-    assets_path: str | Path,
+    db_file: str,
     name: Any,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> dict[str, Any]:
-    """Persist the name of the user's portfolio (atomic write).
+    """Persist the name of the user's portfolio.
 
     The name belongs to the portfolio, not to a row, so it is stored on
     the user's own record. Raises ``ValueError`` for a blank or
-    oversized name; the file stays untouched then.
+    oversized name; the store stays untouched then.
     """
     if not isinstance(name, str) or not name.strip():
         raise ValueError("portfolio name must be a non-blank string")
@@ -242,19 +232,43 @@ def store_portfolio_name(
         raise ValueError(
             f"portfolio name must be at most {_PORTFOLIO_NAME_MAXLEN} characters"
         )
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     repo.set_portfolio_name(text)
     repo.persist()
     return {"name": text}
 
 
+def cache_lookup(db_file: str) -> dict[str, Any]:
+    """The cache as a plain ``{isin: row}`` map (price, countries, sectors).
+
+    A broken store yields an empty map — the page then shows no prices
+    instead of failing.
+    """
+    from storage.repositories import CacheRepository
+
+    try:
+        repo = CacheRepository(cache_backend(db_file))
+        repo.open()
+        return repo.snapshot()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("cache in %s unreadable (%s); showing no prices", db_file, exc)
+        return {}
+
+
+def _has_geosector_cache(cache: dict[str, Any] | None, isin: str | None) -> bool:
+    """True when the cache holds country or sector data for ``isin``."""
+    if not isin or not cache:
+        return False
+    row = cache.get(isin)
+    if not isinstance(row, dict):
+        return False
+    return bool(row.get("countries")) or bool(row.get("sectors"))
+
+
 def load_constituents(
-    assets_path: str | Path,
-    cache_path: str | Path,
+    db_file: str,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> list[tuple[str, str, list[dict[str, Any]]]]:
     """Read one user's assets + the shared cache into display sections.
 
@@ -263,24 +277,18 @@ def load_constituents(
     a fresh user can add rows to any class; extra buckets the user has
     (outside the canonical set) are appended after them.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     if not repo.exists():
         if repo.store_is_empty():
-            # No portfolios at all: the store is missing or empty, which
+            # No portfolios at all: the database has no portfolios, which
             # is a misconfiguration rather than an unknown user.
             raise RuntimeError(
-                f"assets store {assets_path} holds no portfolios"
+                f"database {db_file} holds no portfolios"
             )
         raise UnknownUser(user)
     assets = repo.snapshot()
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            cache = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        cache = {}
-    if not isinstance(cache, dict):
-        cache = {}
+    cache = cache_lookup(db_file)
 
     known = {key for key, _ in SECTION_ORDER}
     # Canonical classes first (always, even when empty), then any extra
@@ -394,17 +402,15 @@ def _parse_stored_value(raw: Any) -> float:
 
 
 def store_constituent_value(
-    assets_path: str | Path,
+    db_file: str,
     bucket: str,
     index: int,
     field: str,
     raw_value: Any,
     cache: dict[str, Any] | None = None,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> dict[str, Any]:
-    """Persist one editable cell into the assets file (atomic write).
+    """Persist one editable cell into the database.
 
     The sibling figure is recomputed immediately from the cached quote so
     the stored pair stays consistent: shares edits set
@@ -421,7 +427,7 @@ def store_constituent_value(
     """
     if field not in ("shares", "value", "short_name"):
         raise ValueError(f"field must be shares, value or short_name, got {field!r}")
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -461,18 +467,16 @@ def store_constituent_value(
 
 
 def reorder_constituents(
-    assets_path: str | Path,
+    db_file: str,
     bucket: str,
     order: list[int],
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> dict[str, Any]:
-    """Persist a new row order for one bucket (atomic write).
+    """Persist a new row order for one bucket.
 
     ``order`` must be an exact permutation of the row indices: every
     index exactly once. Anything else raises ``ValueError`` and leaves
-    the file untouched, so a reorder can never drop or duplicate rows.
+    the store untouched, so a reorder can never drop or duplicate rows.
 
     Returns ``{"order": [...]}`` echoing the stored order.
     """
@@ -484,7 +488,7 @@ def reorder_constituents(
         or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
     ):
         raise ValueError(f"order must be a non-empty list of indices, got {order!r}")
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -499,21 +503,19 @@ def reorder_constituents(
 
 
 def delete_constituent(
-    assets_path: str | Path,
+    db_file: str,
     bucket: str,
     index: int,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> dict[str, Any]:
-    """Delete one row from a bucket (atomic write).
+    """Delete one row from a bucket.
 
     Raises ``ValueError`` for unknown buckets or out-of-range indices
-    and leaves the file untouched.
+    and leaves the store untouched.
 
     Returns ``{"deleted": True, "rows": n}`` with the remaining row count.
     """
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -540,7 +542,7 @@ _ISIN_SHAPE_RE = re.compile(r"^[A-Za-z0-9]{12}$")
 
 
 def add_constituent(
-    assets_path: str | Path,
+    db_file: str,
     bucket: str,
     *,
     name: Any = None,
@@ -550,15 +552,19 @@ def add_constituent(
     shares: Any = None,
     broker: Any = None,
     cache: dict[str, Any] | None = None,
+    registry: IsinRegistry | None = None,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
-    postgres_dsn: str = DEFAULT_POSTGRES_DSN,
 ) -> dict[str, Any]:
-    """Append a new row to a bucket (atomic write).
+    """Append a new row to a bucket.
 
     Blank ISIN becomes null (displayed as "—", no quote); otherwise it
     must be a 12-character alphanumeric ISIN. ``broker`` must be a known
     broker id. Numbers accept the same shapes as cell edits.
+
+    A non-empty ISIN is registered under *bucket* when ``registry`` is
+    given; existing registry fields are left untouched (a wrong bucket is
+    preserved). The display row reports ``needs_full_update`` when the
+    cache has no country or sector data for the ISIN.
 
     Returns the display row (same shape as :func:`load_constituents`
     rows) for rendering.
@@ -576,7 +582,7 @@ def add_constituent(
     parsed_value = None if value is None else _parse_stored_value(value)
     parsed_shares = None if shares is None else _parse_stored_value(shares)
     clean_short = _parse_stored_text("" if short_name is None else short_name)
-    repo = _assets_repo(assets_path, user, backend, postgres_dsn)
+    repo = _assets_repo(db_file, user)
     repo.open()
     assets = repo.snapshot()
     rows = assets.get(bucket)
@@ -600,6 +606,10 @@ def add_constituent(
     }
     rows.append(stored)
     index = len(rows) - 1
+    if registry is not None and clean_isin is not None:
+        registry.open()
+        registry.register_isin(clean_isin, bucket=bucket)
+        registry.persist()
     repo.restore(assets)
     repo.persist()
     price = _cached_price_for(cache, clean_isin)
@@ -618,6 +628,10 @@ def add_constituent(
         "editable_shares": SHARES in fields,
         "editable_value": VALUE in fields,
         "no_quote": not _has_isin(clean_isin),
+        "needs_full_update": bool(
+            clean_isin
+            and not _has_geosector_cache(cache, clean_isin)
+        ),
     }
 
 

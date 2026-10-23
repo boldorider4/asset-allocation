@@ -11,7 +11,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 from position.factory import factory
 from position.justetf_position import JustETFPosition
 from position.position import Position
@@ -46,9 +46,7 @@ class TestSectorTableParsing(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=False,
                 fetch_sectorsplit=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         ctx.cache = {}
@@ -170,9 +168,7 @@ class TestJustETFSectorScrapeFailure(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 fetch_sectorsplit=True,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -237,9 +233,7 @@ class TestSectorCacheUtils(unittest.TestCase):
         tmp = Path(holder.name)
         ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         ctx.cache = {}
@@ -261,9 +255,7 @@ class TestFactorySectorFlags(unittest.TestCase):
         tmp = Path(self._holder.name)
         self.ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {

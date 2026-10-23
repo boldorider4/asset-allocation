@@ -75,7 +75,7 @@ def _scrape_holdings_value_prevails(
         return False
     # A live ``--fetch-<broker>`` scrape always wins over shares × quote.
     # Without ``--fetch-prices``, an earlier scrape (or a previous
-    # ``--fetch-prices`` write) in the assets file stays authoritative.
+    # ``--fetch-prices`` write) in the store stays authoritative.
     return fresh_scrape or not ctx.config.fetch_prices
 
 
@@ -292,7 +292,7 @@ def factory(
 
     # A fetched quote is always written back to the cache (even without
     # ``--fetch-prices``) when the row had no cached price, so the cost of a
-    # live fetch is paid once; the assets file never stores a price.
+    # live fetch is paid once; the store never stores a price.
     # Staged in-memory; flushed once at end of run.
     update_price = (
         (fetch_prices or cached_price is None)

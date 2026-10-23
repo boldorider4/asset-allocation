@@ -9,7 +9,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 from position.justetf_position import JustETFPosition
 
 _ISIN = "LU1547515137"
@@ -26,8 +26,7 @@ class TestJustETFCountryScrapeFailure(unittest.TestCase):
         self.ctx = RuntimeContext(
             config=AppConfig(
                 fetch_geosplit=True,
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -74,8 +73,7 @@ class TestJustETFCountryScrapeFailure(unittest.TestCase):
         ctx = RuntimeContext(
             config=AppConfig(
                 fetch_prices=True,
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         ctx.cache = {}
@@ -93,8 +91,7 @@ class TestJustETFCountryScrapeFailure(unittest.TestCase):
         ctx = RuntimeContext(
             config=AppConfig(
                 fetch_prices=True,
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         ctx.cache = {}

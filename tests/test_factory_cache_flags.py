@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 from portfolio.portfolio import Portfolio
 from position.factory import factory
 from position.justetf_position import JustETFPosition
@@ -27,9 +27,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         tmp = Path(self._holder.name)
         self.ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {
@@ -212,7 +210,7 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(pos.shares, 199.0 / 99.5)
         self.assertEqual(pos.value, 199.0)
         row = self.ctx.portfolio["equity_portfolio"][0]
-        # The fetched quote belongs in cache.json only, never in the asset file.
+        # The fetched quote belongs in the cache only, never in the position rows.
         self.assertNotIn("price", row)
         self.assertEqual(row["shares"], 199.0 / 99.5)
         write.assert_called_once()

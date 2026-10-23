@@ -107,13 +107,12 @@ _SPLIT_TOTAL_TOLERANCE = 1.0
 # warning so methodology shifts stay visible.
 _SPLIT_TOTAL_OVERSHOOT_TOLERANCE = 2.0
 
-# Dust band (percentage points) for tiny negative split weights: vendors
-# (notably the DWS holdings API behind Xtrackers positions) occasionally
-# report small negative offsets (e.g. cash/accrual rows around -0.0003) from
-# float arithmetic. Weights in ``(-band, 0)`` are snapped to 0.0 with a
-# warning; genuinely negative weights pass through untouched so the strict
-# cache validator still rejects them.
-_SPLIT_DUST_TOLERANCE = 0.01
+# Negative split weights below 0.5 percentage points are vendor noise (e.g.
+# cash/accrual offsets from the DWS holdings API behind Xtrackers positions).
+# Such a slice is dropped and the remaining weights are renormalized;
+# genuinely negative weights of 0.5pp or more pass through untouched so the
+# strict cache validator still rejects them.
+_SPLIT_NEGATIVE_TOLERANCE = 0.5
 
 
 def normalize_split_rows(
@@ -121,39 +120,39 @@ def normalize_split_rows(
 ) -> list[dict[str, float | str]] | None:
     """Rescale split rows (``weight_pct``) to sum exactly 100 when plausible.
 
-    Tiny negative weights within ``_SPLIT_DUST_TOLERANCE`` of zero are
-    snapped to 0.0 first (vendor float dust must not fail cache
-    validation). Totals within ``_SPLIT_TOTAL_TOLERANCE`` of 100 rescale
-    quietly; overshooting totals up to ``_SPLIT_TOTAL_OVERSHOOT_TOLERANCE``
-    above 100 rescale with a warning. Returns ``None``/empty input
-    unchanged, as well as totals that are zero, under-covered, or further
+    Negative weights with an absolute value below
+    ``_SPLIT_NEGATIVE_TOLERANCE`` are dropped first (vendor float dust
+    must not fail cache validation); the surviving rows are renormalized.
+    Totals within ``_SPLIT_TOTAL_TOLERANCE`` of 100 rescale quietly;
+    overshooting totals up to ``_SPLIT_TOTAL_OVERSHOOT_TOLERANCE`` above
+    100 rescale with a warning. Returns ``None``/empty input unchanged,
+    as well as totals that are zero, under-covered, or further
     overshooting.
     """
     if not rows:
         return rows
-    clamped: list[dict[str, float | str]] = []
-    dust_hit = False
+    filtered: list[dict[str, float | str]] = []
+    negative_hit = False
     for r in rows:
         w = float(r["weight_pct"])  # type: ignore[arg-type]
-        if -_SPLIT_DUST_TOLERANCE < w < 0.0:
+        if -_SPLIT_NEGATIVE_TOLERANCE < w < 0.0:
             logger.warning(
-                "Position: clamping dust weight %.6f to 0 for %r",
+                "Position: dropping negative weight %.6f for %r",
                 w,
                 r["name"],
             )
-            clamped.append({"name": r["name"], "weight_pct": 0.0})
-            dust_hit = True
+            negative_hit = True
         else:
-            clamped.append(r)
-    total = sum(float(r["weight_pct"]) for r in clamped)  # type: ignore[arg-type]
+            filtered.append(r)
+    total = sum(float(r["weight_pct"]) for r in filtered)  # type: ignore[arg-type]
     if (
         total <= 0
         or total < 100.0 - _SPLIT_TOTAL_TOLERANCE
         or total > 100.0 + _SPLIT_TOTAL_OVERSHOOT_TOLERANCE
     ):
-        return clamped if dust_hit else rows
-    if total == 100.0 and not dust_hit:
-        return rows
+        return filtered if negative_hit else rows
+    if total == 100.0:
+        return filtered if negative_hit else rows
     factor = 100.0 / total
     if total > 100.0 + _SPLIT_TOTAL_TOLERANCE:
         logger.warning(
@@ -170,7 +169,7 @@ def normalize_split_rows(
         )
     return [
         {"name": r["name"], "weight_pct": float(r["weight_pct"]) * factor}  # type: ignore[arg-type]
-        for r in clamped
+        for r in filtered
     ]
 
 # MSCI EM core + common broad-EM / frontier names; English labels as on JustETF / feeds.
@@ -300,13 +299,13 @@ class Position(ABC):
         self._countries = normalize_split_rows(self._countries)
         logger.info("Position: countries: %s", self._countries)
 
-        # countries are set either from cache.json or from ISIN
+        # countries are set either from the cache or from the ISIN
         if self._countries is not None:
             logger.info("Position: countries are set, using them to compute DMEM and USAVN")
         elif self._isin:
-            logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from asset file", self._isin)
+            logger.warning("Position: no countries found for ISIN %s, using dmem and usavn from the store", self._isin)
         else:
-            logger.warning("Position: no countries found for asset %s, using dmem and usavn from asset file", self._name)
+            logger.warning("Position: no countries found for asset %s, using dmem and usavn from the store", self._name)
 
         self._dmem = self._compute_dev_vs_em_market()
         logger.info("Position: DMEM: %s", self._dmem)
@@ -367,7 +366,7 @@ class Position(ABC):
         """Unscaled holdings value and whether it is shares × quote."""
         share_and_price_available = self._shares is not None and self._price is not None
         if self._prefer_scrape_value and self._value is not None:
-            logger.info("Position: using cached value from asset file because preferred: %s", self._value)
+            logger.info("Position: using cached value from the store because preferred: %s", self._value)
             return self._value, False
         if share_and_price_available:
             logger.info(
@@ -377,13 +376,13 @@ class Position(ABC):
             )
             return self._shares * self._price, True
         if self._value is not None:
-            logger.info("Position: using cached value from asset file because no price is fetched")
+            logger.info("Position: using cached value from the store because no price is fetched")
             return self._value, False
         logger.warning("Position: no value to compute")
         return None, False
 
     def _stage_fetched_asset_value(self, base: float | None, from_quote: bool) -> None:
-        """Queue shares × quote for the assets file when scrape is not favored."""
+        """Queue shares × quote for the store when scrape is not favored."""
         if (
             not from_quote
             or base is None
@@ -467,7 +466,7 @@ class Position(ABC):
     def _cached_countries_to_rows(
         cached_countries: dict[str, float] | None,
     ) -> list[dict[str, float | str]] | None:
-        # Country weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        # Country weights from the cache are fractions (0–1); internal rows use weight_pct (0–100).
         if cached_countries is None:
             return None
         return [
@@ -479,7 +478,7 @@ class Position(ABC):
     def _cached_sectors_to_rows(
         cached_sectors: dict[str, float] | None,
     ) -> list[dict[str, float | str]] | None:
-        # Sector weights from cache.json are fractions (0–1); internal rows use weight_pct (0–100).
+        # Sector weights from the cache are fractions (0–1); internal rows use weight_pct (0–100).
         # Unknown labels (e.g. from older caches) fold into "Other", summing duplicates.
         if cached_sectors is None:
             return None

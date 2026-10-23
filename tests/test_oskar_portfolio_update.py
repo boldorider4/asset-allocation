@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from scrape.oskar import OskarEtf, _OSKAR_TAGESGELD_FETCH_KEY, update_oskar_etfs_in_portfolio
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.update import _estimate_oskar_shares_with_fresh_quotes
 from position.justetf_position import JustETFPosition
 
@@ -21,9 +21,7 @@ class TestUpdateOskarEtfsInPortfolio(unittest.TestCase):
         tmp = Path(self._holder.name)
         self.ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

@@ -8,12 +8,11 @@ directory is not an error.
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from assets_helpers import user_payload
+from tests.store_helpers import db_path, write_positions
 
 from utils import chart_files, clear_chart_files
 from visual.web.backend.constituents import assets_positions_left
@@ -54,36 +53,29 @@ class TestClearChartFiles(unittest.TestCase):
 class TestAssetsPositionsLeft(unittest.TestCase):
     def test_counts_the_positions_of_the_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text(
-                json.dumps(
-                    {
-                        "alice": user_payload(
-                            {
-                                "equity_portfolio": [
-                                    {"name": "A", "ISIN": "IE00A"},
-                                    {"name": "B", "ISIN": "IE00B"},
-                                ],
-                                "bond_portfolio": [
-                                    {"name": "C", "ISIN": "IE00C"},
-                                ],
-                            }
-                        ),
-                        "bob": user_payload({"equity_portfolio": []}),
-                    }
-                ),
-                encoding="utf-8",
+            db = db_path(tmp)
+            write_positions(
+                db,
+                {
+                    "equity_portfolio": [
+                        {"name": "A", "ISIN": "IE00A"},
+                        {"name": "B", "ISIN": "IE00B"},
+                    ],
+                    "bond_portfolio": [
+                        {"name": "C", "ISIN": "IE00C"},
+                    ],
+                },
+                user="alice",
             )
-            self.assertEqual(assets_positions_left(assets, "alice"), 3)
-            self.assertEqual(assets_positions_left(assets, "bob"), 0)
+            write_positions(db, {"equity_portfolio": []}, user="bob")
+            self.assertEqual(assets_positions_left(db, "alice"), 3)
+            self.assertEqual(assets_positions_left(db, "bob"), 0)
 
     def test_unknown_user_has_no_positions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            assets = Path(tmp) / "assets.json"
-            assets.write_text(
-                json.dumps({"alice": user_payload({})}), encoding="utf-8"
-            )
-            self.assertEqual(assets_positions_left(assets, "nobody"), 0)
+            db = db_path(tmp)
+            write_positions(db, {}, user="alice")
+            self.assertEqual(assets_positions_left(db, "nobody"), 0)
 
 
 if __name__ == "__main__":

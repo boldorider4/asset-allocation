@@ -8,12 +8,12 @@ BOND_PORTFOLIO = "bond_portfolio"
 COMMODITY_PORTFOLIO = "commodity_portfolio"
 PENSION_PORTFOLIO = "pension_portfolio"
 
-# Portfolio user used when nothing else is configured: the assets store
-# is keyed by user (one entry per user).
+# Portfolio user used when nothing else is configured: positions and
+# portfolios are keyed by user.
 DEFAULT_USER_NAME = "default"
 
 # Canonical asset-position field keys: single source of truth for row
-# dicts in assets files, scrape appends, portfolios, and the web backend.
+# dicts in portfolio storage, scrape appends, portfolios, and the web backend.
 NAME = "name"
 SHORT_NAME = "short_name"
 SHARES = "shares"

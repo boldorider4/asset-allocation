@@ -85,7 +85,7 @@ def main(ctx: RuntimeContext) -> None:
         raise TypeError("cli.update.main requires an explicit RuntimeContext (ctx)")
     ctx.load_portfolio()
     ctx.ensure_cache_loaded()
-    logger.info("Loading portfolio from %s", ctx.config.assets_file)
+    logger.info("Loading portfolio from %s", ctx.config.server.db_file)
     # Broker scrapes run FIRST
     # Everything composed below is built from final holdings
     if ctx.config.fetch_oskar:
@@ -97,19 +97,19 @@ def main(ctx: RuntimeContext) -> None:
                 "Re-estimated shares for %d OSKAR position(s)", refreshed
             )
         ctx.persist_portfolio()
-        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
+        logger.info("Wrote updated portfolio to %s", ctx.config.server.db_file)
 
     if ctx.config.fetch_scalable:
         logger.info("Fetching Scalable holdings from sc CLI")
         update_scalable_etfs_in_portfolio(ctx)
         ctx.persist_portfolio()
-        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
+        logger.info("Wrote updated portfolio to %s", ctx.config.server.db_file)
 
     if ctx.config.fetch_traderepublic:
         logger.info("Fetching Trade Republic holdings from pytr")
         update_traderepublic_etfs_in_portfolio(ctx)
         ctx.persist_portfolio()
-        logger.info("Wrote updated portfolio to %s", ctx.config.assets_file)
+        logger.info("Wrote updated portfolio to %s", ctx.config.server.db_file)
 
     # Composition from the final dicts: the factory stages cache backfills
     # and estimates OSKAR shares from fresh scrape values, queuing them for the persists below.

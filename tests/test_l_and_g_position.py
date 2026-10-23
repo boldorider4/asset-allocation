@@ -22,7 +22,7 @@ from position.l_and_g_position import (
     _LANDG_PORTFOLIO_PART_ID,
     landg_product_url_exists,
 )
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 
 _ISIN = "IE000Z9UVQ99"
 _LISTING = {
@@ -279,9 +279,7 @@ class TestLandGFactoryRouting(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -374,9 +372,7 @@ class TestLandGSectorFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_sectorsplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

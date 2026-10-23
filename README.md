@@ -9,7 +9,7 @@
 
 ## Description
 
-Self-hosted portfolio dashboard: load holdings from JSON, sync live prices, geosplits, sectors and broker balances, then explore allocation in the web UI.
+Self-hosted portfolio dashboard: load holdings from SQLite, sync live prices, geosplits, sectors and broker balances, then explore allocation in the web UI.
 
 ![Asset Allocation web visualizer](visual/media/web_view.png)
 
@@ -44,14 +44,21 @@ The holdings file is keyed by **user**: each top-level key is a user name, and i
 
 The user name comes from `config.ini` (`[update] user = default`) and can be overridden per run with `--user NAME`. Charts are per user too: an update writes to `<output_dir>/<user>/`, and the server serves the selected user's charts.
 
-The store itself is backend-agnostic: the code above the storage layer only talks to `storage.repositories.AssetRepository`, and the concrete backend is chosen in one place (`storage/wiring.py`) from the `[server] backend` setting in `config.ini`:
+The code above the storage layer only talks to `storage.repositories.AssetRepository`; the concrete storage is composed in `storage/wiring.py`. SQLite is the only runtime backend: every store is a table in one database named by `[server] db_file` (`~/.local/asalloc/asalloc.db` by default).
 
-| `[server] backend` | Meaning |
-| --- | --- |
-| `json` (default) | Holdings in the JSON file named by `[update] assets_file` |
-| `postgres` | Not implemented yet: the wiring logs an error and the store fails to open |
+**Where the stores live.** Every store — positions, cache, ISIN registry, users and sessions — lives in that one database. `asalloc serve` and `asalloc update` accept `--db-file` to override the configured path; the ini key counts as the location just like a flag (the built-in default does *not*: it points into the repository, not into the deployment, so a missing ini key and no flag is a configuration error). Legacy JSON files are import inputs only; see the migration scripts under `scripts/`.
 
-`[server] postgres_dsn` holds the connection string for the future Postgres backend (`postgresql://localhost/asalloc` by default).
+**SQLite.** The database runs *inside* the process: no server, no idle load, nothing to supervise — which is what a 24/7 Raspberry Pi wants. WAL mode lets the web server read while the update writes, and every table of a database shares one connection (two connections would deadlock against each other's write transaction). The tables are `user_portfolios`, `user_positions`, `cache`, `isin_registry`, `users` and `sessions`. They use explicit columns: `user_positions` is one row per position keyed by `(username, bucket, position_idx)` with the `isin` preserved; prices stay in `cache`; `users` holds `(username, password)`; `sessions` holds `(session_id, username, incognito, expires_at)`.
+
+The shared connection is used by the server's request threads, so its use is **serialized with a lock**: Python's `sqlite3` keeps its prepared statements on the connection, and one thread resetting a statement another thread is stepping corrupts the row that thread reads (an empty row, or a `NULL` payload where a row was expected). The lock is what makes the one-connection-per-file design safe on a multi-threaded server.
+
+To move an existing installation over, import the JSON stores once:
+
+```bash
+python scripts/migrate_normalize_db.py --db-file ~/.local/asalloc/asalloc.db
+```
+
+The script leaves the JSON files untouched, skips a broken row with a warning and is idempotent. The server, the update and `asalloc add-user` all read the same `[server] db_file`; no backend switch is needed.
 
 | Key | Purpose |
 | --- | --- |
@@ -74,11 +81,11 @@ Each asset class is an array of position objects. Typical fields:
 | `dmem_other` | When a country is “other”, fraction treated as developed (0–1) |
 | `usavn` | Within developed markets, fraction attributed to the **US** (0–1) |
 
-`assets.json` is listed in `.gitignore` so you can keep real balances private; `assets.sample.json` is a redacted starting point (it ships with the `default` user).
+`assets.sample.json` is a redacted starting point for the one-time import; the runtime portfolio lives in the `user_positions`/`user_portfolios` tables. Keep real JSON exports private and out of git.
 
-### Users file
+### Users
 
-The accounts that may log in live in their own store, `users.json` (path from `config.ini` → `[update] users_file`). It is keyed by user name — the same key a database table would use — and holds the password:
+The accounts that may log in live in the `users` table of the SQLite database. Each row is keyed by user name and holds the password:
 
 ```json
 {
@@ -86,25 +93,15 @@ The accounts that may log in live in their own store, `users.json` (path from `c
 }
 ```
 
-Passwords may be empty (the account exists, it just has no secret yet). Copy `users.sample.json` to the configured path and add your users:
+Passwords may be empty (the account exists, it just has no secret yet). `users.sample.json` is a redacted input for the one-time import; add users with the CLI:
 
 ```bash
-cp users.sample.json ~/.local/asalloc/users.json
-```
-
-`users.json` is gitignored (it holds credentials). The store is backend-agnostic: `config.ini` → `[server] backend = postgres` moves it into the `users` table together with the assets.
-
-**Adding users.** Use the script or the CLI command — both write the same store:
-
-```bash
-python scripts/add_users.py ~/.local/asalloc/users.json alice --password secret
 asalloc add-user --config ~/.local/asalloc/config.ini --user alice --password secret
 asalloc add-user --config /path/to/config.ini --user alice    # empty password
 ```
 
-The CLI command reads the users file from the given `config.ini` (`[update] users_file`); `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed. The `--backend postgres` path is a stub and does not work yet.
-
-**Login.** The login screen asks for a **User** and a **Password**: the name must have an account in `users.json` (a name that only appears in `assets.json` is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
+The CLI writes the `users` table in `[server] db_file`; `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed.
+**Login.** The login screen asks for a **User** and a **Password**: the name must have an account in the users store (a name that only appears in the portfolio is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
 
 **Reset password.** The "Reset password" link under the password box turns the form into a reset (the password box becomes "Old Password", a "New Password" box appears, the button becomes "Reset" and the incognito toggle goes away — still on the login page). The old password must match; an empty new password is allowed. On success the login form comes back and the new password is the one that logs in.
 
@@ -132,7 +129,7 @@ Neither script ever reads `config.ini` or touches anything else in your home dir
 
 ## Price source
 
-Positions are built through `position/factory.py` (JustETF by default, Yahoo Finance via `yfinance` for some ISINs). With `--fetch-prices`, quotes are written to `cache.json` (also gitignored). `--fetch-geosplit` refreshes country weights and `--fetch-sectorsplit` refreshes sector weights in the same cache.
+Positions are built through `position/factory.py` (JustETF by default, Yahoo Finance via `yfinance` for some ISINs). With `--fetch-prices`, quotes are written to the `cache` table. `--fetch-geosplit` refreshes country weights and `--fetch-sectorsplit` refreshes sector weights in the same cache.
 
 ## Run
 
@@ -147,12 +144,12 @@ Useful `update` flags:
 | Flag | Purpose |
 | --- | --- |
 | `--config PATH` | Use a `config.ini` other than `$ASALLOC_CONFIG` (may go before or after the subcommand) |
-| `--fetch-prices` | Scrape live quotes into `cache.json` |
-| `--fetch-geosplit` | Scrape country allocations into `cache.json` |
-| `--fetch-sectorsplit` | Scrape sector allocations into `cache.json` |
+| `--fetch-prices` | Scrape live quotes into the cache |
+| `--fetch-geosplit` | Scrape country allocations into the cache |
+| `--fetch-sectorsplit` | Scrape sector allocations into the cache |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
 | `--user NAME` | Portfolio user to read and write (default: `config.ini` `[update] user`, else `default`) |
-| `--assets-file PATH` | Use a holdings file other than `assets.json` |
+| `--db-file PATH` | SQLite database to read and write (default: `[server] db_file`) |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
@@ -173,15 +170,22 @@ asalloc serve
 
 Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you to the login page.
 
-**Login.** The login screen asks for a **User** (an account in `users.json` — see [Users file](#users-file)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
+**Login.** The login screen asks for a **User** (an account in the users table — see [Users](#users)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
 
-The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the visualizer workspace (`.sessions.json`), so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
+The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the `sessions` table of the database, so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
+
+**Clearing the sessions.** `asalloc clear-sessions` drops every session (everybody has to log in again); `--expired-only` drops only the ones past their expiry. The command always clears the sessions in the configured database, so it targets the store the running server uses:
+
+```bash
+asalloc clear-sessions --config ~/.local/asalloc/config.ini
+asalloc clear-sessions --config ~/.local/asalloc/config.ini --expired-only
+```
 
 `http://localhost:8765/dashboard` shows the charts of the logged-in user — the incognito button blurs Euro figures in place (instant CSS toggle, no reload; `?incognito=true` carries the pressed state through the constituents round trip) and never changes the data. The constituents page has the same button, blurring Value/Shares figures there.
 
 The charts are titled with the **portfolio name** from the store: the growth charts read "<Portfolio Name>: Geo Breakdown" and "<Portfolio Name>: Sector Breakdown" (the name is edited at the end of the constituents page; the next Dashboard click runs the lite update that re-titles them), while the whole-net-worth chart stays "Complete Portfolio".
 
-`http://localhost:8765/constituents` shows the holdings of the logged-in user from `assets.json` (prices from `cache.json`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists to `assets.json` via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --assets-file PATH --cache-file PATH --users-file PATH` to point the endpoint at other files (without the flags, the paths come from `config.ini`).
+`http://localhost:8765/constituents` shows the logged-in user's positions from the `user_positions` table (prices from `cache`) as tables with editable shares/value boxes. Changing a box (Enter, Tab, or click-away) persists via `POST /api/constituents` — empty means `0`, editing shares also clears the stored value so the next update recomputes it from shares × cached price, locked cells are rejected server-side, and the cell flashes on success or reverts on failure. Use `asalloc serve --db-file PATH` to point the endpoint at another database (without the flag, the path comes from `config.ini`).
 
 The last block of the page edits the **Portfolio Name** (the field at the end of the page). It persists via `POST /api/constituents/name` and stages an update like the other edits, so the next **Dashboard** click runs the lite update that puts the name into the charts.
 
@@ -207,7 +211,7 @@ The bind address, HTTP port, and directory come from `config.ini` (`[server] add
 | `make stop-service` | Linux: stop and disable those user units |
 | `make web-clean` | Delete `~/.local/asalloc/visualizer` |
 
-On a headless Debian box, after `make install` and `make service`, put holdings at `~/.local/asalloc/assets.json` and enable lingering so the user units run without a login:
+On a headless Debian box, after `make install` and `make service`, import existing holdings with `scripts/migrate_normalize_db.py --db-file ~/.local/asalloc/asalloc.db`, then enable lingering so the user units run without a login:
 
 ```bash
 sudo loginctl enable-linger "$USER"

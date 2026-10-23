@@ -26,11 +26,15 @@ class TestLiteUpdateUnit(unittest.TestCase):
         self.assertNotIn("--plot-clear", cmd)
         self.assertNotIn("--plot-incognito", cmd)
         self.assertIn("--log-level ERROR", cmd)
-        # Same files as the dashboard endpoint worker (serve --assets-file /
-        # --cache-file): otherwise the two update paths persist to different
-        # caches and each misses the other's writes.
-        self.assertIn("--assets-file %h/.local/asalloc/assets.json", cmd)
-        self.assertIn("--cache-file %h/.local/asalloc/cache.json", cmd)
+        # The same database as the server: one file holds every store
+        # (assets, cache, isin registry, users, sessions), so the
+        # endpoint update and the timer update cannot end up writing
+        # to different caches and missing each other's writes.
+        self.assertIn("--db-file %h/.local/asalloc/asalloc.db", cmd)
+        # The per-store files are the json backend's: the database
+        # backend has one file for all of them.
+        self.assertNotIn("--assets-file", cmd)
+        self.assertNotIn("--cache-file", cmd)
         for flag in (
             "--fetch-prices",
             "--fetch-geosplit",
@@ -45,8 +49,9 @@ class TestLiteUpdateUnit(unittest.TestCase):
         text = (REPO_ROOT / "systemd" / "asalloc-update.service").read_text(
             encoding="utf-8"
         )
-        self.assertIn("--cache-file %h/.local/asalloc/cache.json", text)
-        self.assertIn("--assets-file %h/.local/asalloc/assets.json", text)
+        self.assertIn("--db-file %h/.local/asalloc/asalloc.db", text)
+        self.assertNotIn("--assets-file", text)
+        self.assertNotIn("--cache-file", text)
 
     def test_make_service_copies_but_never_enables_lite_unit(self) -> None:
         lines = (REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
@@ -73,6 +78,27 @@ class TestLiteUpdateUnit(unittest.TestCase):
                 continue
             if "enable" in line or "start" in line:
                 self.assertNotIn("lite", line)
+
+
+class TestServeUnit(unittest.TestCase):
+    """The server serves the one database (and nothing else)."""
+
+    def _text(self) -> str:
+        return (REPO_ROOT / "systemd" / "asalloc-serve.service").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_server_uses_the_one_database(self) -> None:
+        text = self._text()
+        self.assertIn("asalloc serve", text)
+        self.assertIn("--db-file %h/.local/asalloc/asalloc.db", text)
+
+    def test_the_server_names_no_json_store(self) -> None:
+        # The database holds every store; a per-store file would point
+        # the server at a second, empty set of stores.
+        text = self._text()
+        for flag in ("--assets-file", "--cache-file", "--users-file"):
+            self.assertNotIn(flag, text)
 
 
 if __name__ == "__main__":

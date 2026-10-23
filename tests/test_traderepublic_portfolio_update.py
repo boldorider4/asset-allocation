@@ -20,8 +20,8 @@ from scrape.traderepublic import (
     _CASH_FETCH_KEY,
     update_traderepublic_etfs_in_portfolio,
 )
-from cli.context import AppConfig, RuntimeContext
-from assets_helpers import write_user_buckets
+from cli.context import AppConfig, RuntimeContext, ServerConfig
+from tests.store_helpers import read_positions
 
 
 class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
@@ -31,9 +31,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         tmp = Path(self._holder.name)
         self.ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -99,7 +97,7 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
         self.assertEqual(self.ctx.portfolio[CASH_PORTFOLIO][0]["value"], 40.32)
 
     @patch("scrape.traderepublic.fetch_traderepublic_etfs")
-    def test_writes_assets_file_shares_and_value(self, mock_fetch) -> None:
+    def test_persists_shares_and_value(self, mock_fetch) -> None:
         mock_fetch.return_value = {
             "IE0006WW1TQ4": TradeRepublicHolding(
                 isin="IE0006WW1TQ4",
@@ -110,11 +108,9 @@ class TestUpdateTradeRepublicEtfsInPortfolio(unittest.TestCase):
             ),
         }
         update_traderepublic_etfs_in_portfolio(self.ctx)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "assets.json"
-            write_user_buckets(path, self.ctx.portfolio)
-            written = json.loads(path.read_text(encoding="utf-8"))["default"]
-        pos = written["positions"][EQUITY_PORTFOLIO][0]
+        self.ctx.persist_portfolio()
+        written = read_positions(self.ctx.config.server.db_file)
+        pos = written[EQUITY_PORTFOLIO][0]
         self.assertEqual(pos["shares"], 4)
         self.assertEqual(pos["value"], 140.0)
         self.assertNotIn("price", pos)

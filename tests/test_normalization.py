@@ -22,7 +22,7 @@ from portfolio.portfolio import (  # noqa: E402
     _normalize_sector_fractions,
     Portfolio,
 )
-from position.position import normalize_split_rows  # noqa: E402
+from position.position import Position, normalize_split_rows  # noqa: E402
 
 
 class TestNormalizeSplitRows(unittest.TestCase):
@@ -55,10 +55,10 @@ class TestNormalizeSplitRows(unittest.TestCase):
         rows = [{"name": "France", "weight_pct": 150.0}]
         self.assertEqual(normalize_split_rows(rows), rows)
 
-    def test_dust_negative_clamped_to_zero(self) -> None:
+    def test_negative_under_half_a_percent_is_excluded(self) -> None:
         # DWS holdings API float dust (cf. IE00BLNMYC90 Switzerland
-        # -0.000335 weight_pct == -3.3513e-06 fraction): must not fail
-        # cache validation downstream.
+        # -0.000335 weight_pct == -3.3513e-06 fraction): the nonsensical
+        # slice is dropped and the remaining rows are renormalized.
         rows = [
             {"name": "United States", "weight_pct": 96.0},
             {"name": "Germany", "weight_pct": 4.000335},
@@ -67,13 +67,23 @@ class TestNormalizeSplitRows(unittest.TestCase):
         out = normalize_split_rows(rows)
         assert out is not None
         by_name = {r["name"]: float(r["weight_pct"]) for r in out}  # type: ignore[arg-type]
-        self.assertEqual(by_name["Switzerland"], 0.0)
+        self.assertNotIn("Switzerland", by_name)
         for weight in by_name.values():
             self.assertGreaterEqual(weight, 0.0)
         self.assertAlmostEqual(sum(by_name.values()), 100.0)
 
-    def test_exact_100_with_dust_still_clamped(self) -> None:
-        # Total exactly 100 must not let dust slip through unclamped.
+    def test_negative_slice_below_half_a_percent_is_excluded(self) -> None:
+        rows = [
+            {"name": "United States", "weight_pct": 99.75},
+            {"name": "France", "weight_pct": -0.25},
+        ]
+        out = normalize_split_rows(rows)
+        assert out is not None
+        self.assertEqual([r["name"] for r in out], ["United States"])
+        self.assertAlmostEqual(float(out[0]["weight_pct"]), 100.0)  # type: ignore[arg-type]
+
+    def test_exact_100_with_dust_still_excluded(self) -> None:
+        # Total exactly 100 must not let a negative slice slip through.
         rows = [
             {"name": "United States", "weight_pct": 99.999335},
             {"name": "Germany", "weight_pct": 0.001},
@@ -82,7 +92,8 @@ class TestNormalizeSplitRows(unittest.TestCase):
         out = normalize_split_rows(rows)
         assert out is not None
         by_name = {r["name"]: float(r["weight_pct"]) for r in out}  # type: ignore[arg-type]
-        self.assertEqual(by_name["Switzerland"], 0.0)
+        self.assertNotIn("Switzerland", by_name)
+        self.assertAlmostEqual(sum(by_name.values()), 100.0)
 
     def test_genuine_negative_untouched(self) -> None:
         # A real negative (e.g. short position) is not dust: it passes
@@ -93,9 +104,39 @@ class TestNormalizeSplitRows(unittest.TestCase):
         ]
         self.assertEqual(normalize_split_rows(rows), rows)
 
-    def test_clamped_rows_stage_into_cache(self) -> None:
-        # End to end: scraped rows with vendor dust must survive the
-        # rows_to_fractions -> CacheEntry validation boundary.
+    def test_position_applies_the_filter_to_countries_and_sectors(self) -> None:
+        class _StubPosition(Position):
+            def _fast_info_price(self) -> float | None:
+                return None
+
+            def _history_last_close(self) -> float | None:
+                return None
+
+        pos = _StubPosition(
+            "",
+            name="stub",
+            value=100.0,
+            cached_countries={
+                "United States": 0.9999,
+                "France": -0.0000325345,
+            },
+            cached_sectors={
+                "Technology": 0.9999,
+                "Finance": -0.0000325345,
+            },
+            ctx=_ctx(),
+        )
+        self.assertEqual([r["name"] for r in pos.countries()], ["United States"])
+        self.assertEqual([r["name"] for r in pos.sectors() or []], ["Technology"])
+        self.assertAlmostEqual(float(pos.countries()[0]["weight_pct"]), 100.0)  # type: ignore[arg-type]
+        self.assertAlmostEqual(
+            float((pos.sectors() or [])[0]["weight_pct"]),  # type: ignore[index]
+            100.0,
+        )
+
+    def test_filtered_rows_stage_into_cache(self) -> None:
+        # End to end: scraped rows with a nonsensical negative slice must
+        # survive the rows_to_fractions -> CacheEntry validation boundary.
         from storage.records import CacheEntry
 
         rows = [
@@ -107,7 +148,8 @@ class TestNormalizeSplitRows(unittest.TestCase):
         fractions = CacheEntry.rows_to_fractions(staged)
         entry = CacheEntry("IE00BLNMYC90", {"countries": fractions})
         parsed = entry.to_dict()["countries"]
-        self.assertEqual(parsed["Switzerland"], 0.0)
+        self.assertNotIn("Switzerland", parsed)
+        self.assertAlmostEqual(sum(parsed.values()), 1.0)
 
 
 class TestOvershootTolerance(unittest.TestCase):

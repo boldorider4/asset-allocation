@@ -31,11 +31,14 @@ from storage import (  # noqa: E402
     DictRow,
     IsinRecord,
     IsinRegistry,
-    UserAssets,
-    JsonStorage,
     MemoryStorage,
-    PostgresStorage,
+    PositionRecord,
+    PositionRepository,
+    UserPortfolioRecord,
+    UserPortfolioRepository,
 )
+from storage.json_storage import JsonStorage  # noqa: E402
+from storage.sqlite_storage import SqliteStorage  # noqa: E402
 from storage.storage import Storage  # noqa: E402
 
 
@@ -338,24 +341,42 @@ class TestCacheRepositoryComposition(unittest.TestCase):
 
 
 class TestAssetRepositoryComposition(unittest.TestCase):
+    def _repo(self, tmp: str, kind: str) -> AssetRepository:
+        if kind == "memory":
+            position_backend = MemoryStorage(PositionRecord)
+            portfolio_backend = MemoryStorage(UserPortfolioRecord)
+        elif kind == "json":
+            position_backend = JsonStorage(Path(tmp) / "positions.json", PositionRecord)
+            portfolio_backend = JsonStorage(
+                Path(tmp) / "portfolios.json", UserPortfolioRecord
+            )
+        else:
+            db = Path(tmp) / "assets.db"
+            position_backend = SqliteStorage(db, "user_positions", PositionRecord)
+            portfolio_backend = SqliteStorage(
+                db, "user_portfolios", UserPortfolioRecord
+            )
+        return AssetRepository(
+            "default",
+            position_repo=PositionRepository(position_backend),
+            portfolio_repo=UserPortfolioRepository(portfolio_backend),
+        )
+
     def test_set_get_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            backends: list[tuple[str, Storage[AssetBucket]]] = [
-                ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
-                ("memory", MemoryStorage(UserAssets)),
-            ]
-            for name, backend in backends:
+            for name in ("json", "memory", "sqlite"):
                 with self.subTest(backend=name):
-                    repo = AssetRepository("default", backend)
+                    repo = self._repo(tmp, name)
                     self.assertIsNone(repo.get_positions("equity_portfolio"))
                     repo.set_positions(
                         "equity_portfolio", [{"ISIN": "X", "value": 1.0}]
                     )
                     self.assertIn("equity_portfolio", repo)
-                    self.assertEqual(
-                        repo.get_positions("equity_portfolio"),
-                        [{"ISIN": "X", "value": 1.0}],
-                    )
+                    rows = repo.get_positions("equity_portfolio")
+                    assert rows is not None
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0]["ISIN"], "X")
+                    self.assertEqual(rows[0]["value"], 1.0)
                     with self.assertRaises(TypeError):
                         repo.set_positions("bad", ["nope"])  # type: ignore[list-item]
                     repo.remove_positions("equity_portfolio")
@@ -364,53 +385,34 @@ class TestAssetRepositoryComposition(unittest.TestCase):
     def test_lifecycle_round_trip(self) -> None:
         data = {"equity_portfolio": [{"ISIN": "X", "value": 1.0}]}
         with tempfile.TemporaryDirectory() as tmp:
-            backends: list[tuple[str, Storage[AssetBucket]]] = [
-                ("json", JsonStorage(Path(tmp) / "assets.json", UserAssets)),
-                ("memory", MemoryStorage(UserAssets)),
-            ]
-            for name, backend in backends:
+            for name in ("json", "memory", "sqlite"):
                 with self.subTest(backend=name):
-                    repo = AssetRepository("default", backend)
+                    repo = self._repo(tmp, name)
                     repo.open()
                     self.assertEqual(repo.restore(data), 1)
-                    self.assertEqual(repo.snapshot(), data)
+                    snapshot = repo.snapshot()
+                    self.assertEqual(snapshot["equity_portfolio"][0]["ISIN"], "X")
+                    self.assertEqual(
+                        snapshot["equity_portfolio"][0]["value"], 1.0
+                    )
                     repo.persist()
                     repo.close()
 
     def test_restore_skips_bad_buckets(self) -> None:
-        repo = AssetRepository("default", MemoryStorage(UserAssets))
-        restored = repo.restore(
-            {
-                "good": [{"ISIN": "X"}],
-                "bad": "not-a-list",
-                "also-bad": [{"ISIN": "Y"}, "nope"],
-            }
-        )
-        self.assertEqual(restored, 1)
-        self.assertEqual(repo.get_positions("good"), [{"ISIN": "X"}])
-        self.assertIsNone(repo.get_positions("bad"))
-
-    def test_json_persist_writes_user_keyed_shape(self) -> None:
-        data = {
-            "equity_portfolio": [{"ISIN": "X", "value": 1.0}],
-            "bond_portfolio": [],
-        }
         with tempfile.TemporaryDirectory() as tmp:
-            actual = Path(tmp) / "actual.json"
-            repo = AssetRepository("default", JsonStorage(actual, UserAssets))
-            repo.open()
-            repo.restore(data)
-            repo.persist()
-            # The file is keyed by user; the payload names the portfolio
-            # and nests the positions.
-            written = json.loads(actual.read_text(encoding="utf-8"))
-            self.assertEqual(list(written), ["default"])
-            self.assertEqual(
-                written["default"],
-                {"portfolio_name": "Portfolio", "positions": data},
+            repo = self._repo(tmp, "memory")
+            restored = repo.restore(
+                {
+                    "good": [{"ISIN": "X"}],
+                    "bad": "not-a-list",
+                    "also-bad": [{"ISIN": "Y"}, "nope"],
+                }
             )
-            # Atomic tmp+rename write: indent=2, trailing newline.
-            self.assertTrue(actual.read_text(encoding="utf-8").endswith("\n"))
+            self.assertEqual(restored, 1)
+            good = repo.get_positions("good")
+            assert good is not None
+            self.assertEqual(good[0]["ISIN"], "X")
+            self.assertIsNone(repo.get_positions("bad"))
 
 
 def _empty_registry() -> IsinRegistry:
@@ -489,50 +491,6 @@ class TestIsinRegistryComposition(unittest.TestCase):
         self.assertEqual(registry.get_issuer_for_isin("IE00NEWX03"), "ubs")
         with self.assertRaises(ValueError):
             registry.set_issuer_for_isin("IE00NEWX03", "nope")
-
-
-class TestPostgresStub(unittest.TestCase):
-    def test_importable_without_driver(self) -> None:
-        store: Storage[CacheEntry] = PostgresStorage(
-            "postgresql://localhost:5432/x", "cache", CacheEntry
-        )
-        assert isinstance(store, PostgresStorage)
-        self.assertEqual(store.table, "cache")
-        self.assertFalse(store.connected)
-
-    def test_io_raises_not_implemented(self) -> None:
-        store = PostgresStorage("postgresql://localhost:5432/x", "cache", CacheEntry)
-        with self.assertRaises(NotImplementedError):
-            store.connect()
-        with self.assertRaises(NotImplementedError):
-            store.get("IE00X")
-        with self.assertRaises(NotImplementedError):
-            store.upsert("IE00X", {"price": 1.0})
-        with self.assertRaises(NotImplementedError):
-            store.put(CacheEntry("IE00X", {"price": 1.0}))
-        with self.assertRaises(NotImplementedError):
-            store.remove("IE00X")
-        with self.assertRaises(NotImplementedError):
-            "IE00X" in store
-        with self.assertRaises(NotImplementedError):
-            store.commit()
-        with self.assertRaises(NotImplementedError):
-            store.rollback()
-        with self.assertRaises(NotImplementedError):
-            store.open()
-        with self.assertRaises(NotImplementedError):
-            store.snapshot()
-        with self.assertRaises(NotImplementedError):
-            store.persist()
-
-    def test_close_safe_without_connect(self) -> None:
-        store = PostgresStorage("postgresql://localhost:5432/x", "cache", CacheEntry)
-        store.close()  # must not raise
-        self.assertFalse(store.connected)
-
-    def test_context_manager_protocol(self) -> None:
-        self.assertTrue(hasattr(PostgresStorage, "__enter__"))
-        self.assertTrue(hasattr(PostgresStorage, "__exit__"))
 
 
 if __name__ == "__main__":

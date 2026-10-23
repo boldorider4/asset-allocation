@@ -1,26 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The user accounts store: rows, repository and backend wiring.
 
-The accounts live in their own repository (``users.json``), keyed by
-user name: the key is the primary key a database table would carry,
-the payload is the password. Passwords may be empty.
+The accounts live in the ``users`` table of the SQLite database, keyed
+by user name: the key is the primary key, the payload is the password.
+Passwords may be empty.
 """
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from storage.records import UserRecord
 from storage.repositories import UsersRepository
-from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_POSTGRES,
-    POSTGRES_USERS_TABLE,
-    users_backend,
-)
+from storage.wiring import SQLITE_TABLE_USERS, users_backend
 
 
 class TestUserRecord(unittest.TestCase):
@@ -57,14 +51,16 @@ class TestUsersRepository(unittest.TestCase):
     def _repo(self, path: Path) -> UsersRepository:
         return UsersRepository(users_backend(path)).open()
 
-    def test_reads_the_users_file(self) -> None:
+    def test_reads_the_users_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"default": {"password": ""}, "alice": {"password": "x"}}),
-                encoding="utf-8",
-            )
-            repo = self._repo(path)
+            db = Path(tmp) / "asalloc.db"
+            repo = self._repo(db)
+            repo.add_user("default", "")
+            repo.add_user("alice", "x")
+            repo.persist()
+            repo.close()
+
+            repo = self._repo(db)
             self.assertTrue(repo.exists("default"))
             self.assertTrue(repo.exists("alice"))
             self.assertFalse(repo.exists("nobody"))
@@ -73,56 +69,53 @@ class TestUsersRepository(unittest.TestCase):
             self.assertEqual(repo.get("nobody"), None)
             self.assertEqual(repo.list_users(), ["alice", "default"])
 
-    def test_missing_file_is_an_empty_store(self) -> None:
+    def test_missing_database_is_an_empty_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            repo = self._repo(Path(tmp) / "nope.json")
+            repo = self._repo(Path(tmp) / "nope.db")
             self.assertFalse(repo.exists("default"))
             self.assertEqual(repo.list_users(), [])
 
     def test_add_user_writes_the_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            repo = self._repo(path)
+            db = Path(tmp) / "asalloc.db"
+            repo = self._repo(db)
             repo.add_user("default", "")
             repo.persist()
-            self.assertEqual(
-                json.loads(path.read_text(encoding="utf-8")),
-                {"default": {"password": ""}},
-            )
+            repo.close()
+
+            repo = self._repo(db)
+            self.assertEqual(repo.get("default").password, "")
 
     def test_add_user_keeps_an_existing_password(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"default": {"password": "keepme"}}), encoding="utf-8"
-            )
-            repo = self._repo(path)
+            db = Path(tmp) / "asalloc.db"
+            repo = self._repo(db)
+            repo.add_user("default", "keepme")
+            repo.persist()
             repo.add_user("default", "other")
             repo.persist()
             self.assertEqual(repo.get("default").password, "keepme")
 
     def test_set_password_updates_the_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            repo = self._repo(path)
+            db = Path(tmp) / "asalloc.db"
+            repo = self._repo(db)
             repo.set_password("default", "new")
             repo.set_password("alice", "")
             repo.persist()
-            stored = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(stored["default"]["password"], "new")
-            self.assertEqual(stored["alice"]["password"], "")
+            self.assertEqual(repo.get("default").password, "new")
+            self.assertEqual(repo.get("alice").password, "")
 
     def test_remove_user_drops_the_account(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"default": {"password": ""}}), encoding="utf-8"
-            )
-            repo = self._repo(path)
+            db = Path(tmp) / "asalloc.db"
+            repo = self._repo(db)
+            repo.add_user("default", "")
+            repo.persist()
             self.assertTrue(repo.remove_user("default"))
             self.assertFalse(repo.remove_user("default"))
             repo.persist()
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {})
+            self.assertEqual(repo.list_users(), [])
 
 
 class TestCheckCredentials(unittest.TestCase):
@@ -131,11 +124,9 @@ class TestCheckCredentials(unittest.TestCase):
 
     def test_the_right_password_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"alice": {"password": "s3cret"}}), encoding="utf-8"
-            )
-            repo = self._repo(path)
+            repo = self._repo(Path(tmp) / "asalloc.db")
+            repo.add_user("alice", "s3cret")
+            repo.persist()
             self.assertTrue(repo.check_credentials("alice", "s3cret"))
             self.assertFalse(repo.check_credentials("alice", "wrong"))
             self.assertFalse(repo.check_credentials("alice", ""))
@@ -143,35 +134,27 @@ class TestCheckCredentials(unittest.TestCase):
 
     def test_an_empty_password_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"alice": {"password": ""}}), encoding="utf-8"
-            )
-            repo = self._repo(path)
+            repo = self._repo(Path(tmp) / "asalloc.db")
+            repo.add_user("alice", "")
+            repo.persist()
             self.assertTrue(repo.check_credentials("alice", ""))
             self.assertFalse(repo.check_credentials("alice", "something"))
 
     def test_a_non_ascii_password_works(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            path.write_text(
-                json.dumps({"alice": {"password": "pässwörd€"}}), encoding="utf-8"
-            )
-            repo = self._repo(path)
+            repo = self._repo(Path(tmp) / "asalloc.db")
+            repo.add_user("alice", "pässwörd€")
+            repo.persist()
             self.assertTrue(repo.check_credentials("alice", "pässwörd€"))
             self.assertFalse(repo.check_credentials("alice", "passwörd"))
 
 
 class TestUsersBackendWiring(unittest.TestCase):
-    def test_json_backend_reads_the_configured_path(self) -> None:
+    def test_sqlite_backend_uses_the_users_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "users.json"
-            backend = users_backend(path, BACKEND_JSON)
-            self.assertEqual(backend.path, path)
-
-    def test_postgres_backend_uses_the_users_table(self) -> None:
-        backend = users_backend("users.json", BACKEND_POSTGRES)
-        self.assertEqual(backend.table, POSTGRES_USERS_TABLE)
+            db = Path(tmp) / "test.db"
+            backend = users_backend(db)
+            self.assertEqual(backend.table, SQLITE_TABLE_USERS)
 
 
 if __name__ == "__main__":

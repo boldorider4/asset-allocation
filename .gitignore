@@ -4,6 +4,9 @@ assets.json
 cache.json
 isin.json
 users.json
+*.db
+*.db-wal
+*.db-shm
 .vscode/
 .DS_Store
 _visualizer/
