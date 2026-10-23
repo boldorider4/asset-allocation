@@ -1,15 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Where the stores live, and the rules for it.
+"""Where the SQLite database lives, and the rules for it.
 
-Every store (the assets, the cache, the ISIN registry, the users) lives
-either in **one SQLite database** (``--db-file``) or in **its own JSON
-file** (``--assets-file`` and friends). The backend named in
-``config.ini`` decides which of the two is in play.
-
-The location of a store is either its command-line flag or the ini key
-that names it. The built-in defaults do *not* count: they point into
-the repository rather than into the deployment, so a store that is only
-"configured" by a default is a store with no location.
+The runtime keeps every store (assets, cache, ISIN registry, users and
+sessions) in one SQLite database. Its location is either ``--db-file``
+or the ``[server] db_file`` ini key. The built-in default does *not*
+count: it points into the repository rather than into the deployment,
+so a database that is only "configured" by a default has no location.
 """
 
 from __future__ import annotations
@@ -18,21 +14,17 @@ import configparser
 from dataclasses import dataclass
 from pathlib import Path
 
-from storage.wiring import BACKEND_SQLITE
-
 __all__ = [
     "StoreLocationMissing",
     "StoreSpec",
-    "STORES",
+    "DB_SPEC",
     "db_file",
-    "required_stores",
-    "resolve_store_locations",
 ]
 
 
 @dataclass(frozen=True)
 class StoreSpec:
-    """One store: the ini key and the flag that locate it."""
+    """The database store: its ini key and command-line flag."""
 
     name: str
     ini_section: str
@@ -44,31 +36,12 @@ class StoreSpec:
         return f"[{self.ini_section}] {self.ini_option}"
 
 
-#: The stores, with the ini key and the CLI flag that locate them.
-STORES: dict[str, StoreSpec] = {
-    "assets": StoreSpec("assets", "update", "assets_file", "--assets-file"),
-    "cache": StoreSpec("cache", "update", "cache_file", "--cache-file"),
-    "users": StoreSpec("users", "update", "users_file", "--users-file"),
-    "isin": StoreSpec("isin", "update", "isin_file", "--isin-registry-file"),
-}
-
-#: The stores each command needs, per backend. The sqlite backend
-#: keeps every store in the one database, so it needs no per-store
-#: location at all.
-REQUIRED: dict[str, dict[str, tuple[str, ...]]] = {
-    "json": {
-        "serve": ("assets", "cache", "users", "isin"),
-        "update": ("assets", "cache", "isin"),
-    },
-    "sqlite": {"serve": (), "update": ()},
-}
-
 #: The SQLite database: one file, one table per store.
 DB_SPEC = StoreSpec("database", "server", "db_file", "--db-file")
 
 
 class StoreLocationMissing(RuntimeError):
-    """A store has no location: neither a flag nor an ini key names it."""
+    """The database has no location: neither a flag nor an ini key names it."""
 
     def __init__(self, spec: StoreSpec) -> None:
         super().__init__(
@@ -120,51 +93,13 @@ def _ini_path(
     return path
 
 
-def required_stores(backend: str, command: str) -> tuple[str, ...]:
-    """The stores ``command`` needs with ``backend``."""
-    return REQUIRED.get(backend, REQUIRED["json"]).get(command, ())
-
-
-def resolve_store_locations(
-    backend: str,
-    command: str,
-    *,
-    ini_path: Path | None = None,
-    flags: dict[str, str | None] | None = None,
-) -> dict[str, Path]:
-    """Where the stores of ``command`` live; raises when one has no home.
-
-    The location of a store is its command-line flag or the ini key
-    that names it. The built-in defaults do not count.
-    """
-    flags = flags or {}
-    located: dict[str, Path] = {}
-    for store in required_stores(backend, command):
-        spec = STORES[store]
-        raw = flags.get(spec.ini_option) or flags.get(
-            spec.flag.lstrip("-").replace("-", "_")
-        )
-        if raw:
-            located[store] = Path(raw).expanduser()
-            continue
-        value = _ini_path(spec.ini_section, spec.ini_option, ini_path)
-        if value is not None:
-            located[store] = value
-            continue
-        raise StoreLocationMissing(spec)
-    return located
-
-
 def db_file(
-    backend: str,
     *,
     ini_path: Path | None = None,
     flag_value: str | None = None,
     required: bool = True,
 ) -> Path | None:
-    """The SQLite database file (mandatory for the sqlite backend)."""
-    if backend != BACKEND_SQLITE:
-        return None
+    """The SQLite database file (mandatory unless ``required`` is false)."""
     if flag_value:
         return Path(flag_value).expanduser()
     value = _ini_path(DB_SPEC.ini_section, DB_SPEC.ini_option, ini_path)

@@ -29,11 +29,8 @@ from typing import Any, Literal, TYPE_CHECKING
 from cli.common import DEFAULT_USER_NAME
 from storage.records import DEFAULT_PORTFOLIO_NAME
 from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_SQLITE,
     cache_backend,
     isin_backend,
-    normalize_backend,
     positions_backend,
     user_portfolios_backend,
 )
@@ -45,10 +42,6 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config.ini"
-DEFAULT_ASSETS_PATH = REPO_ROOT / "assets.json"
-DEFAULT_CACHE_PATH = REPO_ROOT / "cache.json"
-DEFAULT_ISIN_PATH = REPO_ROOT / "isin.json"
-DEFAULT_USERS_PATH = REPO_ROOT / "users.json"
 DEFAULT_DB_PATH = REPO_ROOT / "asalloc.db"
 
 PositionSource = Literal["justetf", "yfinance"]
@@ -57,6 +50,37 @@ PlotterKind = Literal["web", "pie-chart"]
 _VALID_SOURCES: tuple[str, ...] = ("justetf", "yfinance")
 _VALID_PLOTTERS: tuple[str, ...] = ("web", "pie-chart")
 _VALID_LOG_LEVELS: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+_LEGACY_STORE_KEYS: tuple[str, ...] = (
+    "assets_file",
+    "cache_file",
+    "isin_file",
+    "users_file",
+)
+
+
+def _reject_legacy_backend(parser: configparser.ConfigParser) -> None:
+    """Reject the removed JSON backend with a migration hint."""
+    if not parser.has_option("server", "backend"):
+        return
+    backend = parser.get("server", "backend", fallback="").strip().lower()
+    if backend and backend != "sqlite":
+        raise ValueError(
+            "the JSON backend has been removed; set [server] db_file and "
+            "remove [server] backend from config.ini"
+        )
+
+
+def _reject_legacy_store_keys(parser: configparser.ConfigParser) -> None:
+    """Reject legacy per-store JSON paths with a migration hint."""
+    if not parser.has_section("update"):
+        return
+    legacy = [key for key in _LEGACY_STORE_KEYS if parser.has_option("update", key)]
+    if legacy:
+        raise ValueError(
+            "the JSON store paths are no longer supported; remove "
+            f"[update] {', '.join(legacy)} and use [server] db_file"
+        )
 
 
 @dataclass
@@ -68,8 +92,6 @@ class ServerConfig:
     # Kept separate from the plotter output dir on purpose: one instance
     # may serve what another one wrote.
     data_dir: str = "data"
-    # Which backend stores the data (``json`` or ``sqlite``). Resolved in ``storage.wiring``.
-    backend: str = BACKEND_JSON
     # The SQLite database file (one file, one table per store).
     db_file: Path = field(default_factory=lambda: DEFAULT_DB_PATH)
 
@@ -94,10 +116,6 @@ class AppConfig:
     position_source: PositionSource = "justetf"
     plotter: PlotterKind = "web"
     user: str = DEFAULT_USER_NAME
-    assets_file: Path = field(default_factory=lambda: DEFAULT_ASSETS_PATH)
-    cache_file: Path = field(default_factory=lambda: DEFAULT_CACHE_PATH)
-    isin_file: Path = field(default_factory=lambda: DEFAULT_ISIN_PATH)
-    users_file: Path = field(default_factory=lambda: DEFAULT_USERS_PATH)
     server: ServerConfig = field(
         default_factory=lambda: ServerConfig(
             port=8765,
@@ -176,9 +194,7 @@ class AppConfig:
         data_dir = (
             parser.get("server", "plotter_data_dir", fallback="data").strip() or "data"
         )
-        backend = normalize_backend(
-            parser.get("server", "backend", fallback=BACKEND_JSON)
-        )
+        _reject_legacy_backend(parser)
         db_file = DEFAULT_DB_PATH
         raw_db = parser.get("server", "db_file", fallback=None)
         if raw_db and raw_db.strip():
@@ -190,7 +206,6 @@ class AppConfig:
             address=address,
             directory=directory,
             data_dir=data_dir,
-            backend=backend,
             db_file=db_file,
         )
 
@@ -203,10 +218,6 @@ class AppConfig:
             "fetch_sectorsplit": False,
             "log_level": "INFO",
             "user": DEFAULT_USER_NAME,
-            "assets_file": DEFAULT_ASSETS_PATH,
-            "cache_file": DEFAULT_CACHE_PATH,
-            "isin_file": DEFAULT_ISIN_PATH,
-            "users_file": DEFAULT_USERS_PATH,
         }
         try:
             cfg_path, parser = cls._ini_parser(path)
@@ -229,26 +240,7 @@ class AppConfig:
             parser.get("update", "user", fallback=DEFAULT_USER_NAME).strip()
             or DEFAULT_USER_NAME
         )
-        values["assets_file"] = cls._resolve_ini_path(
-            cfg_path,
-            parser.get("update", "assets_file", fallback=None),
-            DEFAULT_ASSETS_PATH,
-        )
-        values["cache_file"] = cls._resolve_ini_path(
-            cfg_path,
-            parser.get("update", "cache_file", fallback=None),
-            DEFAULT_CACHE_PATH,
-        )
-        values["isin_file"] = cls._resolve_ini_path(
-            cfg_path,
-            parser.get("update", "isin_file", fallback=None),
-            DEFAULT_ISIN_PATH,
-        )
-        values["users_file"] = cls._resolve_ini_path(
-            cfg_path,
-            parser.get("update", "users_file", fallback=None),
-            DEFAULT_USERS_PATH,
-        )
+        _reject_legacy_store_keys(parser)
         return values
 
     @classmethod
@@ -313,10 +305,6 @@ class AppConfig:
         log_level = pick(getattr(args, "log_level", None), ini_update["log_level"])
         if log_level not in _VALID_LOG_LEVELS:
             raise ValueError(f"unknown log level {log_level!r}")
-        assets = getattr(args, "assets_file", None)
-        cache = getattr(args, "cache_file", None)
-        isin = getattr(args, "isin_file", None)
-        users = getattr(args, "users_file", None)
         return cls(
             fetch_prices=bool(pick(getattr(args, "fetch_prices", None), ini_update["fetch_prices"])),
             fetch_geosplit=bool(pick(getattr(args, "fetch_geosplit", None), ini_update["fetch_geosplit"])),
@@ -328,10 +316,6 @@ class AppConfig:
             plotter=plotter,  # type: ignore[arg-type]
             user=str(pick(getattr(args, "user", None), ini_update["user"])).strip()
             or DEFAULT_USER_NAME,
-            assets_file=Path(assets) if assets else ini_update["assets_file"],
-            cache_file=Path(cache) if cache else ini_update["cache_file"],
-            isin_file=Path(isin) if isin else ini_update["isin_file"],
-            users_file=Path(users) if users else ini_update["users_file"],
             server=server,
             plotter_config=ini_plotter,
             log_level=log_level,
@@ -361,48 +345,36 @@ class RuntimeContext:
     # position in ``position.factory``; ``None`` means non-cancellable.
     # Either a threading or a multiprocessing event (child-process runs).
     cancel_event: threading.Event | _MultiprocessingEvent | None = None
-    # Lazily built ``CacheRepository`` over a ``JsonStorage`` backend for
-    # ``config.cache_file``. The plain ``cache`` dict above stays the
-    # in-memory source of truth for reads; the repository is the
-    # validated write path (see ``restore`` / ``_mirror_cache_row``).
-    # Built once: ``cache_file`` is only ever set at config construction,
-    # never mutated afterwards.
+    # Lazily built ``CacheRepository`` over the SQLite backend. The plain
+    # ``cache`` dict above stays the in-memory source of truth for reads;
+    # the repository is the validated write path (see ``restore`` /
+    # ``_mirror_cache_row``).
     _cache_repo: Any = field(default=None, init=False, repr=False)
-    # Lazily built ``AssetRepository`` over a ``JsonStorage`` backend for
-    # ``config.assets_file``. The plain ``portfolio`` dict stays the
-    # in-memory model mutated by scrapers and persist helpers; the
-    # repository owns file persistence only.
+    # Lazily built ``AssetRepository`` over the SQLite backend. The plain
+    # ``portfolio`` dict stays the in-memory model mutated by scrapers and
+    # persist helpers; the repository owns database persistence only.
     _asset_repo: Any = field(default=None, init=False, repr=False)
-    # Lazily built ``IsinRegistry`` over a ``JsonStorage`` backend for
-    # ``config.isin_file``. Opened eagerly at build so the shipped seed
-    # rows exist before the first factory lookup.
+    # Lazily built ``IsinRegistry`` over the SQLite backend. Opened
+    # eagerly at build so the registry is ready before the first factory
+    # lookup.
     _isin_repo: Any = field(default=None, init=False, repr=False)
 
     # -- portfolio --
     @property
     def asset_repo(self):  # type: ignore[no-untyped-def]
-        """Validated assets access: ``AssetRepository`` over the assets backend.
+        """Validated assets access: ``AssetRepository`` over the database.
 
-        Lazily built against ``config.assets_file`` and scoped to
-        ``config.user`` — other users' rows are never touched. The
-        backend itself is chosen in :mod:`storage.wiring`.
+        Lazily built against ``config.server.db_file`` and scoped to
+        ``config.user`` — other users' rows are never touched.
         """
         from storage.repositories import AssetRepository, PositionRepository, UserPortfolioRepository
 
         if self._asset_repo is None:
             position_repo = PositionRepository(
-                positions_backend(
-                    self.config.assets_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                ),
+                positions_backend(self.config.server.db_file),
             )
             portfolio_repo = UserPortfolioRepository(
-                user_portfolios_backend(
-                    self.config.assets_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                ),
+                user_portfolios_backend(self.config.server.db_file),
             )
             self._asset_repo = AssetRepository(
                 self.config.user,
@@ -413,9 +385,9 @@ class RuntimeContext:
 
     @property
     def isin_registry(self):  # type: ignore[no-untyped-def]
-        """ISIN registry: ``IsinRegistry`` over the configured backend.
+        """ISIN registry: ``IsinRegistry`` over the database.
 
-        Lazily built against ``config.isin_file`` and opened eagerly.
+        Lazily built against ``config.server.db_file`` and opened eagerly.
         Factory probe hits and broker bucket mappings stage writes here;
         they become durable only via :meth:`flush_isin_registry` (callers
         own durability — no backend nouns leak past ``persist()``).
@@ -423,22 +395,15 @@ class RuntimeContext:
         from storage.repositories import IsinRegistry
 
         if self._isin_repo is None:
-            repo = IsinRegistry(
-                isin_backend(
-                    self.config.isin_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                )
-            )
+            repo = IsinRegistry(isin_backend(self.config.server.db_file))
             repo.open()
             self._isin_repo = repo
         return self._isin_repo
 
     def load_portfolio(self, path: Path | None = None) -> None:
-        target = path or self.config.assets_file
         repo = (
             self._asset_repo_for(path)
-            if path is not None and Path(path) != self.config.assets_file
+            if path is not None and Path(path) != self.config.server.db_file
             else self.asset_repo
         )
         # The store is the source of truth: read this user's positions
@@ -450,7 +415,7 @@ class RuntimeContext:
         self.portfolio.update(data)
 
     def _asset_repo_for(self, path: Path | str):  # type: ignore[no-untyped-def]
-        """Short-lived repository bound to an explicit path (not the config file)."""
+        """Short-lived repository bound to an explicit database file."""
         from storage.repositories import (
             AssetRepository,
             PositionRepository,
@@ -460,24 +425,14 @@ class RuntimeContext:
         path = Path(path)
         return AssetRepository(
             self.config.user,
-            position_repo=PositionRepository(
-                positions_backend(
-                    path,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                )
-            ),
+            position_repo=PositionRepository(positions_backend(path)),
             portfolio_repo=UserPortfolioRepository(
-                user_portfolios_backend(
-                    path,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                )
+                user_portfolios_backend(path)
             ),
         )
 
     def persist_portfolio(self, path: Path | None = None) -> None:
-        if path is not None and Path(path) != self.config.assets_file:
+        if path is not None and Path(path) != self.config.server.db_file:
             repo = self._asset_repo_for(path)
             repo.open()
         else:
@@ -490,21 +445,17 @@ class RuntimeContext:
     # -- cache (in-memory + flush) --
     @property
     def cache_repo(self):  # type: ignore[no-untyped-def]
-        """Validated cache access: ``CacheRepository`` over the backend.
+        """Validated cache access: ``CacheRepository`` over the database.
 
-        Lazily built against ``config.cache_file``. All cache writes in
-        the update path go through here; the plain ``cache`` dict remains
-        the in-memory read model (mirrored on every write).
+        Lazily built against ``config.server.db_file``. All cache writes
+        in the update path go through here; the plain ``cache`` dict
+        remains the in-memory read model (mirrored on every write).
         """
         from storage.repositories import CacheRepository
 
         if self._cache_repo is None:
             self._cache_repo = CacheRepository(
-                cache_backend(
-                    self.config.cache_file,
-                    self.config.server.backend,
-                    self.config.server.db_file,
-                )
+                cache_backend(self.config.server.db_file)
             )
         return self._cache_repo
 
@@ -523,7 +474,7 @@ class RuntimeContext:
             # see it.
             self.cache_repo.restore(self.cache)
             return self.cache
-        logger.info("loading cache from %s", self.config.cache_file)
+        logger.info("loading cache from %s", self.config.server.db_file)
         self.cache_repo.open()
         self.cache = self.cache_repo.snapshot()
         self.cache_loaded = True
@@ -551,12 +502,11 @@ class RuntimeContext:
             return
         # Dict is the source of truth (it may have been mutated directly):
         # restore, then persist through repository verbs only — no backend
-        # nouns (``load``/``save``/``connect``/``commit``) appear here, so a
-        # future backend swap touches nothing in this method.
+        # nouns (``load``/``save``/``connect``/``commit``) appear here.
         self.cache_repo.restore(self.cache)
         self.cache_repo.persist()
         self.cache_dirty = False
-        logger.info("wrote cache to %s", self.config.cache_file)
+        logger.info("wrote cache to %s", self.config.server.db_file)
 
     # -- plotter selection (explicit, no module global) --
     def plotter_class(self):  # type: ignore[no-untyped-def]

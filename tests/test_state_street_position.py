@@ -20,7 +20,7 @@ from position.state_street_position import (
     _SSGA_PRODUCT_EXISTS,
     ssga_product_url_exists,
 )
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 
 _ISIN = "IE00B4YBJ215"
 _GEO = {
@@ -237,9 +237,7 @@ class TestSsgaCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_sectorsplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -314,9 +312,7 @@ class TestSsgaFactoryRouting(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

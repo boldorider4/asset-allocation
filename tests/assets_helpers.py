@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Test helper: read/write one user's portfolio in the legacy JSON store.
+"""Test helper for the legacy JSON import format.
 
 The production path is the normalized ``user_positions`` table. These
-helpers stay JSON-only because most fixtures write an ``assets.json``
-document; the JSON backend is kept as a harness for a later
-compatibility pass.
+helpers stay JSON-only because the sample/import files (``assets.json``)
+are JSON documents consumed by the one-time migration scripts.
 """
 
 from __future__ import annotations

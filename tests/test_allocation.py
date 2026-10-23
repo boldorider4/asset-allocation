@@ -9,7 +9,6 @@ refresh only on explicit fetch runs.
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -22,6 +21,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from cli.context import AppConfig, RuntimeContext, ServerConfig  # noqa: E402
 from scrape.scalable import ScalableHolding  # noqa: E402
+from tests.store_helpers import (  # noqa: E402
+    db_path,
+    read_cache,
+    write_cache,
+    write_positions,
+)
 
 ISIN = "XX000UNKNOWN1"
 FRESH_COUNTRIES = [
@@ -31,49 +36,40 @@ FRESH_COUNTRIES = [
 FRESH_SECTORS = [{"name": "Technology", "weight_pct": 100.0}]
 
 
-def _seed_files(tmp: Path) -> tuple[Path, Path, Path]:
-    assets = tmp / "assets.json"
-    cache = tmp / "cache.json"
+def _seed_files(tmp: Path) -> tuple[Path, Path]:
+    db = db_path(tmp)
     viz = tmp / "viz"
-    assets.write_text(
-        json.dumps(
-            {
-                "default": {
-                    "portfolio_name": "Portfolio",
-                    "positions": {
-                        "equity_portfolio": [
-                            {
-                                "name": "Unknown",
-                                "ISIN": ISIN,
-                                "shares": 2,
-                                "value": 20.0,
-                                "broker": "scalable",
-                            }
-                        ],
-                        "fixed_maturity_bond_portfolio": [],
-                        "cash_portfolio": [],
-                        "bond_portfolio": [],
-                        "commodity_portfolio": [],
-                        "pension_portfolio": [],
-                    },
+    write_positions(
+        db,
+        {
+            "equity_portfolio": [
+                {
+                    "name": "Unknown",
+                    "ISIN": ISIN,
+                    "shares": 2,
+                    "value": 20.0,
+                    "broker": "scalable",
                 }
-            }
-        ),
-        encoding="utf-8",
+            ],
+            "fixed_maturity_bond_portfolio": [],
+            "cash_portfolio": [],
+            "bond_portfolio": [],
+            "commodity_portfolio": [],
+            "pension_portfolio": [],
+        },
+        portfolio_name="Portfolio",
     )
-    cache.write_text(
-        json.dumps(
-            {
-                ISIN: {
-                    "price": 10.0,
-                    "countries": {"France": 0.5},
-                    "sectors": {"Finance": 0.5},
-                }
+    write_cache(
+        db,
+        {
+            ISIN: {
+                "price": 10.0,
+                "countries": {"France": 0.5},
+                "sectors": {"Finance": 0.5},
             }
-        ),
-        encoding="utf-8",
+        },
     )
-    return assets, cache, viz
+    return db, viz
 
 
 def _holding() -> dict:
@@ -93,17 +89,13 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
 
     from cli.update import main as run_update
 
-    assets, cache, viz = _seed_files(tmp)
-    isin = tmp / "isin.json"
+    db, viz = _seed_files(tmp)
     config = AppConfig(
         fetch_scalable=True,
         fetch_geosplit=geosplit,
         fetch_sectorsplit=sectorsplit,
-        assets_file=assets,
-        cache_file=cache,
-        isin_file=isin,
         server=ServerConfig(
-            port=0, address="localhost", directory=viz, db_file=tmp / "asalloc.db"
+            port=0, address="localhost", directory=viz, db_file=db
         ),
     )
     ctx = RuntimeContext(config=config)
@@ -126,7 +118,7 @@ def _run_main(tmp: Path, *, geosplit: bool, sectorsplit: bool):
         patch("position.factory._probe_issuer_for_isin", return_value=None),
     ):
         run_update(ctx)
-    stored = json.loads(cache.read_text(encoding="utf-8"))
+    stored = read_cache(db)
     return stored, countries_mock, sectors_mock
 
 

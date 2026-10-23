@@ -2,20 +2,19 @@
 """Plot totals must follow broker scrapes (regression test).
 
 Reported bug: ``asalloc update --fetch-scalable`` updated the prices in
-the JSON (and the constituents endpoint served them), but the total
+the store (and the constituents endpoint served them), but the total
 printed with the plot stayed at the pre-scrape value. Root cause: the
 update pipeline built all ``Portfolio`` objects before running the
 scrapes, so plot totals came from pre-scrape ``Position`` snapshots
-while the JSON was flushed from post-scrape dicts.
+while the store was flushed from post-scrape dicts.
 
 Covers both broker flags: the scalable path (shares + value from the
 scrape) and the oskar path (value from the scrape, shares estimated as
-value/price via a JustETF position and persisted to the assets file).
+value/price via a JustETF position and persisted to the database).
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -29,6 +28,12 @@ if str(REPO_ROOT) not in sys.path:
 from cli.context import AppConfig, RuntimeContext, ServerConfig  # noqa: E402
 from scrape.oskar import OskarEtf, _OSKAR  # noqa: E402
 from scrape.scalable import _SCALABLE, ScalableHolding  # noqa: E402
+from tests.store_helpers import (  # noqa: E402
+    db_path,
+    read_positions,
+    write_cache,
+    write_positions,
+)
 
 ISIN = "XX000TOTALS1"
 OLD_VALUE = 20.0
@@ -44,41 +49,33 @@ EMPTY_BUCKETS = {
 }
 
 
-def _seed_files(tmp: Path, *, broker: str, shares) -> tuple[Path, Path, Path]:
-    assets = tmp / "assets.json"
-    cache = tmp / "cache.json"
+def _seed_files(tmp: Path, *, broker: str, shares) -> tuple[Path, Path]:
+    db = db_path(tmp)
     viz = tmp / "viz"
-    assets.write_text(
-        json.dumps(
-            {
-                "default": {
-                    "portfolio_name": "Portfolio",
-                    "positions": {
-                        "equity_portfolio": [
-                            {
-                                "name": "Totals",
-                                "ISIN": ISIN,
-                                "shares": shares,
-                                "value": OLD_VALUE,
-                                "broker": broker,
-                            }
-                        ],
-                        **EMPTY_BUCKETS,
-                    },
+    write_positions(
+        db,
+        {
+            "equity_portfolio": [
+                {
+                    "name": "Totals",
+                    "ISIN": ISIN,
+                    "shares": shares,
+                    "value": OLD_VALUE,
+                    "broker": broker,
                 }
-            }
-        ),
-        encoding="utf-8",
+            ],
+            **EMPTY_BUCKETS,
+        },
+        portfolio_name="Portfolio",
     )
-    cache.write_text(json.dumps({ISIN: {"price": CACHED_PRICE}}), encoding="utf-8")
-    return assets, cache, viz
+    write_cache(db, {ISIN: {"price": CACHED_PRICE}})
+    return db, viz
 
 
 def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict]:
     from cli.update import main as run_update
 
-    assets, cache, viz = _seed_files(tmp, broker=broker, shares=shares)
-    isin = tmp / "isin.json"
+    db, viz = _seed_files(tmp, broker=broker, shares=shares)
     flags = {
         "fetch_prices": False,
         "fetch_geosplit": False,
@@ -86,11 +83,8 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
         **fetch,
     }
     config = AppConfig(
-        assets_file=assets,
-        cache_file=cache,
-        isin_file=isin,
         server=ServerConfig(
-            port=0, address="localhost", directory=viz, db_file=tmp / "asalloc.db"
+            port=0, address="localhost", directory=viz, db_file=db
         ),
         **flags,
     )
@@ -99,8 +93,7 @@ def _run_main(tmp: Path, *, broker: str, shares, fetch: dict) -> tuple[str, dict
     raw_text = "".join(
         p.read_text(encoding="utf-8") for p in sorted((viz / "data" / "default").glob("*.raw"))
     )
-    stored_assets = json.loads(assets.read_text(encoding="utf-8"))
-    return raw_text, stored_assets
+    return raw_text, read_positions(db)
 
 
 class PlotTotalsTestBase(unittest.TestCase):
@@ -136,9 +129,10 @@ class TestScalablePlotTotals(PlotTotalsTestBase):
                 shares=2,
                 fetch={"fetch_scalable": True},
             )
-        # JSON is fresh ...
-        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["value"], NEW_VALUE)
-        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["shares"], 4)
+        # The stored positions are fresh ...
+        row = stored["equity_portfolio"][0]
+        self.assertEqual(row["value"], NEW_VALUE)
+        self.assertEqual(row["shares"], 4)
         # ... and so are the plotted totals.
         self.assertIn(f"Total Value: {NEW_VALUE:.2f}", raw_text)
         self.assertIn(f"Net Worth: {NEW_VALUE:.2f}", raw_text)
@@ -172,11 +166,10 @@ class TestOskarPlotTotals(PlotTotalsTestBase):
                 shares=None,
                 fetch={"fetch_oskar": True, "fetch_prices": True},
             )
-        self.assertEqual(stored["default"]["positions"]["equity_portfolio"][0]["value"], NEW_VALUE)
+        row = stored["equity_portfolio"][0]
+        self.assertEqual(row["value"], NEW_VALUE)
         # Shares estimated as value/price from a JustETF position quote.
-        self.assertEqual(
-            stored["default"]["positions"]["equity_portfolio"][0]["shares"], NEW_VALUE / CACHED_PRICE
-        )
+        self.assertEqual(row["shares"], NEW_VALUE / CACHED_PRICE)
         self.assertIn(f"Total Value: {NEW_VALUE:.2f}", raw_text)
         self.assertIn(f"Net Worth: {NEW_VALUE:.2f}", raw_text)
         self.assertNotIn(f"Total Value: {OLD_VALUE:.2f}", raw_text)

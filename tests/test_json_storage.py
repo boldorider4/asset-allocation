@@ -31,13 +31,13 @@ from storage import (  # noqa: E402
     DictRow,
     IsinRecord,
     IsinRegistry,
-    JsonStorage,
     MemoryStorage,
     PositionRecord,
     PositionRepository,
     UserPortfolioRecord,
     UserPortfolioRepository,
 )
+from storage.json_storage import JsonStorage  # noqa: E402
 from storage.sqlite_storage import SqliteStorage  # noqa: E402
 from storage.storage import Storage  # noqa: E402
 

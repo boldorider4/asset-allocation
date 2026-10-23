@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Domain repositories over any :mod:`storage.storage` backend.
+"""Domain repositories over the :mod:`storage.storage` abstraction.
 
 Composition, not inheritance: each repository wraps a ``Storage[T]``
-and adds domain logic. Swapping backends (JSON file <-> Postgres <->
-in-memory) never touches this code -- only the backend instance passed
-to the constructor changes.
+and adds domain logic. The runtime uses SQLite; tests may inject any
+``Storage`` implementation without touching this code.
 
 Repositories use *only* ABC methods (point access plus the
 backend-neutral lifecycle ``open``/``snapshot``/``persist``/``close``),
@@ -758,7 +757,7 @@ class SessionsRepository:
 
 
 class IsinRegistry:
-    """ISIN registry over any backend (in-memory by default).
+    """ISIN registry over the configured storage backend.
 
     Each row maps an ISIN to its issuer handler, portfolio bucket and an
     optional vendor product ref. ``None`` issuer means "unknown, probe on
@@ -843,7 +842,7 @@ class IsinRegistry:
 
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> IsinRegistry:
-        """Open the underlying ``isin.json`` backend (read-only use)."""
+        """Open the underlying ISIN backend (read-only use)."""
         self._backend.open()
         return self
 

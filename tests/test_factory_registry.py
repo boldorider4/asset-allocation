@@ -9,7 +9,6 @@ Anything unresolved falls back to the generic constructors.
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -20,7 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from cli.context import AppConfig, RuntimeContext  # noqa: E402
+from cli.context import AppConfig, RuntimeContext, ServerConfig  # noqa: E402
+from tests.store_helpers import read_isin  # noqa: E402
 from position.blackrock_position import BlackRockPosition  # noqa: E402
 from position.factory import factory  # noqa: E402
 from position.justetf_position import JustETFPosition  # noqa: E402
@@ -35,9 +35,7 @@ def _ctx() -> RuntimeContext:
         config=AppConfig(
             fetch_geosplit=True,
             fetch_prices=False,
-            cache_file=tmp / "cache.json",
-            assets_file=tmp / "assets.json",
-            isin_file=tmp / "isin.json",
+            server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
         )
     )
     ctx.cache = {}
@@ -184,7 +182,7 @@ class TestRegistryFlush(unittest.TestCase):
     def test_probe_hit_survives_flush_to_disk(self) -> None:
         ctx = self._probe_hit_ctx("XX000PROBE9")
         ctx.flush_isin_registry()
-        on_disk = json.loads(Path(ctx.config.isin_file).read_text(encoding="utf-8"))
+        on_disk = read_isin(ctx.config.server.db_file)
         self.assertEqual(on_disk["XX000PROBE9"]["issuer"], "ishares")
 
     def test_reloaded_registry_takes_db_path_without_probes(self) -> None:
@@ -194,9 +192,7 @@ class TestRegistryFlush(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=ctx.config.cache_file,
-                assets_file=ctx.config.assets_file,
-                isin_file=ctx.config.isin_file,
+                server=ctx.config.server,
             )
         )
         reloaded.cache = {}
@@ -217,10 +213,10 @@ class TestRegistryFlush(unittest.TestCase):
             )
         self.assertIsInstance(pos, BlackRockPosition)
 
-    def test_flush_without_registry_touch_creates_no_file(self) -> None:
+    def test_flush_without_registry_touch_creates_no_database(self) -> None:
         ctx = _ctx()
         ctx.flush_isin_registry()
-        self.assertFalse(Path(ctx.config.isin_file).exists())
+        self.assertFalse(Path(ctx.config.server.db_file).exists())
 
 
 if __name__ == "__main__":

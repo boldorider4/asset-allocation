@@ -47,9 +47,7 @@ class TestCliPlotFlags(unittest.TestCase):
                     fetch_oskar=False,
                     fetch_scalable=False,
                     fetch_tr=False,
-                    assets_file=Path(tmp) / "assets.json",
-                    cache_file=Path(tmp) / "cache.json",
-                    isin_file=Path(tmp) / "isin.json",
+                    db_file=Path(tmp) / "asalloc.db",
                     position_source="yfinance",
                     plot="pie-chart",
                     log_level="INFO",
@@ -67,21 +65,21 @@ class TestCliPlotFlags(unittest.TestCase):
         self.assertTrue(config.fetch_prices)
         self.assertEqual(config.position_source, "yfinance")
         self.assertEqual(config.plotter, "pie-chart")
-        self.assertTrue(str(config.cache_file).endswith("cache.json"))
+        self.assertEqual(config.server.db_file, Path(tmp) / "asalloc.db")
 
 
 class TestConfigFlag(unittest.TestCase):
     def _ini(self, tmp: Path) -> Path:
         path = tmp / "custom.ini"
         path.write_text(
-            "[server]\nport = 8765\ndirectory = vis\n"
+            "[server]\nport = 8765\ndirectory = vis\ndb_file = asalloc.db\n"
             "[update]\nfetch_geosplit = True\n",
             encoding="utf-8",
         )
         return path
 
-    def _ini_with_stores(self, tmp: Path) -> Path:
-        """An ini that points at the three stores."""
+    def _ini_with_legacy_stores(self, tmp: Path) -> Path:
+        """An ini using the removed per-store JSON paths."""
         path = tmp / "stores.ini"
         path.write_text(
             "[server]\nport = 8765\ndirectory = vis\n"
@@ -95,8 +93,7 @@ class TestConfigFlag(unittest.TestCase):
         """An ini that points at one SQLite database."""
         path = tmp / "db.ini"
         path.write_text(
-            "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n"
-            "db_file = asalloc.db\n",
+            "[server]\nport = 8765\ndirectory = vis\ndb_file = asalloc.db\n",
             encoding="utf-8",
         )
         return path
@@ -110,10 +107,6 @@ class TestConfigFlag(unittest.TestCase):
             raise RuntimeError("stop here")
 
         values = {
-            "assets_file": None,
-            "cache_file": None,
-            "users_file": None,
-            "isin_file": None,
             "db_file": None,
             "config": ini,
         }
@@ -139,9 +132,7 @@ class TestConfigFlag(unittest.TestCase):
             fetch_oskar=None,
             fetch_scalable=None,
             fetch_tr=None,
-            assets_file=tmp / "assets.json",
-            cache_file=tmp / "cache.json",
-            isin_file=tmp / "isin.json",
+            db_file=None,
             position_source="justetf",
             plot=None,
             log_level=None,
@@ -186,8 +177,7 @@ class TestConfigFlag(unittest.TestCase):
         import cli.cli as cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini_with_stores(Path(tmp))
-            (Path(tmp) / "visualizer").mkdir()
+            ini = self._ini_with_database(Path(tmp))
             calls: dict = {}
             prev = os.environ.get("ASALLOC_CONFIG")
 
@@ -202,14 +192,7 @@ class TestConfigFlag(unittest.TestCase):
                 ):
                     with self.assertRaises(RuntimeError):
                         cmd_serve(
-                            argparse.Namespace(
-                                assets_file=None,
-                                cache_file=None,
-                                users_file=None,
-                                isin_file=None,
-                                db_file=None,
-                                config=ini,
-                            )
+                            argparse.Namespace(db_file=None, config=ini)
                         )
             finally:
                 if prev is None:
@@ -220,103 +203,29 @@ class TestConfigFlag(unittest.TestCase):
             self.assertEqual(calls["cmd"][calls["cmd"].index("--plotter-data-dir") + 1], "data")
             self.assertNotIn("--plotter-clear-dir", calls["cmd"])
 
-    def test_serve_follows_the_ini_paths(self) -> None:
-        import cli.cli as cli
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini_with_stores(Path(tmp))
-            calls: dict = {}
-            prev = os.environ.get("ASALLOC_CONFIG")
-
-            def fake_popen(cmd, **kwargs):
-                calls["cmd"] = list(cmd)
-                raise RuntimeError("stop here")
-
-            try:
-                with patch("cli.cli._find_server_pids", return_value=[]), patch(
-                    "cli.cli.subprocess.Popen", side_effect=fake_popen
-                ):
-                    with self.assertRaises(RuntimeError):
-                        cmd_serve(
-                            argparse.Namespace(
-                                assets_file=None,
-                                cache_file=None,
-                                users_file=None,
-                                isin_file=None,
-                                db_file=None,
-                                config=ini,
-                            )
-                        )
-            finally:
-                if prev is None:
-                    os.environ.pop("ASALLOC_CONFIG", None)
-                else:
-                    os.environ["ASALLOC_CONFIG"] = prev
-            cmd = calls["cmd"]
-            # The ini decides where the stores live...
-            self.assertEqual(
-                cmd[cmd.index("--assets-file") + 1], str(Path(tmp) / "a.json")
-            )
-            self.assertEqual(
-                cmd[cmd.index("--cache-file") + 1], str(Path(tmp) / "c.json")
-            )
-            self.assertEqual(
-                cmd[cmd.index("--users-file") + 1], str(Path(tmp) / "u.json")
-            )
-            self.assertEqual(
-                cmd[cmd.index("--isin-registry-file") + 1],
-                str(Path(tmp) / "i.json"),
-            )
-            # The json backend has no database.
-            self.assertNotIn("--db-file", cmd)
-
-    def test_serve_flags_win_over_the_ini(self) -> None:
-        import cli.cli as cli
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini_with_stores(Path(tmp))
-            calls: dict = {}
-            prev = os.environ.get("ASALLOC_CONFIG")
-
-            def fake_popen(cmd, **kwargs):
-                calls["cmd"] = list(cmd)
-                raise RuntimeError("stop here")
-
-            try:
-                with patch("cli.cli._find_server_pids", return_value=[]), patch(
-                    "cli.cli.subprocess.Popen", side_effect=fake_popen
-                ):
-                    with self.assertRaises(RuntimeError):
-                        cmd_serve(
-                            argparse.Namespace(
-                                assets_file=Path(tmp) / "flag-assets.json",
-                                cache_file=None,
-                                users_file=None,
-                                isin_file=None,
-                                db_file=None,
-                                config=ini,
-                            )
-                        )
-            finally:
-                if prev is None:
-                    os.environ.pop("ASALLOC_CONFIG", None)
-                else:
-                    os.environ["ASALLOC_CONFIG"] = prev
-            cmd = calls["cmd"]
-            self.assertEqual(
-                cmd[cmd.index("--assets-file") + 1],
-                str(Path(tmp) / "flag-assets.json"),
-            )
-
-    def test_serve_with_sqlite_passes_only_the_database(self) -> None:
+    def test_serve_follows_the_ini_database(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini_with_database(Path(tmp))
             cmd = self._serve_cmd(ini)
             self.assertEqual(
                 cmd[cmd.index("--db-file") + 1], str(Path(tmp) / "asalloc.db")
             )
-            # The JSON files are not the store here: they stay out of the
-            # process list.
+
+    def test_serve_flag_wins_over_the_ini_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_database(Path(tmp))
+            flag = Path(tmp) / "flag.db"
+            cmd = self._serve_cmd(ini, db_file=flag)
+            self.assertEqual(cmd[cmd.index("--db-file") + 1], str(flag))
+
+    def test_serve_passes_only_the_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_database(Path(tmp))
+            cmd = self._serve_cmd(ini)
+            self.assertEqual(
+                cmd[cmd.index("--db-file") + 1], str(Path(tmp) / "asalloc.db")
+            )
+            # The removed JSON stores stay out of the process list.
             for flag in (
                 "--assets-file",
                 "--cache-file",
@@ -325,42 +234,45 @@ class TestConfigFlag(unittest.TestCase):
             ):
                 self.assertNotIn(flag, cmd)
 
-    def test_serve_with_json_passes_only_the_json_files(self) -> None:
+    def test_serve_rejects_the_json_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini_with_stores(Path(tmp))
-            cmd = self._serve_cmd(ini)
-            for flag in (
-                "--assets-file",
-                "--cache-file",
-                "--users-file",
-                "--isin-registry-file",
-            ):
-                self.assertIn(flag, cmd)
-            self.assertNotIn("--db-file", cmd)
-
-    def test_serve_rejects_the_database_and_the_json_files_together(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ini = self._ini_with_stores(Path(tmp))
-            with self.assertRaises(SystemExit):
-                self._serve_cmd(
-                    ini,
-                    db_file=Path(tmp) / "asalloc.db",
-                    assets_file=Path(tmp) / "a.json",
-                )
-
-    def test_serve_needs_a_location_for_every_store(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            # The ini names the assets and the cache, but not the users.
-            ini = Path(tmp) / "partial.ini"
+            ini = Path(tmp) / "json.ini"
             ini.write_text(
-                "[server]\nport = 8765\ndirectory = vis\n"
-                "[update]\nassets_file = a.json\ncache_file = c.json\n"
-                "isin_file = i.json\n",
+                "[server]\nport = 8765\ndirectory = vis\nbackend = json\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(Exception) as ctx:
+            with self.assertRaises(ValueError) as ctx:
                 self._serve_cmd(ini)
-            self.assertIn("--users-file", str(ctx.exception))
+            self.assertIn("JSON backend has been removed", str(ctx.exception))
+
+    def test_legacy_store_keys_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_legacy_stores(Path(tmp))
+            with self.assertRaises(ValueError) as ctx:
+                AppConfig.from_ini(ini)
+            message = str(ctx.exception)
+            self.assertIn("assets_file", message)
+            self.assertIn("db_file", message)
+
+    def test_serve_rejects_legacy_store_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini_with_legacy_stores(Path(tmp))
+            with self.assertRaises(ValueError) as ctx:
+                self._serve_cmd(ini)
+            self.assertIn("assets_file", str(ctx.exception))
+            self.assertIn("db_file", str(ctx.exception))
+
+    def test_serve_needs_a_database_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = Path(tmp) / "partial.ini"
+            ini.write_text(
+                "[server]\nport = 8765\ndirectory = vis\n",
+                encoding="utf-8",
+            )
+            with patch("sys.stderr", new_callable=io.StringIO) as err:
+                with self.assertRaises(SystemExit):
+                    self._serve_cmd(ini)
+            self.assertIn("--db-file", err.getvalue())
 
     def test_config_flag_parses_before_and_after_subcommand(self) -> None:
         seen: list = []
@@ -382,7 +294,7 @@ class TestClearSessions(unittest.TestCase):
     def _ini_with_database(self, tmp: Path) -> Path:
         ini = tmp / "config.ini"
         ini.write_text(
-            "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n"
+            "[server]\nport = 8765\ndirectory = vis\n"
             f"db_file = {tmp / 'asalloc.db'}\n",
             encoding="utf-8",
         )
@@ -397,7 +309,7 @@ class TestClearSessions(unittest.TestCase):
             root = Path(tmp)
             ini = self._ini_with_database(root)
             db_file = root / "asalloc.db"
-            login(root / "vis", "sid", "alice", backend="sqlite", db_file=db_file)
+            login(db_file, "sid", "alice")
             conn = sqlite3.connect(db_file)
             try:
                 self.assertEqual(
@@ -415,31 +327,20 @@ class TestClearSessions(unittest.TestCase):
                 )
             finally:
                 conn.close()
-            self.assertIsNone(
-                read_session(root / "vis", "asalloc_sid=sid", backend="sqlite", db_file=db_file)
-            )
+            self.assertIsNone(read_session(db_file, "asalloc_sid=sid"))
 
-    def test_it_clears_the_sessions_of_the_json_store(self) -> None:
-        import json
-
-        from visual.web.backend.session import login, read_session, store_path
-
+    def test_it_rejects_the_json_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ini = root / "config.ini"
-            (root / "vis").mkdir()
             ini.write_text(
                 "[server]\nport = 8765\ndirectory = vis\nbackend = json\n",
                 encoding="utf-8",
             )
-            login(root / "vis", "sid", "alice")
-            with patch("sys.stdout", new_callable=io.StringIO) as out:
-                main(["--config", str(ini), "clear-sessions"])
-            self.assertIn("cleared 1 session", out.getvalue())
-            self.assertEqual(
-                json.loads(store_path(root / "vis").read_text(encoding="utf-8")), {}
-            )
-            self.assertIsNone(read_session(root / "vis", "asalloc_sid=sid"))
+            with patch("sys.stderr", new_callable=io.StringIO) as err:
+                with self.assertRaises(SystemExit):
+                    main(["--config", str(ini), "clear-sessions"])
+            self.assertIn("JSON backend has been removed", err.getvalue())
 
     def test_only_the_expired_ones_can_be_cleared(self) -> None:
         from visual.web.backend.session import login
@@ -448,7 +349,7 @@ class TestClearSessions(unittest.TestCase):
             root = Path(tmp)
             ini = self._ini_with_database(root)
             db_file = root / "asalloc.db"
-            login(root / "vis", "sid", "alice", backend="sqlite", db_file=db_file)
+            login(db_file, "sid", "alice")
             with patch("sys.stdout", new_callable=io.StringIO) as out:
                 main(["--config", str(ini), "clear-sessions", "--expired-only"])
             # The live session is not expired: it stays.
@@ -459,7 +360,7 @@ class TestClearSessions(unittest.TestCase):
             root = Path(tmp)
             ini = root / "config.ini"
             ini.write_text(
-                "[server]\nport = 8765\ndirectory = vis\nbackend = sqlite\n",
+                "[server]\nport = 8765\ndirectory = vis\n",
                 encoding="utf-8",
             )
             with patch("sys.stderr", new_callable=io.StringIO) as err:

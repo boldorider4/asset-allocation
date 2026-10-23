@@ -16,7 +16,7 @@ from position.ubs_position import (
     _UBS_PRODUCT_EXISTS,
     ubs_product_url_exists,
 )
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 
 _ISIN = "IE00BD4TXV59"
 _INST_ID = "1694907"
@@ -232,9 +232,7 @@ class TestUbsCountryFetch(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -277,9 +275,7 @@ class TestUbsFactoryRouting(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

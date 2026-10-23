@@ -351,9 +351,8 @@ class SqliteStorage(Storage[T]):
     def _require_conn(self) -> sqlite3.Connection:
         """The connection, opened on first use.
 
-        The JSON backend loads its file on demand ✅ — the database
-        backend opens its connection the same way, so a caller that
-        forgot :meth:`open` still works.
+        The connection opens on demand, so a caller that forgot
+        :meth:`open` still works.
         """
         if self._conn is None:
             self.connect()

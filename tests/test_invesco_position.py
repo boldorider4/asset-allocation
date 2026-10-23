@@ -19,7 +19,7 @@ from position.invesco_position import (
     invesco_product_url_exists,
 )
 from position.justetf_position import JustETFPosition
-from cli.context import AppConfig, RuntimeContext
+from cli.context import AppConfig, RuntimeContext, ServerConfig
 
 _ISIN = "IE00BKS7L097"
 _HOLDINGS_ISIN = "IE000PJL7R74"
@@ -221,9 +221,7 @@ class TestInvescoCountryFetch(unittest.TestCase):
                 fetch_geosplit=True,
                 fetch_sectorsplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}
@@ -307,9 +305,7 @@ class TestInvescoFactoryRouting(unittest.TestCase):
             config=AppConfig(
                 fetch_geosplit=True,
                 fetch_prices=False,
-                cache_file=tmp / "cache.json",
-                isin_file=tmp / "isin.json",
-                assets_file=tmp / "assets.json",
+                server=ServerConfig(port=0, address="localhost", directory=tmp, db_file=tmp / "asalloc.db"),
             )
         )
         self.ctx.cache = {}

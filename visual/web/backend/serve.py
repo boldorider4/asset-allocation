@@ -42,10 +42,6 @@ from .session import (
 from cli.common import DEFAULT_USER_NAME
 from cli.context import DEFAULT_DB_PATH
 from storage.repositories import UnknownUser
-from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_SQLITE,
-)
 from utils import clear_chart_files
 
 logger = logging.getLogger(__name__)
@@ -179,25 +175,10 @@ def _update_status_payload() -> dict:
     }
 
 
-def _fallback_path(candidate: Any, default: Path) -> Path:
-    """The path to use when the caller named none.
-
-    The ini's own value wins over the built-in default, so a store
-    without a location still points at the deployment's file and not
-    at the repository's.
-    """
-    if candidate is None:
-        return default
-    return Path(candidate)
-
-
 def _update_worker(
-    assets_file: str | None,
-    cache_file: str | None,
     fat: bool,
     directory: str,
     user: str,
-    backend: str,
     db_file: str | None,
     result_conn,
     cancel_event,
@@ -207,10 +188,8 @@ def _update_worker(
     Only picklable arguments cross the boundary; the ``RuntimeContext``
     and log suppression are constructed here. Update/plotter defaults
     come from the ini file (``fat`` upgrades them like explicit CLI
-    flags); explicit handler arguments always win. The store paths may
-    be missing: with the database backend the stores live in the one
-    database file, and the ini (or the built-in default) names the
-    loose JSON files otherwise. Sends ``{"ok", "error"}`` down the pipe;
+    flags); explicit handler arguments always win. Sends
+    ``{"ok", "error"}`` down the pipe;
     a killed child sends nothing and the parent reads the exit code
     instead. The send lands in the OS pipe buffer, so it survives the
     child dying with no flush dance.
@@ -218,8 +197,7 @@ def _update_worker(
     from cli.update import main as run_update
     from cli.context import (
         AppConfig,
-        DEFAULT_ASSETS_PATH,
-        DEFAULT_CACHE_PATH,
+        DEFAULT_DB_PATH,
         PlotterConfig,
         RuntimeContext,
         ServerConfig,
@@ -245,12 +223,6 @@ def _update_worker(
         (True, True, True) if fat else ini_fetch
     )
     config = AppConfig(
-        assets_file=Path(assets_file) if assets_file else _fallback_path(
-            getattr(ini_cfg, "assets_file", None), DEFAULT_ASSETS_PATH
-        ),
-        cache_file=Path(cache_file) if cache_file else _fallback_path(
-            getattr(ini_cfg, "cache_file", None), DEFAULT_CACHE_PATH
-        ),
         fetch_prices=fetch_prices,
         fetch_geosplit=fetch_geosplit,
         fetch_sectorsplit=fetch_sectorsplit,
@@ -259,8 +231,7 @@ def _update_worker(
             port=0,
             address="localhost",
             directory=Path(directory),
-            backend=backend,
-                        db_file=Path(db_file) if db_file else DEFAULT_DB_PATH,
+            db_file=Path(db_file) if db_file else DEFAULT_DB_PATH,
         ),
         plotter_config=ini_plotter,
     )
@@ -355,40 +326,22 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(
         self,
         *args,
-        assets_file=None,
-        cache_file=None,
-        users_file=None,
-        isin_file=None,
         db_file=None,
         data_dirname=None,
         user=None,
-        backend=None,
         **kwargs,
     ):
-        self._assets_file = assets_file
-        self._cache_file = cache_file
-        # The user accounts (the login asks this store, not the assets).
-        self._users_file = users_file
-        # The ISIN registry (written when a constituent is added).
-        self._isin_file = isin_file
         # The SQLite database file (one file, one table per store).
         self._db_file = db_file
         # On-disk chart layout (defaults mirror the served /data tree).
         self._data_dirname = data_dirname or DATA_DIRNAME
         # Fallback user when no session is active (login page default).
         self._default_user = user or DEFAULT_USER_NAME
-        # Which backend holds the assets (resolved by the app, not here).
-        self._backend = backend or BACKEND_JSON
         super().__init__(*args, **kwargs)
 
     def _session(self) -> Session | None:
         """The session of this browser, if it is logged in."""
-        return read_session(
-            self.directory,
-            self.headers.get("Cookie"),
-            backend=self._backend,
-            db_file=self._db_file,
-        )
+        return read_session(self._db_file, self.headers.get("Cookie"))
 
     def _session_user(self) -> str | None:
         """The logged-in user's name, or None."""
@@ -417,36 +370,24 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return True
 
-    def _store_configured(self, *paths: str | None) -> bool:
-        """True when the stores this request needs are configured.
-
-        With the SQLite backend the single database file covers every
-        store, so the per-store paths are not needed at all; with the
-        json backend each store needs its own file.
-        """
-        if self._backend == BACKEND_SQLITE:
-            return bool(self._db_file)
-        return all(paths)
+    def _store_configured(self) -> bool:
+        """True when the database file is configured."""
+        return bool(self._db_file)
 
     def _cache_map(self) -> dict[str, Any]:
         """The price cache as a plain map (empty when it is unavailable).
 
-        The cache is one of the stores: with the database backend it is
-        a table of the same file, so it is there even though no
-        ``--cache-file`` was given. Only a store that is not configured
-        at all yields an empty map - and then an edit cannot recompute
-        the sibling figure from a quote.
+        The cache is a table in the same database as the portfolio, so
+        it is available whenever the database is configured. Only a
+        missing database yields an empty map - and then an edit cannot
+        recompute the sibling figure from a quote.
         """
         from .constituents import cache_lookup
 
-        if not self._store_configured(self._cache_file):
+        if not self._store_configured():
             return {}
         try:
-            return cache_lookup(
-                self._cache_file,
-                self._backend,
-                self._db_file,
-            )
+            return cache_lookup(self._db_file)
         except Exception as exc:
             # A broken cache must not fail the edit: the cell is still
             # stored, only the sibling figure stays as it was.
@@ -460,15 +401,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         portfolio must not keep showing the last computed ones. Failures
         are logged, never raised.
         """
-        if not self._store_configured(self._assets_file):
+        if not self._store_configured():
             return
         try:
-            left = assets_positions_left(
-                self._assets_file,
-                user,
-                self._backend,
-                self._db_file,
-            )
+            left = assets_positions_left(self._db_file, user)
         except Exception as exc:
             logger.warning("could not count positions for %s: %s", user, exc)
             return
@@ -534,18 +470,16 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if not user:
             self._plain_status(400, "user must not be empty")
             return True
-        if not self._store_configured(self._users_file):
+        if not self._store_configured():
             logger.warning("no users store configured; refusing the reset")
             self._plain_status(503, "no users store configured")
             return True
         try:
             changed = reset_user_password(
-                self._users_file,
+                self._db_file,
                 user,
                 str(payload.get("old_password") or ""),
                 str(payload.get("new_password") or ""),
-                self._backend,
-                self._db_file,
             )
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("password reset failed: %s", exc)
@@ -569,7 +503,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def _login(self) -> bool:
         """Handle ``POST /api/login``: start a session for a known user.
 
-        The user must have an account in the users store (users.json)
+        The user must have an account in the users table
         *and* the posted password must match it. A name that only
         exists in the assets store is unknown here and is rejected like
         any other unknown user — and a wrong password is refused the
@@ -595,12 +529,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             logger.info("Created an empty portfolio for %r", user)
         session_id = new_session_id()
         start_session(
-            self.directory,
+            self._db_file,
             session_id,
             user,
             incognito=incognito,
-            backend=self._backend,
-            db_file=self._db_file,
         )
         body = json.dumps(
             {
@@ -625,12 +557,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             return False
         session_id = session_id_from_cookie(self.headers.get("Cookie"))
         if session_id:
-            end_session(
-                self.directory,
-                session_id,
-                backend=self._backend,
-                db_file=self._db_file,
-            )
+            end_session(self._db_file, session_id)
         body = json.dumps({"ok": True, "redirect": "/login"}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -644,17 +571,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         """True when the account exists and the password matches."""
         from .users import users_credentials_ok
 
-        if not self._store_configured(self._users_file):
+        if not self._store_configured():
             # No accounts store configured: nobody can log in.
             logger.warning("no users store configured; refusing the login")
             return False
         try:
             return users_credentials_ok(
-                self._users_file,
+                self._db_file,
                 user,
                 "" if password is None else str(password),
-                self._backend,
-                self._db_file,
             )
         except Exception as exc:
             # A broken accounts store must not drop the connection: the
@@ -666,15 +591,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         """Give a known user an (empty) portfolio row; True when created."""
         from .constituents import ensure_assets_user
 
-        if not self._store_configured(self._assets_file):
+        if not self._store_configured():
             return False
         try:
-            return ensure_assets_user(
-                self._assets_file,
-                user,
-                self._backend,
-                self._db_file,
-            )
+            return ensure_assets_user(self._db_file, user)
         except Exception as exc:
             # A failed write must not block the login: the dashboard then
             # shows the "no portfolio" state instead of an empty one.
@@ -709,25 +629,16 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         # charts, and that must not depend on the cache being set up.
         self._clear_empty_user_charts(session.user)
         try:
-            if not self._store_configured(self._assets_file, self._cache_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
-            sections = load_constituents(
-                self._assets_file,
-                self._cache_file,
-                session.user,
-                self._backend,
-                self._db_file,
-            )
+            sections = load_constituents(self._db_file, session.user)
             from .constituents import assets_portfolio_name
 
             body = render_constituents_page(
                 sections,
                 incognito=incognito_flag(parts.query),
                 portfolio_name=assets_portfolio_name(
-                    self._assets_file,
-                    session.user,
-                    self._backend,
-                    self._db_file,
+                    self._db_file, session.user
                 ),
             ).encode("utf-8")
             status, content_type = 200, "text/html; charset=utf-8"
@@ -772,19 +683,17 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "body must be a JSON object")
             return True
         try:
-            if not self._store_configured(self._assets_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
             cache = self._cache_map()
             result = store_constituent_value(
-                self._assets_file,
+                self._db_file,
                 payload.get("bucket"),
                 payload.get("index"),
                 payload.get("field"),
                 payload.get("value"),
                 cache,
                 session.user,
-                self._backend,
-                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -829,14 +738,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "body must be a JSON object")
             return True
         try:
-            if not self._store_configured(self._assets_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
             result = store_portfolio_name(
-                self._assets_file,
+                self._db_file,
                 payload.get("name"),
                 session.user,
-                self._backend,
-                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -881,15 +788,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "body must be a JSON object")
             return True
         try:
-            if not self._store_configured(self._assets_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
             result = reorder_constituents(
-                self._assets_file,
+                self._db_file,
                 payload.get("bucket"),
                 payload.get("order"),
                 session.user,
-                self._backend,
-                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -934,15 +839,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "body must be a JSON object")
             return True
         try:
-            if not self._store_configured(self._assets_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
             result = delete_constituent(
-                self._assets_file,
+                self._db_file,
                 payload.get("bucket"),
                 payload.get("index"),
                 session.user,
-                self._backend,
-                self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -1044,7 +947,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if session is None:
             return True
         try:
-            if not self._store_configured(self._assets_file, self._cache_file):
+            if not self._store_configured():
                 raise RuntimeError("assets store not configured")
             fat = self._update_mode() == "fat"
             if fat:
@@ -1073,15 +976,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             proc = _spawn_update_process(
                 _update_worker,
                 (
-                    # None stays None: the worker then takes the path
-                    # from the ini (or the default), not from the
-                    # string "None".
-                    self._assets_file,
-                    self._cache_file,
                     fat,
                     str(self.directory),
                     session.user,
-                    self._backend,
                     str(self._db_file) if self._db_file else None,
                     send_conn,
                     cancel_event,
@@ -1242,14 +1139,12 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         if payload is None:
             return True
         try:
-            if not self._store_configured(self._assets_file, self._isin_file):
+            if not self._store_configured():
                 raise RuntimeError("assets or isin store not configured")
             cache = self._cache_map()
-            registry = IsinRegistry(
-                isin_backend(self._isin_file, self._backend, self._db_file)
-            )
+            registry = IsinRegistry(isin_backend(self._db_file))
             display = add_constituent(
-                self._assets_file,
+                self._db_file,
                 payload.get("bucket"),
                 name=payload.get("name"),
                 short_name=payload.get("short_name"),
@@ -1260,8 +1155,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 cache=cache,
                 registry=registry,
                 user=session.user,
-                backend=self._backend,
-                db_file=self._db_file,
             )
         except UnknownUser as exc:
             self._plain_status(404, f"unknown user: {exc.user}")
@@ -1334,40 +1227,22 @@ def serve_forever(
     address: str,
     port: int,
     directory: str,
-    assets_file: str | None = None,
-    cache_file: str | None = None,
-    users_file: str | None = None,
-    isin_file: str | None = None,
     db_file: str | None = None,
     data_dirname: str = DATA_DIRNAME,
     user: str = DEFAULT_USER_NAME,
-    backend: str = BACKEND_JSON,
 ) -> None:
     """Serve *directory* until interrupted (runs in the foreground)."""
     handler = functools.partial(
         DashboardHandler,
         directory=directory,
-        assets_file=assets_file,
-        cache_file=cache_file,
-        users_file=users_file,
-        isin_file=isin_file,
         db_file=db_file,
         data_dirname=data_dirname,
         user=user,
-        backend=backend,
     )
     with http.server.ThreadingHTTPServer((address, port), handler) as httpd:
         # Say where the stores live: a typo in a path is otherwise
         # invisible (the server happily opens a different database).
-        logger.info(
-            "Stores: backend=%s database=%s assets=%s cache=%s users=%s isin=%s",
-            backend,
-            db_file or "-",
-            assets_file or "-",
-            cache_file or "-",
-            users_file or "-",
-            isin_file or "-",
-        )
+        logger.info("Store: database=%s", db_file or "-")
         logger.info("Serving %s on http://%s:%s/dashboard", directory, address, port)
         httpd.serve_forever()
 
@@ -1377,13 +1252,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bind", default="localhost", help="Address to bind (default: localhost).")
     parser.add_argument("--port", type=int, required=True, help="Port to listen on.")
     parser.add_argument("--directory", required=True, help="Visualizer directory to serve.")
-    parser.add_argument("--assets-file", default=None, help="Assets JSON file backing /constituents.")
-    parser.add_argument("--cache-file", default=None, help="Cache JSON file backing /constituents prices.")
-    parser.add_argument("--users-file", default=None, help="Users JSON file holding the accounts that may log in.")
-    parser.add_argument("--isin-registry-file", default=None, help="ISIN registry JSON file written when constituents are added.")
-    parser.add_argument("--db-file", default=None, help="SQLite database file (one file, one table per store).")
+    parser.add_argument("--db-file", required=True, help="SQLite database file (one file, one table per store).")
     parser.add_argument("--user", default=DEFAULT_USER_NAME, help="Default portfolio user (default: default); ?user= selects another.")
-    parser.add_argument("--backend", default=BACKEND_JSON, help="Assets store backend (json | sqlite).")
     parser.add_argument("--plotter-data-dir", default=DATA_DIRNAME, help="On-disk data dir name under --directory (default: data).")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1391,14 +1261,9 @@ def main(argv: list[str] | None = None) -> None:
         address=args.bind,
         port=args.port,
         directory=args.directory,
-        assets_file=args.assets_file,
-        cache_file=args.cache_file,
-        users_file=args.users_file,
-        isin_file=args.isin_registry_file,
         db_file=args.db_file,
         data_dirname=args.plotter_data_dir,
         user=args.user,
-        backend=args.backend,
     )
 
 

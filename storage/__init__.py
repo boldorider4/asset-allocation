@@ -5,16 +5,16 @@
 * :mod:`storage.records` — backend-agnostic row types (``DictRow``,
   ``CacheEntry``, ``AssetBucket``, ``IsinRecord``, ``UserRecord``,
   ``SessionRecord``, ``PositionRecord``, ``UserPortfolioRecord``).
-* :mod:`storage.json_storage` / :mod:`storage.memory_storage` /
-  :mod:`storage.sqlite_storage` — backends.
-* :mod:`storage.wiring` — the composition point choosing the backend.
+* :mod:`storage.memory_storage` / :mod:`storage.sqlite_storage` — backends.
+  :mod:`storage.json_storage` remains available for direct import and
+  one-time import tooling.
+* :mod:`storage.wiring` — the composition point building the SQLite backend.
 * :mod:`storage.repositories` — domain logic over any backend
   (``CacheRepository``, ``AssetRepository``, ``IsinRegistry``,
   ``PositionRepository``, ``UserPortfolioRepository``,
   ``UsersRepository``, ``SessionsRepository``).
 """
 
-from storage.json_storage import JsonStorage
 from storage.memory_storage import MemoryStorage
 from storage.records import (
     DEFAULT_PORTFOLIO_NAME,
@@ -39,11 +39,8 @@ from storage.repositories import (
 from storage.sqlite_storage import SqliteStorage
 from storage.storage import Storage, StorageObject
 from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_SQLITE,
     cache_backend,
     isin_backend,
-    normalize_backend,
     positions_backend,
     sessions_backend,
     user_portfolios_backend,
@@ -62,7 +59,6 @@ __all__ = [
     "SessionRecord",
     "PositionRecord",
     "UserPortfolioRecord",
-    "JsonStorage",
     "MemoryStorage",
     "SqliteStorage",
     "CacheRepository",
@@ -75,11 +71,8 @@ __all__ = [
     "UnknownUser",
     "cache_backend",
     "isin_backend",
-    "normalize_backend",
     "positions_backend",
     "sessions_backend",
     "user_portfolios_backend",
     "users_backend",
-    "BACKEND_JSON",
-    "BACKEND_SQLITE",
 ]

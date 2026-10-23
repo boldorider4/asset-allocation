@@ -13,6 +13,7 @@ from unittest.mock import patch
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from portfolio.portfolio import Portfolio
 from portfolio.regional_portfolio import RegionalPortfolio
+from tests.store_helpers import make_context
 
 
 def _stub(*, value, sectors=None, dmem=1.0, usavn=0.5, short_name=None):
@@ -118,9 +119,12 @@ class TestSinglePassWritesFlatDir(unittest.TestCase):
         server = tmp / "visualizer"
         ctx = RuntimeContext(
             config=AppConfig(
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
-                server=ServerConfig(port=8765, address="localhost", directory=server),
+                server=ServerConfig(
+                    port=8765,
+                    address="localhost",
+                    directory=server,
+                    db_file=tmp / "asalloc.db",
+                ),
             )
         )
         from visual.plot.web_chart import WebChart
@@ -159,42 +163,22 @@ class TestChartTitlesCarryThePortfolioName(unittest.TestCase):
         holder = tempfile.TemporaryDirectory()
         self.addCleanup(holder.cleanup)
         tmp = Path(holder.name)
-        server = tmp / "visualizer"
-        assets = tmp / "assets.json"
-        assets.write_text(
-            json.dumps(
-                {
-                    "default": {
-                        "portfolio_name": name,
-                        "positions": {
-                            "equity_portfolio": [
-                                {
-                                    "name": "ETF",
-                                    "ISIN": "IE00TEST0001",
-                                    "shares": 1,
-                                    "value": 100.0,
-                                }
-                            ]
-                        },
+        ctx = make_context(
+            tmp,
+            portfolio={
+                "equity_portfolio": [
+                    {
+                        "name": "ETF",
+                        "ISIN": "IE00TEST0001",
+                        "shares": 1,
+                        "value": 100.0,
                     }
-                }
-            ),
-            encoding="utf-8",
-        )
-        ctx = RuntimeContext(
-            config=AppConfig(
-                user="default",
-                cache_file=tmp / "cache.json",
-                assets_file=assets,
-                isin_file=tmp / "isin.json",
-                plotter="web",
-                server=ServerConfig(
-                    port=8765, address="localhost", directory=server
-                ),
-            )
+                ]
+            },
+            portfolio_name=name,
         )
         run_update(ctx)
-        chart_dir = server / "data" / "default"
+        chart_dir = tmp / "visualizer" / "data" / "default"
         return [
             json.loads(path.read_text(encoding="utf-8"))
             for path in sorted(chart_dir.glob("*.raw"))

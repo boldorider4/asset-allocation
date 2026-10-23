@@ -9,7 +9,7 @@
 
 ## Description
 
-Self-hosted portfolio dashboard: load holdings from JSON, sync live prices, geosplits, sectors and broker balances, then explore allocation in the web UI.
+Self-hosted portfolio dashboard: load holdings from SQLite, sync live prices, geosplits, sectors and broker balances, then explore allocation in the web UI.
 
 ![Asset Allocation web visualizer](visual/media/web_view.png)
 
@@ -44,28 +44,21 @@ The holdings file is keyed by **user**: each top-level key is a user name, and i
 
 The user name comes from `config.ini` (`[update] user = default`) and can be overridden per run with `--user NAME`. Charts are per user too: an update writes to `<output_dir>/<user>/`, and the server serves the selected user's charts.
 
-The store itself is backend-agnostic: the code above the storage layer only talks to `storage.repositories.AssetRepository`, and the concrete backend is chosen in one place (`storage/wiring.py`) from the `[server] backend` setting in `config.ini`:
+The code above the storage layer only talks to `storage.repositories.AssetRepository`; the concrete storage is composed in `storage/wiring.py`. SQLite is the only runtime backend: every store is a table in one database named by `[server] db_file` (`~/.local/asalloc/asalloc.db` by default).
 
-| `[server] backend` | Meaning |
-| --- | --- |
-| `json` (legacy/import only) | JSON files (`assets.json`, `cache.json`, `isin.json`, `users.json`, `.sessions.json`); used by the one-time import and tests |
-| `sqlite` | Every store in one SQLite database (`[server] db_file`), one table per store |
-
-`[server] db_file` names the SQLite database (`~/.local/asalloc/asalloc.db` by default).
-
-**Where the stores live.** SQLite is the supported runtime: every store is a table in one database (`[server] db_file`). The JSON stores (`[update] assets_file` / `cache_file` / `users_file` / `isin_file`) are retained for the one-time import and for tests; the JSON assets path is not a supported runtime backend. `asalloc serve` and `asalloc update` take either `--db-file` or the per-store `--*-file` options, never both, and the ini key counts as the location just like a flag (the built-in defaults do *not*: they point into the repository, not into the deployment, so a store with neither a flag nor an ini key is a configuration error).
+**Where the stores live.** Every store — positions, cache, ISIN registry, users and sessions — lives in that one database. `asalloc serve` and `asalloc update` accept `--db-file` to override the configured path; the ini key counts as the location just like a flag (the built-in default does *not*: it points into the repository, not into the deployment, so a missing ini key and no flag is a configuration error). Legacy JSON files are import inputs only; see the migration scripts under `scripts/`.
 
 **SQLite.** The database runs *inside* the process: no server, no idle load, nothing to supervise — which is what a 24/7 Raspberry Pi wants. WAL mode lets the web server read while the update writes, and every table of a database shares one connection (two connections would deadlock against each other's write transaction). The tables are `user_portfolios`, `user_positions`, `cache`, `isin_registry`, `users` and `sessions`. They use explicit columns: `user_positions` is one row per position keyed by `(username, bucket, position_idx)` with the `isin` preserved; prices stay in `cache`; `users` holds `(username, password)`; `sessions` holds `(session_id, username, incognito, expires_at)`.
 
 The shared connection is used by the server's request threads, so its use is **serialized with a lock**: Python's `sqlite3` keeps its prepared statements on the connection, and one thread resetting a statement another thread is stepping corrupts the row that thread reads (an empty row, or a `NULL` payload where a row was expected). The lock is what makes the one-connection-per-file design safe on a multi-threaded server.
 
-To move an existing installation over, import the JSON stores once and flip the backend:
+To move an existing installation over, import the JSON stores once:
 
 ```bash
 python scripts/migrate_normalize_db.py --db-file ~/.local/asalloc/asalloc.db
 ```
 
-The script leaves the JSON files untouched (they stay the fallback until you delete them), skips a broken row with a warning and is idempotent. After that, `config.ini` → `[server] backend = sqlite` is the only change — the server, the update and `asalloc add-user` all read it.
+The script leaves the JSON files untouched, skips a broken row with a warning and is idempotent. The server, the update and `asalloc add-user` all read the same `[server] db_file`; no backend switch is needed.
 
 | Key | Purpose |
 | --- | --- |
@@ -90,9 +83,9 @@ Each asset class is an array of position objects. Typical fields:
 
 `assets.sample.json` is a redacted starting point for the one-time import; the runtime portfolio lives in the `user_positions`/`user_portfolios` tables. Keep real JSON exports private and out of git.
 
-### Users file
+### Users
 
-The accounts that may log in live in the `users` table of the SQLite database (the JSON `users.json` store is import-only). Each row is keyed by user name and holds the password:
+The accounts that may log in live in the `users` table of the SQLite database. Each row is keyed by user name and holds the password:
 
 ```json
 {
@@ -100,15 +93,14 @@ The accounts that may log in live in the `users` table of the SQLite database (t
 }
 ```
 
-Passwords may be empty (the account exists, it just has no secret yet). For the one-time JSON import, copy `users.sample.json` to the configured path; with SQLite, add users with the CLI:
+Passwords may be empty (the account exists, it just has no secret yet). `users.sample.json` is a redacted input for the one-time import; add users with the CLI:
 
 ```bash
-cp users.sample.json ~/.local/asalloc/users.json  # import input only
 asalloc add-user --config ~/.local/asalloc/config.ini --user alice --password secret
 asalloc add-user --config /path/to/config.ini --user alice    # empty password
 ```
 
-The CLI follows `config.ini` → `[server] backend`: with `sqlite` it writes the `users` table; `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed.
+The CLI writes the `users` table in `[server] db_file`; `--config` and `--user` are required, `--password` is optional. A new account gets an empty password when none is given; an existing account keeps its password unless a new one is passed.
 **Login.** The login screen asks for a **User** and a **Password**: the name must have an account in the users store (a name that only appears in the portfolio is unknown) and the password must match the one stored there. A wrong password is refused exactly like an unknown user, so the login cannot be used to probe for user names — both boxes light up red. Empty passwords are allowed (an account with no password logs in with an empty field). A known account with no portfolio yet gets an empty one on first login, so it lands on an empty dashboard. The password is stored in plaintext for now — hashing belongs in `storage/records.py::UserRecord` when it lands.
 
 **Reset password.** The "Reset password" link under the password box turns the form into a reset (the password box becomes "Old Password", a "New Password" box appears, the button becomes "Reset" and the incognito toggle goes away — still on the login page). The old password must match; an empty new password is allowed. On success the login form comes back and the new password is the one that logs in.
@@ -157,7 +149,7 @@ Useful `update` flags:
 | `--fetch-sectorsplit` | Scrape sector allocations into the cache |
 | `--fetch-oskar` / `--fetch-scalable` / `--fetch-tr` | Scrape broker holdings |
 | `--user NAME` | Portfolio user to read and write (default: `config.ini` `[update] user`, else `default`) |
-| `--assets-file PATH` | Legacy JSON import only; the runtime portfolio is in SQLite |
+| `--db-file PATH` | SQLite database to read and write (default: `[server] db_file`) |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
 ## Web visualizer
@@ -178,11 +170,11 @@ asalloc serve
 
 Stop it with `make stop-serve`. Open `http://localhost:8765/` — it sends you to the login page.
 
-**Login.** The login screen asks for a **User** (an account in the users store — see [Users file](#users-file)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
+**Login.** The login screen asks for a **User** (an account in the users table — see [Users](#users)) and has an **Incognito** toggle next to the "Log In" button, with an `OFF`/`ON` read-out. The toggle decides the `?incognito=True|False` flag on the dashboard URL you land on. Unknown users are rejected (no account, no session).
 
-The session lives in a cookie (`asalloc_sid`) and is persisted server-side (the `sessions` table of the database, or `.sessions.json` in the visualizer workspace with the json backend), so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
+The session lives in a cookie (`asalloc_sid`) and is persisted server-side in the `sessions` table of the database, so it survives restarts — but it **expires after 30 minutes**, after which the next request lands on the login page again. **Logout** (top right, next to Edit) drops it right away; the next visit lands on the login page again. The logged-in user decides which holdings and which charts are served — there is no per-request user parameter any more — and their name is shown in the dashboard header, left of the buttons.
 
-**Clearing the sessions.** `asalloc clear-sessions` drops every session (everybody has to log in again); `--expired-only` drops only the ones past their expiry. The store is the one the backend names, so the command always clears the sessions the running server uses:
+**Clearing the sessions.** `asalloc clear-sessions` drops every session (everybody has to log in again); `--expired-only` drops only the ones past their expiry. The command always clears the sessions in the configured database, so it targets the store the running server uses:
 
 ```bash
 asalloc clear-sessions --config ~/.local/asalloc/config.ini

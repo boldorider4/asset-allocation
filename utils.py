@@ -111,10 +111,10 @@ def cache_broker_quotes(ctx: Any, quotes: dict[str, float | None]) -> None:
 
 
 def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
-    """Apply all fresh OSKAR share estimates and write the assets file once.
+    """Apply all fresh OSKAR share estimates and write the store once.
 
     Only rows whose shares actually changed are written, so re-estimating
-    every run never rewrites an untouched assets file.
+    every run never rewrites untouched rows.
     """
     if not ctx.pending_oskar_shares:
         return
@@ -147,7 +147,7 @@ def persist_oskar_shares_in_portfolio(ctx: Any) -> None:
 
 
 def persist_fetched_values_in_portfolio(ctx: Any) -> None:
-    """Write shares × quote into the assets file for unscraped broker rows."""
+    """Write shares × quote into the store for unscraped broker rows."""
     if not ctx.pending_fetched_values:
         return
 

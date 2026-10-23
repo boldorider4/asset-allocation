@@ -2,14 +2,8 @@
 """Browser sessions for the visualizer server.
 
 A session is identified by a cookie (``asalloc_sid``) and persisted in
-the server workspace, so it survives restarts but not idling: a session
+the SQLite database, so it survives restarts but not idling: a session
 expires 30 minutes after it was created.
-
-The store is a normal backend-agnostic one: the JSON backend keeps
-the session in ``<workspace>/.sessions.json``, the SQLite backend
-keeps it in the ``sessions`` table of the database file. Both hold
-the same rows (``user``, ``incognito``, ``expires_at``) — the backend
-is chosen by the application (see :mod:`storage.wiring`).
 
 The session carries the *user* whose holdings and charts are served
 (there is no per-request user parameter any more) and the incognito
@@ -25,11 +19,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 from storage.repositories import SessionsRepository
-from storage.wiring import (
-    BACKEND_JSON,
-    BACKEND_SQLITE,
-    sessions_backend,
-)
+from storage.wiring import sessions_backend
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +29,6 @@ COOKIE_NAME = "asalloc_sid"
 SESSION_TTL_SECONDS = 30 * 60
 #: The cookie dies with the session it points at.
 COOKIE_MAX_AGE = SESSION_TTL_SECONDS
-#: Store file inside the served workspace (JSON backend).
-STORE_FILENAME = ".sessions.json"
 
 
 @dataclass(frozen=True)
@@ -50,11 +38,6 @@ class Session:
     user: str
     incognito: bool = False
     expires_at: float = 0.0
-
-
-def store_path(workspace: str | Path) -> Path:
-    """Path of the session store inside the server workspace."""
-    return Path(workspace) / STORE_FILENAME
 
 
 def new_session_id() -> str:
@@ -91,30 +74,14 @@ def session_id_from_cookie(header: str | None) -> str | None:
     return value or None
 
 
-def _repo(
-    workspace: str | Path,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
-) -> SessionsRepository:
-    """The session repository for this workspace.
-
-    The JSON backend keeps the sessions in ``<workspace>/.sessions.json``;
-    the SQLite backend keeps them in the ``sessions`` table of the
-    database file.
-    """
-    return SessionsRepository(
-        sessions_backend(
-            store_path(workspace), backend, db_file
-        )
-    )
+def _repo(db_file: str | Path) -> SessionsRepository:
+    """The session repository for this database."""
+    return SessionsRepository(sessions_backend(db_file))
 
 
 def read_session(
-    workspace: str | Path,
+    db_file: str | Path,
     cookie_header_value: str | None,
-    *,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
 ) -> Session | None:
     """The session for the given cookie, or None when there is none.
 
@@ -127,7 +94,7 @@ def read_session(
     session_id = session_id_from_cookie(cookie_header_value)
     if not session_id:
         return None
-    repo = _repo(workspace, backend, db_file)
+    repo = _repo(db_file)
     repo.open()
     try:
         record = repo.get(session_id)
@@ -151,19 +118,17 @@ def read_session(
 
 
 def login(
-    workspace: str | Path,
+    db_file: str | Path,
     session_id: str,
     user: str,
     *,
     incognito: bool = False,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
 ) -> Session:
     """Persist a session for ``session_id`` and return it.
 
     The session expires ``SESSION_TTL_SECONDS`` after this call.
     """
-    repo = _repo(workspace, backend, db_file)
+    repo = _repo(db_file)
     repo.open()
     record = repo.start(
         session_id,
@@ -180,35 +145,27 @@ def login(
 
 
 def logout(
-    workspace: str | Path,
+    db_file: str | Path,
     session_id: str,
-    *,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
 ) -> None:
     """Drop the session for ``session_id`` (no-op when unknown)."""
-    repo = _repo(workspace, backend, db_file)
+    repo = _repo(db_file)
     repo.open()
     if repo.drop(session_id):
         repo.persist()
 
 
 def clear_sessions(
-    workspace: str | Path,
+    db_file: str | Path,
     *,
-    backend: str = BACKEND_JSON,
-    db_file: str | Path | None = None,
     expired_only: bool = False,
 ) -> int:
     """Drop sessions; returns how many were removed.
 
     Without ``expired_only`` every session goes (everybody is logged
     out); with it only the sessions past their expiry are dropped.
-    Works on every backend: the JSON store loses its
-    ``<workspace>/.sessions.json`` rows, the SQLite backend its
-    ``sessions`` table rows.
     """
-    repo = _repo(workspace, backend, db_file)
+    repo = _repo(db_file)
     repo.open()
     if expired_only:
         return repo.purge_expired()

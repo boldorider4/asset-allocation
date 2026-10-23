@@ -13,12 +13,7 @@ from pathlib import Path
 from cli.update import main as run_update
 from cli.context import AppConfig, RuntimeContext, ServerConfig
 from cli.logger import attach_color_stderr_handler_for_module, configure_cli_logging
-import cli.stores
-from cli.stores import (
-    StoreLocationMissing,
-    db_file,
-    resolve_store_locations,
-)
+from cli.stores import StoreLocationMissing, db_file
 
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
@@ -53,21 +48,8 @@ def server_port(path: Path | None = None) -> int:
 def cmd_update(args: argparse.Namespace) -> None:
     config = AppConfig.from_cli(args, ini_path=getattr(args, "config", None))
     configure_cli_logging(getattr(logging, config.log_level))
-    # The stores must have a location: with the json backend each one
-    # needs its file (a flag or an ini key), with sqlite the one
-    # database covers them all.
-    resolve_store_locations(
-        config.server.backend,
-        "update",
-        ini_path=getattr(args, "config", None),
-        flags={
-            "assets_file": getattr(args, "assets_file", None),
-            "cache_file": getattr(args, "cache_file", None),
-            "isin_file": getattr(args, "isin_file", None),
-        },
-    )
+    # The database must have a location: a flag or an ini key.
     db_file(
-        config.server.backend,
         ini_path=getattr(args, "config", None),
         flag_value=getattr(args, "db_file", None),
     )
@@ -156,7 +138,7 @@ def cmd_stop(_args: argparse.Namespace) -> None:
 
 
 def cmd_add_user(args: argparse.Namespace) -> None:
-    """Add a user account to the users store (the ini names the file)."""
+    """Add a user account to the SQLite users table."""
     from cli.users import add_user_account
 
     try:
@@ -164,30 +146,25 @@ def cmd_add_user(args: argparse.Namespace) -> None:
     except (FileNotFoundError, ValueError, configparser.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
-    users_file = cfg.users_file
     user = str(args.user).strip()
     if not user:
         print("error: --user must not be empty", file=sys.stderr)
         sys.exit(2)
-    password = args.password
     try:
-        created = add_user_account(
-            users_file,
-            user,
-            password,
-            backend=cfg.server.backend,
-            db_file=cfg.server.db_file,
-        )
-    except NotImplementedError as exc:
+        database = db_file(ini_path=args.config)
+    except StoreLocationMissing as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
+    password = args.password
+    try:
+        created = add_user_account(database, user, password)
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
     if created:
-        print(f"added user {user!r} to {users_file}")
+        print(f"added user {user!r} to {database}")
     else:
-        print(f"user {user!r} already exists in {users_file} (password updated)")
+        print(f"user {user!r} already exists in {database} (password updated)")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -196,10 +173,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
         # Propagate to the server child (and its update workers), which
         # read ini defaults from the environment.
         os.environ["ASALLOC_CONFIG"] = str(args.config)
-    try:
-        ini_cfg = AppConfig.from_ini(getattr(args, "config", None))
-    except (FileNotFoundError, ValueError):
-        ini_cfg = AppConfig()
+    ini_cfg = AppConfig.from_ini(getattr(args, "config", None))
     ini_data_dir = ini_cfg.server.data_dir
     cfg.directory.mkdir(parents=True, exist_ok=True)
     (cfg.directory / ini_data_dir).mkdir(exist_ok=True)
@@ -213,31 +187,16 @@ def cmd_serve(args: argparse.Namespace) -> None:
             ", ".join(str(pid) for pid in already),
         )
         sys.exit(1)
-    # The stores come from the ini (config.ini [update] section); an
-    # explicit flag always wins. The backend decides *which* locations
-    # matter: one database (--db-file) or the loose JSON files.
+    # The database comes from the ini ([server] db_file); an explicit
+    # --db-file always wins.
     ini_path = getattr(args, "config", None)
-    backend = ini_cfg.server.backend
-    store_flags = {
-        "assets_file": getattr(args, "assets_file", None),
-        "cache_file": getattr(args, "cache_file", None),
-        "users_file": getattr(args, "users_file", None),
-        "isin_file": getattr(args, "isin_file", None),
-    }
-    db_flag = getattr(args, "db_file", None)
-    if db_flag and any(store_flags.values()):
-        print(
-            "error: --db-file and the per-store files are alternatives: "
-            "pass either the database or the JSON files, not both",
-            file=sys.stderr,
+    try:
+        database = db_file(
+            ini_path=ini_path, flag_value=getattr(args, "db_file", None)
         )
-        sys.exit(2)
-    located = resolve_store_locations(
-        backend, "serve", ini_path=ini_path, flags=store_flags
-    )
-    database = db_file(
-        backend, ini_path=ini_path, flag_value=db_flag, required=backend != "json"
-    )
+    except StoreLocationMissing as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
     user = getattr(args, "user", None) or ini_cfg.user
     child_cmd = [
         sys.executable,
@@ -251,18 +210,11 @@ def cmd_serve(args: argparse.Namespace) -> None:
         str(cfg.directory),
         "--user",
         str(user),
-        "--backend",
-        str(backend),
+        "--db-file",
+        str(database),
         "--plotter-data-dir",
         ini_data_dir,
     ]
-    # Only the locations the backend actually uses are passed on: the
-    # rest would be noise in the process list (and the JSON files are
-    # ignored by the database backend anyway).
-    if database is not None:
-        child_cmd += ["--db-file", str(database)]
-    for store, path in located.items():
-        child_cmd += [cli.stores.STORES[store].flag, str(path)]
     proc = subprocess.Popen(
         child_cmd,
         cwd=cfg.directory,
@@ -296,11 +248,9 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def cmd_clear_sessions(args: argparse.Namespace) -> None:
     """Drop the browser sessions (everybody logs in again).
 
-    The sessions live in the store the backend names: the ``sessions``
-    table of the database (sqlite) or the ``.sessions.json`` file in
-    the served directory (json). The location comes from the same
-    config.ini the server reads, so the command always clears the
-    sessions the running server uses.
+    The sessions live in the ``sessions`` table of the database. The
+    location comes from the same config.ini the server reads, so the
+    command always clears the sessions the running server uses.
     """
     from visual.web.backend.session import clear_sessions
 
@@ -312,7 +262,6 @@ def cmd_clear_sessions(args: argparse.Namespace) -> None:
         sys.exit(1)
     try:
         database = db_file(
-            cfg.backend,
             ini_path=ini_path,
             flag_value=getattr(args, "db_file", None),
         )
@@ -321,12 +270,7 @@ def cmd_clear_sessions(args: argparse.Namespace) -> None:
         sys.exit(1)
     expired_only = bool(getattr(args, "expired_only", False))
     try:
-        cleared = clear_sessions(
-            cfg.directory,
-            backend=cfg.backend,
-            db_file=database,
-            expired_only=expired_only,
-        )
+        cleared = clear_sessions(database, expired_only=expired_only)
     except (OSError, ValueError, KeyError) as exc:
         print(f"error: could not clear the sessions: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -358,14 +302,13 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         action="store_true",
         default=None,
         help=(
-            "Scrape live JustETF/Yahoo quotes and refresh the price in "
-            "cache.json. Holdings values then come from shares × quote, and "
-            "that value is written back to the assets file for brokers that "
+            "Scrape live JustETF/Yahoo quotes and refresh the cached price. Holdings values then come from shares × quote, and "
+            "that value is written back to the store for brokers that "
             "were not live-scraped. When combined with "
             "--fetch-scalable / --fetch-tr / --fetch-oskar, the scraped "
             "holdings value is favored over shares × quote. Without this "
-            "flag, a broker value from the assets file prevails over "
-            "shares × cached price. The assets file never stores price: "
+            "flag, a broker value from the store prevails over "
+            "shares × cached price. The store never stores price: "
             "only shares and value."
         ),
     )
@@ -374,7 +317,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         action="store_true",
         default=None,
         help=(
-            "Scrape country allocations (JustETF) and write them to cache.json. "
+            "Scrape country allocations (JustETF) and write them to the cache. "
             "Without this flag, country weights are read from cache."
         ),
     )
@@ -383,7 +326,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         action="store_true",
         default=None,
         help=(
-            "Scrape sector allocations (JustETF) and write them to cache.json. "
+            "Scrape sector allocations (JustETF) and write them to the cache. "
             "Without this flag, sector weights are read from cache."
         ),
     )
@@ -394,37 +337,12 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         help="Portfolio user whose assets the run reads and writes (default: from config.ini [update] user, else 'default').",
     )
     update.add_argument(
-        "--assets-file",
-        type=Path,
-        dest="assets_file",
-        default=None,
-        help="Path to the assets JSON file (default: assets.json next to the package).",
-    )
-    update.add_argument(
-        "--cache-file",
-        type=Path,
-        dest="cache_file",
-        default=None,
-        help="Path to the cache JSON file (default: cache.json next to the package).",
-    )
-    update.add_argument(
-        "--isin-registry-file",
-        type=Path,
-        dest="isin_file",
-        default=None,
-        help=(
-            "Path to the ISIN registry JSON file (the json backend - an "
-            "alternative to --db-file; default: from config.ini)."
-        ),
-    )
-    update.add_argument(
         "--db-file",
         type=Path,
         dest="db_file",
         default=None,
         help=(
-            "SQLite database with every store (the sqlite backend - an "
-            "alternative to the --*-file options; default: from config.ini "
+            "SQLite database with every store (default: from config.ini "
             "[server] db_file)."
         ),
     )
@@ -490,11 +408,10 @@ def main(argv: list[str] | None = None) -> None:
 
     update = subparsers.add_parser(
         "update",
-        help="Load the assets file, optionally scrape brokers/prices, and write charts.",
+        help="Load the database, optionally scrape brokers/prices, and write charts.",
         epilog=(
-            "The stores live either in one database (--db-file) or in loose "
-            "JSON files (--assets-file / --cache-file / --isin-registry-file): "
-            "the backend in config.ini decides which one is used."
+            "Every store lives in one SQLite database (--db-file or "
+            "[server] db_file in config.ini)."
         ),
     )
     _add_config_flag(update, default=argparse.SUPPRESS)
@@ -505,10 +422,8 @@ def main(argv: list[str] | None = None) -> None:
         "serve",
         help="Serve the visualizer directory over HTTP in the background (address and port from config.ini).",
         epilog=(
-            "The stores live either in one database (--db-file) or in loose "
-            "JSON files (--assets-file / --cache-file / --users-file / "
-            "--isin-registry-file): the backend in config.ini decides which "
-            "one is used."
+            "Every store lives in one SQLite database (--db-file or "
+            "[server] db_file in config.ini)."
         ),
     )
     _add_config_flag(serve, default=argparse.SUPPRESS)
@@ -519,53 +434,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Default portfolio user for the served views (default: from config.ini [update] user, else 'default'). The ?user= query selects another one.",
     )
     serve.add_argument(
-        "--assets-file",
-        type=Path,
-        dest="assets_file",
-        default=None,
-        help=(
-            "Assets JSON file (the json backend - an alternative to "
-            "--db-file; default: from config.ini [update] assets_file)."
-        ),
-    )
-    serve.add_argument(
-        "--cache-file",
-        type=Path,
-        dest="cache_file",
-        default=None,
-        help=(
-            "Cache JSON file (the json backend - an alternative to "
-            "--db-file; default: from config.ini [update] cache_file)."
-        ),
-    )
-    serve.add_argument(
-        "--users-file",
-        type=Path,
-        dest="users_file",
-        default=None,
-        help=(
-            "Users JSON file (the json backend - an alternative to "
-            "--db-file; default: from config.ini [update] users_file)."
-        ),
-    )
-    serve.add_argument(
-        "--isin-registry-file",
-        type=Path,
-        dest="isin_file",
-        default=None,
-        help=(
-            "ISIN registry JSON file (the json backend - an alternative to "
-            "--db-file; default: from config.ini [update] isin_file)."
-        ),
-    )
-    serve.add_argument(
         "--db-file",
         type=Path,
         dest="db_file",
         default=None,
         help=(
-            "SQLite database with every store (the sqlite backend - an "
-            "alternative to the --*-file options; default: from "
+            "SQLite database with every store (default: from "
             "config.ini [server] db_file)."
         ),
     )
@@ -573,7 +447,7 @@ def main(argv: list[str] | None = None) -> None:
 
     add_user = subparsers.add_parser(
         "add-user",
-        help="Add a user account to the users store (users.json).",
+        help="Add a user account to the SQLite users table.",
     )
     _add_config_flag(add_user, required=True)
     add_user.add_argument(
@@ -601,10 +475,9 @@ def main(argv: list[str] | None = None) -> None:
         "clear-sessions",
         help="Drop the browser sessions (everybody has to log in again).",
         epilog=(
-            "The sessions live in the store the backend names: the "
-            "'sessions' table of the database (sqlite) or the "
-            ".sessions.json file in the served directory (json). The "
-            "location comes from config.ini, like the server's."
+            "The sessions live in the 'sessions' table of the SQLite "
+            "database. The location comes from config.ini, like the "
+            "server's."
         ),
     )
     _add_config_flag(clear_sessions_parser, default=argparse.SUPPRESS)
@@ -614,8 +487,8 @@ def main(argv: list[str] | None = None) -> None:
         dest="db_file",
         default=None,
         help=(
-            "SQLite database with every store (the sqlite backend - "
-            "default: from config.ini [server] db_file)."
+            "SQLite database with every store (default: from config.ini "
+            "[server] db_file)."
         ),
     )
     clear_sessions_parser.add_argument(

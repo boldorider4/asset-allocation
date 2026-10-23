@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
-import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from cli.context import AppConfig, RuntimeContext
+from tests.store_helpers import (
+    db_path,
+    make_context,
+    read_cache,
+    read_positions,
+)
 from visual.plot.pie_chart import PieChart
 from visual.plot.web_chart import WebChart
 
@@ -22,8 +28,7 @@ def _update_ns(**overrides) -> argparse.Namespace:
         "fetch_oskar": False,
         "fetch_scalable": False,
         "fetch_tr": False,
-        "assets_file": None,
-        "cache_file": None,
+        "db_file": None,
         "position_source": "justetf",
         "plot": "web",
         "log_level": "INFO",
@@ -62,7 +67,10 @@ class TestFromCli(unittest.TestCase):
     def test_flags_map_to_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = Path(tmp) / "config.ini"
-            ini.write_text("[server]\nport = 8765\n", encoding="utf-8")
+            ini.write_text(
+                "[server]\nport = 8765\ndb_file = asalloc.db\n",
+                encoding="utf-8",
+            )
             config = AppConfig.from_cli(
                 _update_ns(
                     fetch_prices=True,
@@ -70,8 +78,6 @@ class TestFromCli(unittest.TestCase):
                     fetch_oskar=True,
                     position_source="yfinance",
                     plot="pie-chart",
-                    assets_file=Path(tmp) / "a.json",
-                    cache_file=Path(tmp) / "c.json",
                 ),
                 ini_path=ini,
             )
@@ -82,20 +88,30 @@ class TestFromCli(unittest.TestCase):
         self.assertTrue(config.ignore_cache)
         self.assertEqual(config.position_source, "yfinance")
         self.assertEqual(config.plotter, "pie-chart")
-        self.assertEqual(config.assets_file, Path(tmp) / "a.json")
-        self.assertEqual(config.cache_file, Path(tmp) / "c.json")
         self.assertEqual(config.server.port, 8765)
+        self.assertEqual(config.server.db_file, Path(tmp) / "asalloc.db")
 
-    def test_defaults_point_at_repo_files(self) -> None:
-        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH, DEFAULT_USERS_PATH
+    def test_db_file_flag_wins_over_the_ini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = Path(tmp) / "config.ini"
+            ini.write_text(
+                "[server]\nport = 8765\ndb_file = from-ini.db\n",
+                encoding="utf-8",
+            )
+            flag = Path(tmp) / "from-flag.db"
+            config = AppConfig.from_cli(
+                _update_ns(db_file=flag), ini_path=ini
+            )
+        self.assertEqual(config.server.db_file, flag)
+
+    def test_defaults_point_at_repo_database(self) -> None:
+        from cli.context import DEFAULT_DB_PATH
 
         with tempfile.TemporaryDirectory() as tmp:
             ini = Path(tmp) / "config.ini"
             ini.write_text("[server]\nport = 8765\n", encoding="utf-8")
             config = AppConfig.from_cli(_update_ns(), ini_path=ini)
-        self.assertEqual(config.assets_file, DEFAULT_ASSETS_PATH)
-        self.assertEqual(config.cache_file, DEFAULT_CACHE_PATH)
-        self.assertEqual(config.users_file, DEFAULT_USERS_PATH)
+        self.assertEqual(config.server.db_file, DEFAULT_DB_PATH)
         self.assertEqual(config.position_source, "justetf")
 
     def test_invalid_source_raises(self) -> None:
@@ -120,30 +136,37 @@ class TestUpdateFromIni(unittest.TestCase):
                 "[server]\nport = 8765\n"
                 "[update]\nfetch_prices = True\nfetch_geosplit = yes\n"
                 "fetch_sectorsplit = on\n"
-                "log_level = DEBUG\nassets_file = a.json\ncache_file = sub/c.json\n"
-                "users_file = sub/u.json\n",
+                "log_level = DEBUG\n",
             )
             values = AppConfig._update_from_ini(path)
         self.assertTrue(values["fetch_prices"])
         self.assertTrue(values["fetch_geosplit"])
         self.assertTrue(values["fetch_sectorsplit"])
         self.assertEqual(values["log_level"], "DEBUG")
-        self.assertEqual(values["assets_file"], Path(tmp) / "a.json")
-        self.assertEqual(values["cache_file"], Path(tmp) / "sub" / "c.json")
-        self.assertEqual(values["users_file"], Path(tmp) / "sub" / "u.json")
+
+    def test_legacy_store_keys_raise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._ini(
+                Path(tmp),
+                "[server]\nport = 8765\n"
+                "[update]\nassets_file = a.json\ncache_file = c.json\n"
+                "users_file = u.json\nisin_file = i.json\n",
+            )
+            with self.assertRaises(ValueError) as ctx:
+                AppConfig._update_from_ini(path)
+        message = str(ctx.exception)
+        self.assertIn("assets_file", message)
+        self.assertIn("db_file", message)
 
     def test_missing_section_gives_defaults(self) -> None:
-        from cli.context import DEFAULT_ASSETS_PATH, DEFAULT_CACHE_PATH, DEFAULT_USERS_PATH
-
         with tempfile.TemporaryDirectory() as tmp:
             values = AppConfig._update_from_ini(
                 self._ini(Path(tmp), "[server]\nport = 8765\n")
             )
         self.assertFalse(any(values[k] for k in ("fetch_prices", "fetch_geosplit", "fetch_sectorsplit")))
         self.assertEqual(values["log_level"], "INFO")
-        self.assertEqual(values["assets_file"], DEFAULT_ASSETS_PATH)
-        self.assertEqual(values["cache_file"], DEFAULT_CACHE_PATH)
-        self.assertEqual(values["users_file"], DEFAULT_USERS_PATH)
+        for legacy in ("assets_file", "cache_file", "isin_file", "users_file"):
+            self.assertNotIn(legacy, values)
 
     def test_missing_file_gives_defaults(self) -> None:
         values = AppConfig._update_from_ini(Path("/nonexistent-dir-xyz/config.ini"))
@@ -215,10 +238,9 @@ class TestFromCliIniMerge(unittest.TestCase):
     def _ini(self, tmp: Path) -> Path:
         path = tmp / "config.ini"
         path.write_text(
-            "[server]\nport = 8765\n"
+            "[server]\nport = 8765\ndb_file = asalloc.db\n"
             "[update]\nfetch_geosplit = True\nfetch_prices = True\n"
             "log_level = DEBUG\n"
-            "assets_file = a.json\ncache_file = c.json\n"
             "[plotter]\ntype = pie-chart\n",
             encoding="utf-8",
         )
@@ -233,8 +255,7 @@ class TestFromCliIniMerge(unittest.TestCase):
                 fetch_oskar=None,
                 fetch_scalable=None,
                 fetch_tr=None,
-                assets_file=None,
-                cache_file=None,
+                db_file=None,
                 plot=None,
                 log_level=None,
             )
@@ -244,8 +265,7 @@ class TestFromCliIniMerge(unittest.TestCase):
         self.assertFalse(config.fetch_sectorsplit)
         self.assertEqual(config.plotter, "pie-chart")
         self.assertEqual(config.log_level, "DEBUG")
-        self.assertEqual(config.assets_file, Path(tmp) / "a.json")
-        self.assertEqual(config.cache_file, Path(tmp) / "c.json")
+        self.assertEqual(config.server.db_file, Path(tmp) / "asalloc.db")
 
     def test_explicit_false_beats_ini_true(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,29 +286,10 @@ class TestFromCliIniMerge(unittest.TestCase):
 
 
 class TestRuntimeContextCache(unittest.TestCase):
-    def _ctx(self, tmp: Path, *, sqlite: bool = False) -> RuntimeContext:
-        from cli.context import AppConfig as Cfg, ServerConfig
+    def _ctx(self, tmp: Path) -> RuntimeContext:
+        return make_context(tmp)
 
-        server = (
-            ServerConfig(
-                port=8765,
-                address="localhost",
-                directory=tmp,
-                backend="sqlite",
-                db_file=tmp / "asalloc.db",
-            )
-            if sqlite
-            else None
-        )
-        return RuntimeContext(
-            config=Cfg(
-                cache_file=tmp / "cache.json",
-                assets_file=tmp / "assets.json",
-                **({"server": server} if server is not None else {}),
-            )
-        )
-
-    def test_missing_cache_file_starts_empty(self) -> None:
+    def test_missing_cache_starts_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = self._ctx(Path(tmp))
             cache = ctx.ensure_cache_loaded()
@@ -304,7 +305,7 @@ class TestRuntimeContextCache(unittest.TestCase):
             ctx.mark_cache_dirty()
             ctx.flush_cache()
             self.assertFalse(ctx.cache_dirty)
-            saved = json.loads((Path(tmp) / "cache.json").read_text(encoding="utf-8"))
+            saved = read_cache(ctx.config.server.db_file)
         self.assertEqual(saved["IE00X"]["price"], 12.5)
 
     def test_flush_is_noop_when_clean(self) -> None:
@@ -312,87 +313,64 @@ class TestRuntimeContextCache(unittest.TestCase):
             ctx = self._ctx(Path(tmp))
             ctx.ensure_cache_loaded()
             ctx.flush_cache()
-        self.assertFalse((Path(tmp) / "cache.json").exists())
+            self.assertEqual(read_cache(ctx.config.server.db_file), {})
 
     def test_portfolio_persist_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = self._ctx(Path(tmp), sqlite=True)
+            ctx = self._ctx(Path(tmp))
             ctx.portfolio["equity_portfolio"] = [{"ISIN": "X", "value": 1.0}]
             ctx.persist_portfolio()
+            stored = read_positions(ctx.config.server.db_file)
+            self.assertEqual(stored["equity_portfolio"][0]["ISIN"], "X")
             ctx.portfolio.clear()
             ctx.load_portfolio()
         self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
 
     def test_persist_portfolio_drops_removed_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = self._ctx(Path(tmp), sqlite=True)
+            ctx = self._ctx(Path(tmp))
             ctx.portfolio["a"] = [{"ISIN": "X"}]
             ctx.portfolio["b"] = [{"ISIN": "Y"}]
             ctx.persist_portfolio()
             del ctx.portfolio["b"]
             ctx.persist_portfolio()
+            self.assertEqual(
+                set(read_positions(ctx.config.server.db_file)), {"a"}
+            )
             ctx.portfolio.clear()
             ctx.load_portfolio()
         self.assertEqual(set(ctx.portfolio), {"a"})
 
     def test_persist_portfolio_explicit_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = self._ctx(Path(tmp), sqlite=True)
+            ctx = self._ctx(Path(tmp))
             ctx.portfolio["equity_portfolio"] = [{"ISIN": "X", "value": 1.0}]
-            out = Path(tmp) / "other.json"
+            out = Path(tmp) / "other.db"
             ctx.persist_portfolio(out)
+            self.assertEqual(
+                read_positions(out)["equity_portfolio"][0]["ISIN"], "X"
+            )
             ctx.portfolio.clear()
             ctx.load_portfolio(out)
         self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
 
-    @unittest.skip("JSON assets backend is deferred; SQLite is the supported backend")
-    def test_load_portfolio_rejects_malformed_file(self) -> None:
-        import json as _json
-
+    def test_load_portfolio_rejects_a_legacy_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(Path(tmp))
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute(
+                    "CREATE TABLE user_portfolios "
+                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
+                conn.commit()
+            finally:
+                conn.close()
             ctx = self._ctx(Path(tmp))
-            bad = Path(tmp) / "assets.json"
-            bad.write_text(
-                _json.dumps(
-                    {
-                        "default": {
-                            "portfolio_name": "Portfolio",
-                            "positions": {"equity_portfolio": [{"ISIN": "X"}]},
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            ctx.load_portfolio()
-            self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
-            # A bucket that is not a list is a type error.
-            bad.write_text(
-                _json.dumps(
-                    {
-                        "default": {
-                            "portfolio_name": "Portfolio",
-                            "positions": {"equity_portfolio": "nope"},
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            ctx2 = self._ctx(Path(tmp))
-            with self.assertRaises((TypeError, ValueError)):
-                ctx2.load_portfolio()
-            # A root that is not an object is a shape error.
-            bad.write_text(_json.dumps(["not", "a", "dict"]), encoding="utf-8")
-            ctx3 = self._ctx(Path(tmp))
-            with self.assertRaises((TypeError, ValueError)):
-                ctx3.load_portfolio()
-            # A pre-user (flat) file points at the migration script.
-            bad.write_text(
-                _json.dumps({"equity_portfolio": [{"ISIN": "X"}]}), encoding="utf-8"
-            )
-            ctx4 = self._ctx(Path(tmp))
             with self.assertRaises(ValueError) as ctx_exc:
-                ctx4.load_portfolio()
-            self.assertIn("migrate_assets_user.py", str(ctx_exc.exception))
+                ctx.load_portfolio()
+        self.assertIn("legacy", str(ctx_exc.exception))
+        self.assertIn("migrate_normalize_db.py", str(ctx_exc.exception))
 
 
 class TestPlotterSelection(unittest.TestCase):
@@ -439,7 +417,7 @@ class TestOutputDataDir(unittest.TestCase):
             self.assertEqual(ctx.output_data_dir(), server / "data" / "default")
 
     def test_output_dir_overrides_serve_tree(self) -> None:
-        from cli.context import PlotterConfig
+        from cli.context import PlotterConfig, ServerConfig
 
         with tempfile.TemporaryDirectory() as tmp:
             server = Path(tmp) / "visualizer"

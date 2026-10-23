@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The update pipeline tolerates a fresh (empty) user portfolio.
 
-A user listed in the assets file without any positions yet must not
+A user in the store without any positions yet must not
 break the run: missing buckets are empty portfolios, and empty
 portfolios are skipped instead of raising "data must contain at least
 one entry".
@@ -9,33 +9,21 @@ one entry".
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from tests.assets_helpers import user_payload
-
-from cli.context import AppConfig, RuntimeContext, ServerConfig
+from cli.context import RuntimeContext
 from cli.update import main as run_update
+from tests.store_helpers import make_context, make_server
 
 
 def _ctx(tmp: Path, payload: object, user: str = "alice") -> RuntimeContext:
-    assets = tmp / "assets.json"
-    cache = tmp / "cache.json"
-    assets.write_text(json.dumps({user: user_payload(payload)}), encoding="utf-8")
-    cache.write_text("{}", encoding="utf-8")
-    return RuntimeContext(
-        config=AppConfig(
-            user=user,
-            assets_file=assets,
-            cache_file=cache,
-            isin_file=tmp / "isin.json",
-            plotter="web",
-            server=ServerConfig(
-                port=0, address="localhost", directory=tmp / "viz"
-            ),
-        )
+    return make_context(
+        tmp,
+        user=user,
+        portfolio=payload if isinstance(payload, dict) else {},
+        server=make_server(tmp, directory=tmp / "viz"),
     )
 
 
