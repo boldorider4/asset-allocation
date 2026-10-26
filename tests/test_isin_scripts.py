@@ -91,11 +91,13 @@ class TestRescanIsins(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
             write_isin(db, {"IE00MISSING": {"issuer": "justetf"}})
+            justetf_exists = Mock(return_value=True)
             messages: list[str] = []
             counts = rescan_isins(
                 db,
                 ["IE00MISSING"],
                 probe=lambda *_: None,
+                justetf_exists=justetf_exists,
                 emit=messages.append,
             )
             self.assertEqual(counts, (0, 0, 1, 0))
@@ -103,6 +105,79 @@ class TestRescanIsins(unittest.TestCase):
             self.assertEqual(row["issuer"], "justetf")
             self.assertEqual(row["visits"], 1)
             self.assertIn("unchanged (justetf)", messages[0])
+            justetf_exists.assert_not_called()
+
+    def test_missing_row_is_verified_as_justetf_last(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(db, {})
+            calls: list[str] = []
+
+            def probe(_isin: str, _name: str | None, _registry: object):
+                calls.append("probe")
+                return None
+
+            def justetf_exists(_isin: str) -> bool:
+                calls.append("justetf")
+                return True
+
+            messages: list[str] = []
+            counts = rescan_isins(
+                db,
+                ["BG9000011163"],
+                probe=probe,
+                justetf_exists=justetf_exists,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (1, 0, 0, 0))
+            self.assertEqual(calls, ["probe", "justetf"])
+            row = read_isin(db)["BG9000011163"]
+            self.assertEqual(row["issuer"], "justetf")
+            self.assertEqual(row["bucket"], "equity_portfolio")
+            self.assertIsNone(row["product_ref"])
+            self.assertEqual(row["visits"], 1)
+            self.assertIn("missing -> justetf", messages[0])
+
+    def test_missing_row_not_on_justetf_stays_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(db, {})
+            justetf_exists = Mock(return_value=False)
+            messages: list[str] = []
+            counts = rescan_isins(
+                db,
+                ["IE00NOTFOUND"],
+                probe=lambda *_: None,
+                justetf_exists=justetf_exists,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (0, 0, 1, 0))
+            row = read_isin(db)["IE00NOTFOUND"]
+            self.assertIsNone(row["issuer"])
+            self.assertIsNone(row["bucket"])
+            self.assertEqual(row["visits"], 1)
+            self.assertIn("not found on JustETF", messages[0])
+            justetf_exists.assert_called_once_with("IE00NOTFOUND")
+
+    def test_specialized_upgrade_fills_default_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(db, {})
+            justetf_exists = Mock()
+            counts = rescan_isins(
+                db,
+                ["IE00BKM4GZ66"],
+                probe=lambda *_: _IssuerProbe("ishares", "264659"),
+                justetf_exists=justetf_exists,
+                emit=lambda _message: None,
+            )
+            self.assertEqual(counts, (1, 0, 0, 0))
+            row = read_isin(db)["IE00BKM4GZ66"]
+            self.assertEqual(row["issuer"], "ishares")
+            self.assertEqual(row["bucket"], "equity_portfolio")
+            self.assertEqual(row["product_ref"], "264659")
+            self.assertEqual(row["visits"], 1)
+            justetf_exists.assert_not_called()
 
     def test_specialized_conflict_is_not_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -274,21 +349,6 @@ class TestRescanIsins(unittest.TestCase):
             )
             self.assertEqual(second, (0, 1, 0, 0))
             probe.assert_not_called()
-
-    def test_missing_registry_row_is_created_when_scanned(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db = db_path(tmp)
-            write_isin(db, {})
-            counts = rescan_isins(
-                db,
-                ["IE00NEW"],
-                probe=lambda *_: None,
-                emit=lambda _message: None,
-            )
-            self.assertEqual(counts, (0, 0, 1, 0))
-            row = read_isin(db)["IE00NEW"]
-            self.assertIsNone(row["issuer"])
-            self.assertEqual(row["visits"], 1)
 
     def test_missing_database_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -12,6 +12,12 @@ existing probe helper from :mod:`position.factory` directly, then updates
 only rows that are still generic (or fills a missing vendor product ref).
 An already-specialized issuer is never replaced by a conflicting probe.
 
+When no specialized issuer matches and the row has no issuer yet, the
+script verifies the ISIN against JustETF. That check runs after every
+specialized probe. A valid JustETF product is recorded as the generic
+``justetf`` issuer with the default portfolio bucket; a non-product stays
+unresolved. Newly resolved rows also get the default bucket.
+
 Every actual scan increments ``isin_registry.visits``. A previously
 visited ISIN is skipped unless ``--force`` is given. Failed probes still
 count as visits, so retrying a failed ISIN also requires ``--force``.
@@ -29,7 +35,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from position.factory import _probe_issuer_for_isin  # noqa: E402
+from cli.common import DEFAULT_ISIN_PORTFOLIO_BUCKET  # noqa: E402
+from position.factory import (  # noqa: E402
+    _IssuerProbe,
+    _probe_issuer_for_isin,
+)
+from position.justetf_position import just_etf_product_url_exists  # noqa: E402
 from storage.repositories import IsinRegistry  # noqa: E402
 from storage.wiring import isin_backend  # noqa: E402
 
@@ -104,6 +115,7 @@ def rescan_isins(
     *,
     force: bool = False,
     probe: Probe = _probe_issuer_for_isin,
+    justetf_exists: Callable[[str], bool] = just_etf_product_url_exists,
     emit: Callable[[str], None] = print,
 ) -> tuple[int, int, int, int]:
     """Re-probe *isins* and persist upgrades.
@@ -111,7 +123,9 @@ def rescan_isins(
     Returns ``(updated, skipped, unchanged, errors)``. An existing
     specialized issuer wins over a conflicting probe result; a missing
     ``product_ref`` is filled when the probe agrees with the stored issuer.
-    Previously visited ISINs are skipped unless ``force`` is true.
+    A row with no issuer is verified against JustETF only after all
+    specialized probes miss. Previously visited ISINs are skipped unless
+    ``force`` is true.
     """
     _require_registry_table(db_file)
     names = _names_by_isin(db_file)
@@ -135,6 +149,16 @@ def rescan_isins(
                 before = registry.get_issuer_for_isin(isin)
                 before_ref = registry.get_product_ref_for_isin(isin)
                 inferred = probe(isin, names.get(isin), registry)
+                if inferred is None and before is None:
+                    if justetf_exists(isin):
+                        inferred = _IssuerProbe("justetf")
+                    else:
+                        emit(
+                            f"{isin}: unchanged "
+                            "(missing; not found on JustETF)"
+                        )
+                        unchanged += 1
+                        continue
                 if inferred is None:
                     emit(f"{isin}: unchanged ({before or 'missing'})")
                     unchanged += 1
@@ -159,6 +183,10 @@ def rescan_isins(
                         isin, product_ref=inferred.product_ref
                     )
                     changed = True
+                if before is None:
+                    registry.register_isin(
+                        isin, bucket=DEFAULT_ISIN_PORTFOLIO_BUCKET
+                    )
                 if not changed:
                     suffix = (
                         f" (product_ref={before_ref})"
