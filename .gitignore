@@ -11,3 +11,4 @@ users.json
 .DS_Store
 _visualizer/
 config.sample.ini
+isins.txt
