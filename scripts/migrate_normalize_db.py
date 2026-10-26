@@ -11,7 +11,7 @@ Tables written:
 * ``cache``           — one row per ISIN: ``(isin, price, countries, sectors)``
 * ``sessions``        — one row per session:
   ``(session_id, username, incognito, expires_at)``
-* ``isin_registry``   — as before
+* ``isin_registry``   — ``(isin, issuer, bucket, product_ref, visits)``
 
 ``user_assets`` is obsolete: it is never created or written, and an old
 table is dropped. A legacy ``positions`` table (auto-increment ``id``)

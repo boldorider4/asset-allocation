@@ -4,13 +4,17 @@
 
 Usage::
 
-    python scripts/rescan_isin_issuers.py --db-file asalloc.db IE00... IE00...
+    python scripts/rescan_isin_issuers.py --db-file asalloc.db 'IE00...,IE00...'
 
 ``factory`` deliberately treats ``justetf``/``yfinance`` as decided and
 does not probe them again. This maintenance script therefore calls the
 existing probe helper from :mod:`position.factory` directly, then updates
 only rows that are still generic (or fills a missing vendor product ref).
 An already-specialized issuer is never replaced by a conflicting probe.
+
+Every actual scan increments ``isin_registry.visits``. A previously
+visited ISIN is skipped unless ``--force`` is given. Failed probes still
+count as visits, so retrying a failed ISIN also requires ``--force``.
 """
 
 from __future__ import annotations
@@ -46,10 +50,19 @@ def _require_registry_table(db_file: Path) -> None:
             "SELECT 1 FROM sqlite_master "
             "WHERE type = 'table' AND name = 'isin_registry'"
         ).fetchone()
+        if table is None:
+            raise ValueError(f"table 'isin_registry' not found in {db_file}")
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(isin_registry)").fetchall()
+        }
     finally:
         conn.close()
-    if table is None:
-        raise ValueError(f"table 'isin_registry' not found in {db_file}")
+    if "visits" not in columns:
+        raise ValueError(
+            "table 'isin_registry' is missing the 'visits' column; run "
+            "scripts/v3.0.0_add_isin_registry_visits.py first"
+        )
 
 
 def _names_by_isin(db_file: Path) -> dict[str, str]:
@@ -76,10 +89,11 @@ def _names_by_isin(db_file: Path) -> dict[str, str]:
     return names
 
 
-def _normalize_isins(values: Sequence[str]) -> list[str]:
+def _normalize_isins(raw: str) -> list[str]:
+    """Split a comma-separated list, normalizing and deduplicating it."""
     return list(
         dict.fromkeys(
-            value.strip().upper() for value in values if value.strip()
+            value.strip().upper() for value in raw.split(",") if value.strip()
         )
     )
 
@@ -88,23 +102,36 @@ def rescan_isins(
     db_file: Path,
     isins: Sequence[str],
     *,
+    force: bool = False,
     probe: Probe = _probe_issuer_for_isin,
     emit: Callable[[str], None] = print,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     """Re-probe *isins* and persist upgrades.
 
-    Returns ``(updated, unchanged, errors)``. An existing specialized
-    issuer wins over a conflicting probe result; a missing ``product_ref``
-    is filled when the probe agrees with the stored issuer.
+    Returns ``(updated, skipped, unchanged, errors)``. An existing
+    specialized issuer wins over a conflicting probe result; a missing
+    ``product_ref`` is filled when the probe agrees with the stored issuer.
+    Previously visited ISINs are skipped unless ``force`` is true.
     """
     _require_registry_table(db_file)
     names = _names_by_isin(db_file)
     registry = IsinRegistry(isin_backend(db_file))
     registry.open()
-    updated = unchanged = errors = 0
+    updated = skipped = unchanged = errors = 0
     try:
         for isin in isins:
             try:
+                visits = registry.get_visits_for_isin(isin)
+                if visits and not force:
+                    emit(
+                        f"{isin}: skipped (visited {visits}x; use --force "
+                        "to rescan)"
+                    )
+                    skipped += 1
+                    continue
+
+                registry.increment_visits_for_isin(isin)
+                registry.persist()
                 before = registry.get_issuer_for_isin(isin)
                 before_ref = registry.get_product_ref_for_isin(isin)
                 inferred = probe(isin, names.get(isin), registry)
@@ -159,7 +186,7 @@ def rescan_isins(
                 errors += 1
     finally:
         registry.close()
-    return updated, unchanged, errors
+    return updated, skipped, unchanged, errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -176,10 +203,14 @@ def main(argv: list[str] | None = None) -> int:
         help="SQLite database file.",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rescan ISINs that already have a non-zero visits counter.",
+    )
+    parser.add_argument(
         "isins",
-        nargs="+",
-        metavar="ISIN",
-        help="ISINs to re-probe.",
+        metavar="ISINS",
+        help="Comma-separated ISINs to re-probe.",
     )
     args = parser.parse_args(argv)
 
@@ -189,12 +220,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        updated, unchanged, errors = rescan_isins(args.db_file, isins)
+        updated, skipped, unchanged, errors = rescan_isins(
+            args.db_file, isins, force=args.force
+        )
     except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(
-        f"updated {updated}, unchanged {unchanged}, errors {errors}",
+        f"updated {updated}, skipped {skipped}, "
+        f"unchanged {unchanged}, errors {errors}",
         file=sys.stderr,
     )
     return 1 if errors else 0

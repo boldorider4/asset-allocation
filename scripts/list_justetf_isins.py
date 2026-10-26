@@ -8,8 +8,8 @@ Usage::
 
 The database is opened read-only. A missing database or missing
 ``isin_registry`` table is an error; neither is created. Each matching
-ISIN is printed on its own line, sorted, so the output can be piped into
-``scripts/rescan_isin_issuers.py``.
+ISIN is printed on its own line, sorted. Join the lines with commas
+before passing them to ``scripts/rescan_isin_issuers.py``.
 """
 
 from __future__ import annotations
