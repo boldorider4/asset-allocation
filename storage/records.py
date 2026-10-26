@@ -320,13 +320,17 @@ class IsinRecord(DictRow):
     ``issuer`` is a slug from :attr:`ISSUERS` (``justetf``/``yfinance``
     mark decided-generic rows); ``bucket`` is a portfolio bucket key;
     ``product_ref`` is the iShares product id / SSGA slug where one
-    exists. All three fields are nullable.
+    exists. ``visits`` counts maintenance-script scans. The first three
+    fields are nullable; ``visits`` is a non-negative integer.
     """
 
     ISSUER = "issuer"
     BUCKET = "bucket"
     PRODUCT_REF = "product_ref"
-    ALLOWED_KEYS: frozenset[str] = frozenset({ISSUER, BUCKET, PRODUCT_REF})
+    VISITS = "visits"
+    ALLOWED_KEYS: frozenset[str] = frozenset(
+        {ISSUER, BUCKET, PRODUCT_REF, VISITS}
+    )
 
     #: Canonical issuer slugs (module of origin in ``position/``),
     #: plus the generic fallbacks.
@@ -352,6 +356,7 @@ class IsinRecord(DictRow):
         issuer: str | None = None,
         bucket: str | None = None,
         product_ref: str | None = None,
+        visits: int | None = None,
     ) -> None:
         payload: dict[str, Any] = dict(data) if data else {}
         if issuer is not None:
@@ -360,6 +365,11 @@ class IsinRecord(DictRow):
             payload[self.BUCKET] = bucket
         if product_ref is not None:
             payload[self.PRODUCT_REF] = product_ref
+        if visits is not None:
+            payload[self.VISITS] = visits
+        payload.setdefault(self.VISITS, 0)
+        if payload[self.VISITS] is None:
+            payload[self.VISITS] = 0
         super().__init__(key, payload)
 
     def validate(self) -> None:
@@ -382,6 +392,12 @@ class IsinRecord(DictRow):
         ref = self._data.get(self.PRODUCT_REF)
         if ref is not None and not isinstance(ref, str):
             raise TypeError(f"row {self._key!r} field 'product_ref' must be a string or null")
+        visits = self._data.get(self.VISITS)
+        if isinstance(visits, bool) or not isinstance(visits, int) or visits < 0:
+            raise ValueError(
+                f"row {self._key!r} field 'visits' must be a non-negative "
+                f"integer, got {visits!r}"
+            )
 
     @property
     def issuer(self) -> str | None:
@@ -397,6 +413,10 @@ class IsinRecord(DictRow):
     def product_ref(self) -> str | None:
         ref = self._data.get(self.PRODUCT_REF)
         return None if ref is None else str(ref)
+
+    @property
+    def visits(self) -> int:
+        return int(self._data.get(self.VISITS, 0))
 
 
 class UserRecord(DictRow):

@@ -790,6 +790,24 @@ class IsinRegistry:
         record = self._backend.get(str(isin))
         return None if record is None else record.product_ref
 
+    def get_visits_for_isin(self, isin: str) -> int:
+        """Number of maintenance-script scans for ``isin`` (0 when absent)."""
+        record = self._backend.get(str(isin))
+        return 0 if record is None else record.visits
+
+    def increment_visits_for_isin(self, isin: str) -> int:
+        """Record one scan attempt for ``isin`` and return the new count."""
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(key, visits=1)
+            self._backend.put(record)
+            return 1
+        visits = existing.visits + 1
+        existing.merge({IsinRecord.VISITS: visits})
+        self._backend.put(existing)
+        return visits
+
     def product_ref_for(self, isin: str) -> str | None:
         """Alias of :meth:`get_product_ref_for_isin` (kept for callers)."""
         return self.get_product_ref_for_isin(isin)

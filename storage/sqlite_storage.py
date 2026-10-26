@@ -11,9 +11,9 @@ the generic layout::
     CREATE TABLE <table> (key TEXT PRIMARY KEY, payload TEXT NOT NULL)
 
 The payload is the row's JSON form (``to_dict()``), so a row written by
-one backend reads back identically in the other. A legacy ``(key, payload)``
-application table is rejected unless the caller explicitly opts into the
-one-time migration (see ``migrate_legacy``).
+one backend reads back identically in the other. Application tables are
+assumed to have been migrated already; the one-time migration of legacy
+``(key, payload)`` tables is opt-in (see ``migrate_legacy``).
 
 SQLite runs the database *inside* the process: no server, no idle
 load, nothing to supervise. WAL mode lets the web server read while
@@ -361,7 +361,7 @@ class SqliteStorage(Storage[T]):
 
     @staticmethod
     def _isin_columns() -> str:
-        return "isin, issuer, bucket, product_ref"
+        return "isin, issuer, bucket, product_ref, visits"
 
     @staticmethod
     def _isin_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -369,6 +369,7 @@ class SqliteStorage(Storage[T]):
             "issuer": row["issuer"],
             "bucket": row["bucket"],
             "product_ref": row["product_ref"],
+            "visits": int(row["visits"] or 0),
         }
 
     def _quoted_table(self) -> str:
@@ -585,7 +586,8 @@ class SqliteStorage(Storage[T]):
         elif table == "isin_registry":
             conn.execute(
                 f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
-                "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, product_ref TEXT)"
+                "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, "
+                "product_ref TEXT, visits INTEGER NOT NULL DEFAULT 0)"
             )
         elif table == "users":
             conn.execute(
@@ -610,28 +612,9 @@ class SqliteStorage(Storage[T]):
         with self._lock:
             conn = self._require_conn()
             self._create_table(conn)
-            self._ensure_supported_schema()
-            conn.commit()
-
-    def _ensure_supported_schema(self) -> None:
-        """Reject legacy application tables unless migration is requested."""
-        if self._table not in SINGLE_KEY_COLUMNS:
-            return
-        actual = self._table_columns()
-        if "payload" in actual:
             if self._migrate_legacy:
                 self._upgrade_legacy_table()
-                return
-            raise ValueError(
-                f"table {self._table!r} has a legacy (key, payload) schema; "
-                "run scripts/migrate_normalize_db.py before opening it"
-            )
-        missing = set(SINGLE_KEY_COLUMNS[self._table]) - actual
-        if missing:
-            raise ValueError(
-                f"table {self._table!r} is missing columns: "
-                f"{', '.join(sorted(missing))}"
-            )
+            conn.commit()
 
     def _decode(self, key: str, payload: Any) -> T | None:
         """The row for a raw payload; None when the payload is unusable.
@@ -791,10 +774,19 @@ class SqliteStorage(Storage[T]):
             elif self._table == "isin_registry":
                 d = obj.to_dict()
                 self._require_conn().execute(
-                    f"INSERT INTO {self._quoted_table()} (isin, issuer, bucket, product_ref) VALUES (?, ?, ?, ?) "
+                    f"INSERT INTO {self._quoted_table()} "
+                    "(isin, issuer, bucket, product_ref, visits) "
+                    "VALUES (?, ?, ?, ?, ?) "
                     "ON CONFLICT(isin) DO UPDATE SET issuer = excluded.issuer, "
-                    "bucket = excluded.bucket, product_ref = excluded.product_ref",
-                    (obj.key, d.get("issuer"), d.get("bucket"), d.get("product_ref")),
+                    "bucket = excluded.bucket, product_ref = excluded.product_ref, "
+                    "visits = excluded.visits",
+                    (
+                        obj.key,
+                        d.get("issuer"),
+                        d.get("bucket"),
+                        d.get("product_ref"),
+                        d.get("visits", 0),
+                    ),
                 )
             elif self._table in SINGLE_KEY_COLUMNS:
                 self._require_conn().execute(
