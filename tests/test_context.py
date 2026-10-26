@@ -4,14 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from cli.context import AppConfig, RuntimeContext
 from tests.store_helpers import (
-    db_path,
     make_context,
     read_cache,
     read_positions,
@@ -353,24 +351,6 @@ class TestRuntimeContextCache(unittest.TestCase):
             ctx.portfolio.clear()
             ctx.load_portfolio(out)
         self.assertEqual(ctx.portfolio["equity_portfolio"][0]["ISIN"], "X")
-
-    def test_load_portfolio_rejects_a_legacy_store(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db = db_path(Path(tmp))
-            conn = sqlite3.connect(db)
-            try:
-                conn.execute(
-                    "CREATE TABLE user_portfolios "
-                    "(key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-                )
-                conn.commit()
-            finally:
-                conn.close()
-            ctx = self._ctx(Path(tmp))
-            with self.assertRaises(ValueError) as ctx_exc:
-                ctx.load_portfolio()
-        self.assertIn("legacy", str(ctx_exc.exception))
-        self.assertIn("migrate_normalize_db.py", str(ctx_exc.exception))
 
 
 class TestPlotterSelection(unittest.TestCase):

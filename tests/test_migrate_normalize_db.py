@@ -129,6 +129,15 @@ class TestMigrateNormalizeDb(unittest.TestCase):
                     },
                     {"session_id", "username", "incognito", "expires_at"},
                 )
+                self.assertEqual(
+                    {
+                        str(row[1])
+                        for row in conn.execute(
+                            "PRAGMA table_info(isin_registry)"
+                        )
+                    },
+                    {"isin", "issuer", "bucket", "product_ref", "visits"},
+                )
 
     def test_it_preserves_the_uppercase_json_isin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

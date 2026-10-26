@@ -53,6 +53,7 @@ class TestIsinRegistryBackend(unittest.TestCase):
                 issuer="justetf",
                 bucket="equity_portfolio",
                 product_ref="prod",
+                visits=3,
             )
         )
         record = self.store.get("IE00TEST0001")
@@ -60,6 +61,7 @@ class TestIsinRegistryBackend(unittest.TestCase):
         self.assertEqual(record.issuer, "justetf")
         self.assertEqual(record.bucket, "equity_portfolio")
         self.assertEqual(record.product_ref, "prod")
+        self.assertEqual(record.visits, 3)
         self.assertIn("IE00TEST0001", self.store)
 
     def test_snapshot_returns_the_registry_payload(self) -> None:
@@ -73,6 +75,7 @@ class TestIsinRegistryBackend(unittest.TestCase):
                     "issuer": "yfinance",
                     "bucket": "bond_portfolio",
                     "product_ref": None,
+                    "visits": 0,
                 }
             },
         )
@@ -80,6 +83,7 @@ class TestIsinRegistryBackend(unittest.TestCase):
     def test_get_or_create_add_and_remove(self) -> None:
         created = self.store.get_or_create("IE00TEST0003")
         self.assertEqual(created.issuer, None)
+        self.assertEqual(created.visits, 0)
         self.assertIn("IE00TEST0003", self.store)
         self.store.add(IsinRecord("IE00TEST0004", issuer="justetf"))
         with self.assertRaises(KeyError):
@@ -219,17 +223,14 @@ class TestNormalizedApplicationTables(unittest.TestCase):
             "sessions": ("sessions-key", SessionRecord),
         }
 
-    def test_legacy_payload_tables_are_rejected(self) -> None:
+    def test_legacy_payload_tables_are_assumed_migrated(self) -> None:
         self._write_legacy_payloads()
         for table, (_key, factory) in self._legacy_tables().items():
             with self.subTest(table=table):
                 store = _store(self.path, table, factory)
                 try:
-                    with self.assertRaisesRegex(ValueError, "legacy"):
-                        store.open()
-                    self.assertFalse(store.connected)
-                    with self.assertRaisesRegex(ValueError, "legacy"):
-                        store.open()
+                    store.open()
+                    self.assertTrue(store.connected)
                 finally:
                     store.close()
                 self.assertIn("payload", _columns(self.path, table))

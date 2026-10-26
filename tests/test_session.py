@@ -103,23 +103,6 @@ class TestSessionStore(unittest.TestCase):
 class TestBrokenSessionRow(unittest.TestCase):
     """A damaged session row is no session, not a broken request."""
 
-    def test_a_legacy_sessions_table_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db = Path(tmp) / "asalloc.db"
-            conn = sqlite3.connect(db)
-            try:
-                conn.execute(
-                    "CREATE TABLE sessions (key TEXT PRIMARY KEY, payload TEXT)"
-                )
-                conn.execute(
-                    "INSERT INTO sessions (key, payload) VALUES ('sid', NULL)"
-                )
-                conn.commit()
-            finally:
-                conn.close()
-            with self.assertRaisesRegex(ValueError, "legacy"):
-                read_session(db, _cookie("sid"))
-
     def test_a_damaged_row_does_not_kill_the_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "asalloc.db"

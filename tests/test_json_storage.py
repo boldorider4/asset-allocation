@@ -129,12 +129,18 @@ class TestDictRow(unittest.TestCase):
         self.assertIsNone(record.issuer)
         self.assertIsNone(record.bucket)
         self.assertIsNone(record.product_ref)
+        self.assertEqual(record.visits, 0)
         record = IsinRecord(
             "IE00Y",
             {"issuer": "dws", "bucket": "equity_portfolio", "product_ref": None},
         )
         self.assertEqual(record.issuer, "dws")
         self.assertEqual(record.bucket, "equity_portfolio")
+        self.assertEqual(record.visits, 0)
+        with self.assertRaises(ValueError):
+            IsinRecord("IE00Z", {"visits": -1})
+        with self.assertRaises(ValueError):
+            IsinRecord("IE00Z", {"visits": True})
 
 
 class TestJsonStorageBackend(unittest.TestCase):
