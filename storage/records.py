@@ -19,7 +19,7 @@ in-memory) can persist them without knowing their fields:
 * :class:`UserPortfolioRecord` — one user's portfolio name.
 * :class:`IsinRecord` — one registry row: which issuer handler owns an
   ISIN, which portfolio bucket it lives in, plus an optional vendor
-  product ref (iShares product id / SSGA slug).
+  product ref (Vanguard PortId / iShares product id / SSGA slug).
 * :class:`UserRecord` — one user account: the account key *is* the
   user name (the future primary key), the payload holds the password.
 * :class:`SessionRecord` — one browser session: the user, the
@@ -319,9 +319,10 @@ class IsinRecord(DictRow):
     The key is the ISIN itself (non-negotiable: future primary key).
     ``issuer`` is a slug from :attr:`ISSUERS` (``justetf``/``yfinance``
     mark decided-generic rows); ``bucket`` is a portfolio bucket key;
-    ``product_ref`` is the iShares product id / SSGA slug where one
-    exists. ``visits`` counts maintenance-script scans. The first three
-    fields are nullable; ``visits`` is a non-negative integer.
+    ``product_ref`` is the Vanguard PortId / iShares product id / SSGA
+    slug where one exists. ``visits`` counts maintenance-script scans.
+    The first three fields are nullable; ``visits`` is a non-negative
+    integer.
     """
 
     ISSUER = "issuer"
@@ -343,6 +344,7 @@ class IsinRecord(DictRow):
             "ubs",
             "invesco",
             "landg",
+            "vanguard",
             "justetf",
             "yfinance",
         }

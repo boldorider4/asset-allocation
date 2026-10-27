@@ -32,6 +32,11 @@ from position.state_street_position import (
     ssga_product_url_exists,
 )
 from position.ubs_position import UBSPosition, ubs_product_url_exists
+from position.vanguard_position import (
+    VanguardPosition,
+    vanguard_product_ref_for_isin,
+    vanguard_product_url_exists,
+)
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
 from scrape.oskar import _OSKAR as OSKAR
@@ -91,6 +96,7 @@ _ISSUER_POSITION: dict[str, type[JustETFPosition]] = {
     "ubs": UBSPosition,
     "invesco": InvescoPosition,
     "landg": LAndGPosition,
+    "vanguard": VanguardPosition,
 }
 
 
@@ -124,8 +130,8 @@ def _probe_issuer_for_isin(isin: str, name: str | None, registry) -> _IssuerProb
 
     Ordered like the historical dispatch chain. First-run-only cost:
     hits are registered, so later runs take the DB path and skip probes
-    entirely. ``ishares``/``ssga`` URLs need a product ref, so their
-    product search is consulted when the registry has none. A UBS-ish
+    entirely. ``vanguard``/``ishares``/``ssga`` need a product ref, so
+    the vendor lookup is consulted when the registry has none. A UBS-ish
     name alone also suffices (HA4 fallback inside the class).
     """
     if dws_product_url_exists(isin):
@@ -145,6 +151,9 @@ def _probe_issuer_for_isin(isin: str, name: str | None, registry) -> _IssuerProb
         return _IssuerProbe("invesco")
     if landg_product_url_exists(isin):
         return _IssuerProbe("landg")
+    vanguard_ref = registry_ref or vanguard_product_ref_for_isin(isin)
+    if vanguard_ref and vanguard_product_url_exists(isin, vanguard_ref):
+        return _IssuerProbe("vanguard", vanguard_ref)
     return None
 
 
