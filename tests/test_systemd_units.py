@@ -9,6 +9,20 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _service_recipe() -> list[str]:
+    lines = (REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.rstrip() == "service:")
+    block: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("\t"):
+            block.append(line)
+        elif line.strip() == "":
+            continue
+        else:
+            break
+    return block
+
+
 class TestLiteUpdateUnit(unittest.TestCase):
     def _exec_start(self) -> str:
         text = (REPO_ROOT / "systemd" / "asalloc-lite-update.service").read_text(
@@ -54,17 +68,7 @@ class TestLiteUpdateUnit(unittest.TestCase):
         self.assertNotIn("--cache-file", text)
 
     def test_make_service_copies_but_never_enables_lite_unit(self) -> None:
-        lines = (REPO_ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
-        start = next(i for i, line in enumerate(lines) if line.rstrip() == "service:")
-        # Collect the tab-indented recipe block only.
-        block: list[str] = []
-        for line in lines[start + 1 :]:
-            if line.startswith("\t"):
-                block.append(line)
-            elif line.strip() == "":
-                continue
-            else:
-                break
+        block = _service_recipe()
         self.assertIn("systemd/asalloc-lite-update.service", "\n".join(block))
         cp_lines = [
             line
@@ -78,6 +82,20 @@ class TestLiteUpdateUnit(unittest.TestCase):
                 continue
             if "enable" in line or "start" in line:
                 self.assertNotIn("lite", line)
+
+
+class TestCurateUnits(unittest.TestCase):
+    def test_make_service_copies_curate_units_without_enabling_them(self) -> None:
+        block = _service_recipe()
+        recipe = "\n".join(block)
+        self.assertIn("systemd/asalloc-curate-all-users.service", recipe)
+        self.assertIn("systemd/asalloc-curate-default-user.service", recipe)
+        for line in block:
+            stripped = line.strip()
+            if stripped.startswith("@echo"):
+                continue
+            if "enable" in line or "start" in line:
+                self.assertNotIn("curate", line)
 
 
 class TestServeUnit(unittest.TestCase):
