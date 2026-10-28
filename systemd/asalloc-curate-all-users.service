@@ -1,0 +1,10 @@
+[Unit]
+Description=asalloc curate every cached ISIN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/asalloc
+ExecStart=%h/.local/bin/asalloc curate --db-file=%h/.local/asalloc/asalloc.db

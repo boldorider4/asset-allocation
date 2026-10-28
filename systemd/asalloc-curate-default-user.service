@@ -1,0 +1,11 @@
+[Unit]
+Description=asalloc curate the default user's cached ISINs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ASALLOC_CONFIG=%h/.local/asalloc/config.ini
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/asalloc
+ExecStart=%h/.local/bin/asalloc curate --config %h/.local/asalloc/config.ini
