@@ -1,0 +1,10 @@
+[Unit]
+Description=Run asalloc update every day, except Sunday, at 3pm
+
+[Timer]
+OnBootSec=5min
+OnCalendar=Mon..Sat *-*-* 15:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
