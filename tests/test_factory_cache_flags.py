@@ -558,6 +558,15 @@ class TestFactoryCacheFlags(unittest.TestCase):
         self.assertEqual(self.ctx.cache, before)
         self.assertFalse(self.ctx.cache_dirty)
 
+    def test_write_cache_false_does_not_rewrite_cache(self) -> None:
+        before = dict(self.ctx.cache)
+        self.ctx.config.fetch_prices = True
+        with patch.object(JustETFPosition, "_fast_info_price", return_value=99.5):
+            pos = self._factory(write_cache=False)
+        self.assertEqual(pos.price, 99.5)
+        self.assertEqual(self.ctx.cache, before)
+        self.assertFalse(self.ctx.cache_dirty)
+
     def test_cancel_event_aborts_before_any_network(self) -> None:
         import threading
 
