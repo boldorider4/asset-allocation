@@ -8,4 +8,4 @@ Type=exec
 Environment=ASALLOC_CONFIG=%h/.local/asalloc/config.ini
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/.local/asalloc
-ExecStart=%h/.local/bin/asalloc curate --config %h/.local/asalloc/config.ini
+ExecStart=%h/.local/bin/asalloc curate --log-level INFO --config %h/.local/asalloc/config.ini
