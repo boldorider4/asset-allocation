@@ -170,6 +170,7 @@ def factory(
     *,
     ctx: RuntimeContext,
     price: float | None = None,
+    write_cache: bool = True,
 ) -> JustETFPosition | YFinancePosition:
     if ctx.cancel_event is not None and ctx.cancel_event.is_set():
         raise UpdateCancelled(f"cancelled before building position {isin}")
@@ -328,7 +329,7 @@ def factory(
         and isin is not None
         and isinstance(position, JustETFPosition)
     )
-    if update_price or update_countries or update_sectors:
+    if write_cache and (update_price or update_countries or update_sectors):
         save_position_in_cache(
             ctx,
             isin,
