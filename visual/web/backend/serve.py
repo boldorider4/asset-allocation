@@ -220,7 +220,7 @@ def _update_worker(
         )
         ini_plotter = ini_cfg.plotter_config
     fetch_prices, fetch_geosplit, fetch_sectorsplit = (
-        (True, True, True) if fat else ini_fetch
+        (True, False, False) if fat else ini_fetch
     )
     config = AppConfig(
         fetch_prices=fetch_prices,
