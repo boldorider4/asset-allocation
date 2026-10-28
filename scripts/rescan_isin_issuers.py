@@ -21,6 +21,7 @@ unresolved. Newly resolved rows also get the default bucket.
 Every actual scan increments ``isin_registry.visits``. A previously
 visited ISIN is skipped unless ``--force`` is given. Failed probes still
 count as visits, so retrying a failed ISIN also requires ``--force``.
+Blacklisted ISINs are always skipped, even with ``--force``.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from storage.wiring import isin_backend  # noqa: E402
 
 Probe = Callable[[str, str | None, Any], Any]
 _GENERIC_ISSUERS = frozenset({"justetf", "yfinance"})
+_ISIN_BLACKLIST = frozenset({"LU2903252349"})
 
 
 def _read_only_uri(path: Path) -> str:
@@ -135,6 +137,11 @@ def rescan_isins(
     try:
         for isin in isins:
             try:
+                if isin.strip().upper() in _ISIN_BLACKLIST:
+                    emit(f"{isin}: skipped (blacklisted)")
+                    skipped += 1
+                    continue
+
                 visits = registry.get_visits_for_isin(isin)
                 if visits and not force:
                     emit(

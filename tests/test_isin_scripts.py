@@ -327,6 +327,24 @@ class TestRescanIsins(unittest.TestCase):
             self.assertEqual(row["issuer"], "ishares")
             self.assertEqual(row["visits"], 2)
 
+    def test_blacklisted_isin_is_always_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(db, {"LU2903252349": {"issuer": "justetf"}})
+            probe = Mock(return_value=_IssuerProbe("ishares", "264659"))
+            messages: list[str] = []
+            counts = rescan_isins(
+                db,
+                ["LU2903252349"],
+                force=True,
+                probe=probe,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (0, 1, 0, 0))
+            probe.assert_not_called()
+            self.assertIn("skipped (blacklisted)", messages[0])
+            self.assertEqual(read_isin(db)["LU2903252349"]["visits"], 0)
+
     def test_failed_probe_counts_as_a_visit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
