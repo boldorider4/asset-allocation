@@ -6,5 +6,4 @@ Wants=network-online.target
 [Service]
 Type=exec
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=%h/.local/asalloc
 ExecStart=%h/.local/bin/asalloc curate --db-file=%h/.local/asalloc/asalloc.db
