@@ -48,13 +48,13 @@ service:
 	$(MAKE) web VISUALIZER=$(INSTALL_VIS)
 	mkdir -p $(INSTALL_ROOT) $(INSTALL_VIS)/data $(SYSTEMD_USER)
 	cp config.ini $(INSTALL_ROOT)/
-	cp systemd/asalloc-serve.service systemd/asalloc-update.service systemd/asalloc-update.timer systemd/asalloc-lite-update.service systemd/asalloc-curate-all-users.service systemd/asalloc-curate-default-user.service $(SYSTEMD_USER)/
+	cp systemd/asalloc-serve.service systemd/asalloc-update.service systemd/asalloc-update.timer systemd/asalloc-lite-update.service systemd/asalloc-curate-all-users.service systemd/asalloc-curate-all-users.timer systemd/asalloc-curate-default-user.service systemd/asalloc-curate-default-user.timer $(SYSTEMD_USER)/
 	systemctl --user daemon-reload
 	systemctl --user enable --now asalloc-serve.service
 	systemctl --user enable --now asalloc-update.timer
-	@echo "Installed user units. Import holdings with scripts/migrate_normalize_db.py --db-file $(INSTALL_ROOT)/asalloc.db"
+	systemctl --user enable --now asalloc-curate-default-user.timer
+	systemctl --user enable --now asalloc-curate-all-users.timer
 	@echo "asalloc-lite-update.service was copied but left disabled for the admin to start manually"
-	@echo "asalloc-curate-*.service units were copied but left disabled; run them manually when needed"
 	@echo "Headless hosts: sudo loginctl enable-linger $$USER"
 
 stop-service:
