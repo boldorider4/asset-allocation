@@ -63,6 +63,43 @@ class TestUngroupedKeysUnchanged(unittest.TestCase):
         self.assertAlmostEqual(sum(port._geosplit_data.values()), 1.0)
 
 
+class TestAbsoluteRegionalWeights(unittest.TestCase):
+    def test_us_is_dmem_times_usavn(self) -> None:
+        port = _regional(
+            "Equity", [_stub(value=100.0, dmem=0.5, usavn=0.25)]
+        )
+        self.assertAlmostEqual(port._geosplit_data["Equity US"], 0.125)
+        self.assertAlmostEqual(port._geosplit_data["Equity Ex-US"], 0.375)
+        self.assertAlmostEqual(
+            port._geosplit_data["Equity Emrg. Markets"], 0.5
+        )
+
+    def test_foobar_values_match_raw_country_weights(self) -> None:
+        port = _regional(
+            "Equity",
+            [
+                _stub(
+                    value=100.0,
+                    dmem=0.8738453,
+                    usavn=0.7138038048611121,
+                )
+            ],
+        )
+        self.assertAlmostEqual(port._geosplit_data["Equity US"], 0.6237541)
+        self.assertAlmostEqual(port._geosplit_data["Equity Ex-US"], 0.2500912)
+        self.assertAlmostEqual(
+            port._geosplit_data["Equity Emrg. Markets"], 0.1261547
+        )
+
+    def test_grouped_wedge_uses_absolute_us(self) -> None:
+        port = _regional(
+            "Equity",
+            [_stub(value=100.0, dmem=0.5, usavn=0.25, short_name="G")],
+        )
+        self.assertAlmostEqual(port._geosplit_data["Equity US: G"], 0.125)
+        self.assertAlmostEqual(port._geosplit_data["Equity Ex-US: G"], 0.375)
+
+
 class TestGroupedSplit(unittest.TestCase):
     def test_single_group_splits_by_region(self) -> None:
         port = _regional(

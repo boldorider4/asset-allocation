@@ -85,7 +85,7 @@ class RegionalPortfolio(Portfolio):
         dmem = np.asarray([p.dmem for p in positions], dtype=float)
         usavn = np.asarray([p.usavn for p in positions], dtype=float)
         developed = float(np.dot(values, dmem))
-        us = float(np.dot(values, usavn)) if developed > 0 else 0.0
+        us = float(np.dot(values, dmem * usavn)) if developed > 0 else 0.0
         subtotal = float(values.sum())
         return us, developed - us, subtotal - developed
 

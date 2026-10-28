@@ -563,11 +563,12 @@ class Position(ABC):
 
     def _compute_dev_vs_em_market(self) -> float:
         """Compute developed markets vs. emerging markets allocation."""
-        # default to what is set in dmem property
-        developed_markets = self._dmem if self._dmem is not None else 0
-        emerging_markets = 1 - self._dmem if self._dmem is not None else 1
-        # if countries are set, use them to compute dmem
-        for _row in self._countries or []:
+        if not self._countries:
+            return self._dmem if self._dmem is not None else 0
+
+        developed_markets = 0.0
+        emerging_markets = 0.0
+        for _row in self._countries:
             if _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
                 developed_markets += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_EMERGING_MARKETS:
@@ -584,21 +585,21 @@ class Position(ABC):
         total = developed_markets + emerging_markets
         if total > 0:
             return developed_markets / total
-        if self._countries:
-            logger.warning(
-                "DMEM weights sum to zero for ISIN %s (%d country rows); using 0.0",
-                self._isin,
-                len(self._countries),
-            )
+        logger.warning(
+            "DMEM weights sum to zero for ISIN %s (%d country rows); using 0.0",
+            self._isin,
+            len(self._countries),
+        )
         return 0
 
     def _compute_us_vs_exus_market(self) -> float:
         """Compute US vs. ex-US allocation within developed markets."""
-        # default to what is set in usavn property
-        us = self._usavn if self._usavn is not None else 0
-        non_us = 1 - self._usavn if self._usavn is not None else 1
-        # if countries are set, use them to compute usavn
-        for _row in self._countries or []:
+        if not self._countries:
+            return self._usavn if self._usavn is not None else 0
+
+        us = 0.0
+        non_us = 0.0
+        for _row in self._countries:
             if _row["name"] == _US_MARKET_NAME:
                 us += _row["weight_pct"]
             elif _row["name"] in _LIST_OF_DEVELOPED_MARKETS:
