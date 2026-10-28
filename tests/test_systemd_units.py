@@ -85,6 +85,21 @@ class TestLiteUpdateUnit(unittest.TestCase):
 
 
 class TestCurateUnits(unittest.TestCase):
+    _UNITS = (
+        "asalloc-curate-all-users.service",
+        "asalloc-curate-default-user.service",
+    )
+
+    def _text(self, name: str) -> str:
+        return (REPO_ROOT / "systemd" / name).read_text(encoding="utf-8")
+
+    def test_units_return_to_the_shell_before_curation_finishes(self) -> None:
+        for name in self._UNITS:
+            text = self._text(name)
+            self.assertIn("Type=exec", text)
+            self.assertNotIn("Type=oneshot", text)
+            self.assertIn("asalloc curate", text)
+
     def test_make_service_copies_curate_units_without_enabling_them(self) -> None:
         block = _service_recipe()
         recipe = "\n".join(block)
