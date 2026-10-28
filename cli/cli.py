@@ -57,6 +57,53 @@ def cmd_update(args: argparse.Namespace) -> None:
     run_update(ctx)
 
 
+def cmd_curate(args: argparse.Namespace) -> None:
+    """Refresh country/sector splits for cached ISINs."""
+    from cli.curate import CurateError, run_curate
+
+    ini_path = getattr(args, "config", None)
+    db_flag = getattr(args, "db_file", None)
+    if ini_path is None and db_flag is None:
+        print("error: pass --db-file or --config", file=sys.stderr)
+        sys.exit(1)
+    try:
+        config_user = (
+            AppConfig.from_ini(ini_path).user
+            if ini_path is not None
+            else None
+        )
+        database = db_file(
+            ini_path=ini_path,
+            flag_value=db_flag,
+        )
+    except (
+        FileNotFoundError,
+        ValueError,
+        configparser.Error,
+        StoreLocationMissing,
+    ) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    user = getattr(args, "user", None)
+    if user is None and ini_path is not None:
+        user = config_user
+    if user is not None:
+        user = str(user).strip()
+        if not user:
+            print("error: --user must not be empty", file=sys.stderr)
+            sys.exit(2)
+    try:
+        code = run_curate(
+            database,
+            user=user,
+            run_file=getattr(args, "run", None),
+        )
+    except CurateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(code)
+
+
 def _pid_is_server(pid: int) -> bool:
     """True when /proc shows *pid* as a visualizer server process."""
     try:
@@ -417,6 +464,42 @@ def main(argv: list[str] | None = None) -> None:
     _add_config_flag(update, default=argparse.SUPPRESS)
     _add_update_flags(update)
     update.set_defaults(func=cmd_update)
+
+    curate = subparsers.add_parser(
+        "curate",
+        help="Refresh country and sector splits for cached ISINs.",
+        epilog=(
+            "Pass --db-file or --config. With --config, [update] user "
+            "selects the portfolio to curate unless --user overrides it."
+        ),
+    )
+    _add_config_flag(curate, default=argparse.SUPPRESS)
+    curate.add_argument(
+        "--db-file",
+        type=Path,
+        dest="db_file",
+        default=None,
+        help=(
+            "SQLite database with every store (default: from config.ini "
+            "[server] db_file)."
+        ),
+    )
+    curate.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help=(
+            "Only curate ISINs in this user's portfolio (default: from "
+            "--config [update] user; without --config, curate every ISIN)."
+        ),
+    )
+    curate.add_argument(
+        "--run",
+        type=Path,
+        default=None,
+        help="Resume an interrupted curation run from this JSON file.",
+    )
+    curate.set_defaults(func=cmd_curate)
 
     serve = subparsers.add_parser(
         "serve",
