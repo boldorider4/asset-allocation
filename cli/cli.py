@@ -45,9 +45,23 @@ def server_port(path: Path | None = None) -> int:
     return load_server_config(path).port
 
 
+def _configure_logging_from_args(
+    args: argparse.Namespace,
+    *,
+    config: AppConfig | None = None,
+    default: str = "ERROR",
+) -> None:
+    level = (
+        getattr(args, "log_level", None)
+        or (config.log_level if config is not None else None)
+        or default
+    )
+    configure_cli_logging(getattr(logging, level))
+
+
 def cmd_update(args: argparse.Namespace) -> None:
     config = AppConfig.from_cli(args, ini_path=getattr(args, "config", None))
-    configure_cli_logging(getattr(logging, config.log_level))
+    _configure_logging_from_args(args, config=config)
     # The database must have a location: a flag or an ini key.
     db_file(
         ini_path=getattr(args, "config", None),
@@ -67,11 +81,7 @@ def cmd_curate(args: argparse.Namespace) -> None:
         print("error: pass --db-file or --config", file=sys.stderr)
         sys.exit(1)
     try:
-        config_user = (
-            AppConfig.from_ini(ini_path).user
-            if ini_path is not None
-            else None
-        )
+        config = AppConfig.from_ini(ini_path) if ini_path is not None else None
         database = db_file(
             ini_path=ini_path,
             flag_value=db_flag,
@@ -84,9 +94,10 @@ def cmd_curate(args: argparse.Namespace) -> None:
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
+    _configure_logging_from_args(args, config=config, default="INFO")
     user = getattr(args, "user", None)
-    if user is None and ini_path is not None:
-        user = config_user
+    if user is None and config is not None:
+        user = config.user
     if user is not None:
         user = str(user).strip()
         if not user:
@@ -343,6 +354,15 @@ def _add_config_flag(
     )
 
 
+def _add_log_level_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default=argparse.SUPPRESS,
+        help="Logging level for stderr (overrides the global --log-level).",
+    )
+
+
 def _add_update_flags(update: argparse.ArgumentParser) -> None:
     update.add_argument(
         "--fetch-prices",
@@ -425,12 +445,7 @@ def _add_update_flags(update: argparse.ArgumentParser) -> None:
         default=None,
         help="Chart backend: web writes *.raw files; pie-chart opens matplotlib windows (default: config.ini [plotter] type, else web).",
     )
-    update.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default=argparse.SUPPRESS,
-        help="Logging level for stderr (overrides the global --log-level).",
-    )
+    _add_log_level_flag(update)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -499,6 +514,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Resume an interrupted curation run from this JSON file.",
     )
+    _add_log_level_flag(curate)
     curate.set_defaults(func=cmd_curate)
 
     serve = subparsers.add_parser(
@@ -582,7 +598,7 @@ def main(argv: list[str] | None = None) -> None:
     clear_sessions_parser.set_defaults(func=cmd_clear_sessions)
 
     args = parser.parse_args(argv)
-    configure_cli_logging(getattr(logging, getattr(args, "log_level", None) or "ERROR"))
+    _configure_logging_from_args(args)
     args.func(args)
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -308,10 +309,25 @@ class TestCurateRun(unittest.TestCase):
 
 
 class TestCurateCommand(unittest.TestCase):
-    def _ini(self, tmp: Path, *, user: str | None = "alice") -> Path:
+    def _ini(
+        self,
+        tmp: Path,
+        *,
+        user: str | None = "alice",
+        log_level: str | None = None,
+    ) -> Path:
         db = db_path(tmp)
         ini = tmp / "config.ini"
-        update = f"[update]\nuser = {user}\n" if user is not None else ""
+        update_lines: list[str] = []
+        if user is not None:
+            update_lines.append(f"user = {user}")
+        if log_level is not None:
+            update_lines.append(f"log_level = {log_level}")
+        update = (
+            "[update]\n" + "\n".join(update_lines) + "\n"
+            if update_lines
+            else ""
+        )
         ini.write_text(
             "[server]\nport = 8765\ndirectory = vis\n"
             f"db_file = {db}\n{update}",
@@ -328,8 +344,9 @@ class TestCurateCommand(unittest.TestCase):
         }
         values.update(overrides)
         with patch("cli.curate.run_curate", return_value=0) as run:
-            with self.assertRaises(SystemExit) as exit_info:
-                cmd_curate(argparse.Namespace(**values))
+            with patch("cli.cli.configure_cli_logging"):
+                with self.assertRaises(SystemExit) as exit_info:
+                    cmd_curate(argparse.Namespace(**values))
         self.assertEqual(exit_info.exception.code, 0)
         return run, run.call_args
 
@@ -360,6 +377,57 @@ class TestCurateCommand(unittest.TestCase):
             _, call = self._call(config=ini, db_file=flag)
             self.assertEqual(call.args[0], flag)
             self.assertEqual(call.kwargs["user"], "alice")
+
+    def test_config_log_level_configures_logging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini(Path(tmp), log_level="WARNING")
+            with patch("cli.curate.run_curate", return_value=0):
+                with patch("cli.cli.configure_cli_logging") as configure:
+                    with self.assertRaises(SystemExit) as exit_info:
+                        cmd_curate(
+                            argparse.Namespace(
+                                config=ini,
+                                db_file=None,
+                                user=None,
+                                run=None,
+                            )
+                        )
+            self.assertEqual(exit_info.exception.code, 0)
+            configure.assert_called_once_with(logging.WARNING)
+
+    def test_db_file_only_logging_defaults_to_info(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("cli.curate.run_curate", return_value=0):
+                with patch("cli.cli.configure_cli_logging") as configure:
+                    with self.assertRaises(SystemExit) as exit_info:
+                        cmd_curate(
+                            argparse.Namespace(
+                                config=None,
+                                db_file=db_path(tmp),
+                                user=None,
+                                run=None,
+                            )
+                        )
+            self.assertEqual(exit_info.exception.code, 0)
+            configure.assert_called_once_with(logging.INFO)
+
+    def test_log_level_argument_overrides_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini(Path(tmp), log_level="WARNING")
+            with patch("cli.curate.run_curate", return_value=0):
+                with patch("cli.cli.configure_cli_logging") as configure:
+                    with self.assertRaises(SystemExit) as exit_info:
+                        cmd_curate(
+                            argparse.Namespace(
+                                config=ini,
+                                db_file=None,
+                                user=None,
+                                run=None,
+                                log_level="DEBUG",
+                            )
+                        )
+            self.assertEqual(exit_info.exception.code, 0)
+            configure.assert_called_once_with(logging.DEBUG)
 
     def test_a_location_is_required(self) -> None:
         err = io.StringIO()
@@ -413,6 +481,23 @@ class TestCurateCommand(unittest.TestCase):
                     main(["curate", "--db-file", str(db_path(tmp))])
             self.assertEqual(exit_info.exception.code, 0)
             run.assert_called_once()
+
+    def test_parser_accepts_log_level_after_curate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("cli.curate.run_curate", return_value=0):
+                with patch("cli.cli.configure_cli_logging") as configure:
+                    with self.assertRaises(SystemExit) as exit_info:
+                        main(
+                            [
+                                "curate",
+                                "--db-file",
+                                str(db_path(tmp)),
+                                "--log-level",
+                                "DEBUG",
+                            ]
+                        )
+            self.assertEqual(exit_info.exception.code, 0)
+            configure.assert_called_with(logging.DEBUG)
 
 
 if __name__ == "__main__":
