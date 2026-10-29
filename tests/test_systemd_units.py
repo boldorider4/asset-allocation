@@ -100,17 +100,29 @@ class TestCurateUnits(unittest.TestCase):
             self.assertNotIn("Type=oneshot", text)
             self.assertIn("asalloc curate", text)
 
-    def test_make_service_copies_curate_units_without_enabling_them(self) -> None:
+    def test_default_user_unit_selects_the_user_explicitly(self) -> None:
+        text = self._text("asalloc-curate-default-user.service")
+        self.assertIn("--user default", text)
+
+    def test_all_users_unit_does_not_select_a_user(self) -> None:
+        text = self._text("asalloc-curate-all-users.service")
+        self.assertNotIn("--user", text)
+
+    def test_make_service_copies_and_enables_curate_timers(self) -> None:
         block = _service_recipe()
         recipe = "\n".join(block)
         self.assertIn("systemd/asalloc-curate-all-users.service", recipe)
+        self.assertIn("systemd/asalloc-curate-all-users.timer", recipe)
         self.assertIn("systemd/asalloc-curate-default-user.service", recipe)
-        for line in block:
-            stripped = line.strip()
-            if stripped.startswith("@echo"):
-                continue
-            if "enable" in line or "start" in line:
-                self.assertNotIn("curate", line)
+        self.assertIn("systemd/asalloc-curate-default-user.timer", recipe)
+        self.assertIn(
+            "systemctl --user enable --now asalloc-curate-all-users.timer",
+            recipe,
+        )
+        self.assertIn(
+            "systemctl --user enable --now asalloc-curate-default-user.timer",
+            recipe,
+        )
 
 
 class TestServeUnit(unittest.TestCase):

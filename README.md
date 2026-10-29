@@ -152,7 +152,7 @@ Useful `update` flags:
 | `--db-file PATH` | SQLite database to read and write (default: `[server] db_file`) |
 | `--plot {web,pie-chart}` | Chart backend (default `web`) |
 
-**Curating cached splits.** `asalloc curate` refreshes the country and sector weights of every ISIN already in the cache. It needs a database location via `--db-file` or `--config`:
+**Curating splits.** `asalloc curate` refreshes the country and sector weights of every ISIN in the registry. It needs a database location via `--db-file` or `--config`:
 
 ```bash
 asalloc curate --db-file ~/.local/asalloc/asalloc.db
@@ -160,7 +160,7 @@ asalloc curate --config ~/.local/asalloc/config.ini
 asalloc curate --config ~/.local/asalloc/config.ini --user alice
 ```
 
-With `--config`, the database comes from `[server] db_file` and `[update] user` selects the portfolio; `--user` overrides that default. Without `--config`, `--user` is optional and omitting it curates every cached ISIN. A failed or empty split fetch keeps the old values. Interrupted runs leave a `*.curate.*.json` file next to the database; resume it with `--run PATH`:
+With `--config`, the database comes from `[server] db_file`; `[update] user` is ignored. Pass `--user NAME` to restrict curation to that user's portfolio; without `--user`, every registry ISIN is curated. A failed or empty split fetch keeps the old values. Interrupted runs leave a `*.curate.*.json` file next to the database; resume it with `--run PATH`:
 
 ```bash
 asalloc curate --db-file ~/.local/asalloc/asalloc.db --run ~/.local/asalloc/asalloc.db.curate.12345.json

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Refresh cached country and sector splits for ISINs in the SQLite cache."""
+"""Refresh cached country and sector splits for ISINs in the SQLite registry."""
 
 from __future__ import annotations
 
@@ -57,11 +57,11 @@ def _build_context(db_file: Path, user: str | None) -> RuntimeContext:
 
 
 def _selected_isins(ctx: RuntimeContext, user: str | None) -> list[str]:
-    cache = ctx.ensure_cache_loaded()
+    registry = ctx.isin_registry.snapshot()
     all_isins = sorted(
         {
             str(isin).strip()
-            for isin in cache
+            for isin in registry
             if str(isin).strip()
         }
     )
@@ -209,7 +209,10 @@ def run_curate(
     user: str | None = None,
     run_file: str | Path | None = None,
 ) -> int:
-    """Curate the cache; return 0 on success, 1 on per-ISIN failures, 130 on interrupt."""
+    """Curate registry ISINs.
+
+    Return 0 on success, 1 on per-ISIN failures, 130 on interrupt.
+    """
     database = Path(db_file).expanduser()
     if not database.is_file():
         raise CurateError(f"database not found: {database}")

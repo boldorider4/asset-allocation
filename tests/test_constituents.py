@@ -2699,7 +2699,7 @@ class TestConstituentsRoute(_RouteCase):
         # Explicit handler arguments still win over ini.
         self.assertEqual(str(config.server.db_file), str(self.db))
 
-    def test_post_update_fat_mode_sets_fetch(self) -> None:
+    def test_post_update_fat_mode_only_fetches_prices(self) -> None:
         import logging
         from unittest.mock import patch
 
@@ -2720,8 +2720,8 @@ class TestConstituentsRoute(_RouteCase):
         self.assertEqual(json.loads(body), {"updated": True})
         config = seen["config"]
         self.assertTrue(config.fetch_prices)
-        self.assertTrue(config.fetch_geosplit)
-        self.assertTrue(config.fetch_sectorsplit)
+        self.assertFalse(config.fetch_geosplit)
+        self.assertFalse(config.fetch_sectorsplit)
         self.assertFalse(config.fetch_oskar)
         self.assertFalse(config.fetch_scalable)
         self.assertFalse(config.fetch_traderepublic)

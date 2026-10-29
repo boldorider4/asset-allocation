@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The ``asalloc curate`` cache refresh command."""
+"""The ``asalloc curate`` registry refresh command."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from tests.store_helpers import (
     db_path,
     read_cache,
     write_cache,
+    write_isin,
     write_positions,
 )
 
@@ -58,10 +59,14 @@ class TestCurateRun(unittest.TestCase):
             for isin in isins
         }
 
-    def test_curates_every_cache_isin_without_a_user(self) -> None:
+    def _seed(self, db: Path, *isins: str) -> None:
+        write_cache(db, self._cache(*isins))
+        write_isin(db, {isin: None for isin in isins})
+
+    def test_curates_every_registry_isin_without_a_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A", "IE00B"))
+            self._seed(db, "IE00A", "IE00B")
             calls: list[str] = []
 
             def fake_factory(isin: str, **_kwargs):
@@ -80,10 +85,33 @@ class TestCurateRun(unittest.TestCase):
                 self.assertEqual(cache[isin]["sectors"], {"New Sector": 1.0})
             self.assertEqual(_run_files(tmp), [])
 
+    def test_registry_is_the_source_of_truth_not_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_cache(db, self._cache("IE00CACHE"))
+            write_isin(db, {"IE00REG": None})
+            calls: list[str] = []
+
+            def fake_factory(isin: str, **_kwargs):
+                calls.append(isin)
+                return _Position(_rows("New Country"), _rows("New Sector"))
+
+            with patch("cli.curate.factory", side_effect=fake_factory):
+                self.assertEqual(run_curate(db), 0)
+
+            self.assertEqual(calls, ["IE00REG"])
+            cache = read_cache(db)
+            self.assertEqual(
+                cache["IE00REG"]["countries"], {"New Country": 1.0}
+            )
+            self.assertEqual(
+                cache["IE00CACHE"]["countries"], {"Old Country": 1.0}
+            )
+
     def test_user_filter_reads_user_positions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A", "IE00B", "IE00C"))
+            self._seed(db, "IE00A", "IE00B", "IE00C")
             write_positions(
                 db,
                 {
@@ -126,7 +154,7 @@ class TestCurateRun(unittest.TestCase):
     def test_unknown_user_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             with self.assertRaises(CurateError):
                 run_curate(db, user="nobody")
             self.assertEqual(_run_files(tmp), [])
@@ -134,7 +162,7 @@ class TestCurateRun(unittest.TestCase):
     def test_empty_portfolio_curates_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             write_positions(db, {}, user="alice")
             with patch("cli.curate.factory") as factory:
                 self.assertEqual(run_curate(db, user="alice"), 0)
@@ -143,7 +171,7 @@ class TestCurateRun(unittest.TestCase):
     def test_empty_countries_preserve_the_old_countries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             with patch(
                 "cli.curate.factory",
                 return_value=_Position([], _rows("New Sector")),
@@ -158,7 +186,7 @@ class TestCurateRun(unittest.TestCase):
     def test_empty_sectors_preserve_the_old_sectors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             with patch(
                 "cli.curate.factory",
                 return_value=_Position(_rows("New Country"), []),
@@ -173,7 +201,7 @@ class TestCurateRun(unittest.TestCase):
     def test_failure_preserves_old_splits_and_keeps_run_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             with patch(
                 "cli.curate.factory",
                 side_effect=RuntimeError("boom"),
@@ -195,7 +223,7 @@ class TestCurateRun(unittest.TestCase):
     def test_resume_skips_examined_and_retries_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A", "IE00B", "IE00C"))
+            self._seed(db, "IE00A", "IE00B", "IE00C")
             run_file = Path(tmp) / "resume.json"
             run_file.write_text(
                 json.dumps(
@@ -235,7 +263,7 @@ class TestCurateRun(unittest.TestCase):
     def test_resume_ignores_stale_examined_isins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             run_file = Path(tmp) / "resume.json"
             run_file.write_text(
                 json.dumps(
@@ -261,7 +289,7 @@ class TestCurateRun(unittest.TestCase):
     def test_resume_user_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             write_positions(db, {}, user="alice")
             run_file = Path(tmp) / "resume.json"
             run_file.write_text(
@@ -284,7 +312,7 @@ class TestCurateRun(unittest.TestCase):
     def test_resume_database_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
-            write_cache(db, self._cache("IE00A"))
+            self._seed(db, "IE00A")
             run_file = Path(tmp) / "resume.json"
             run_file.write_text(
                 json.dumps(
@@ -350,14 +378,14 @@ class TestCurateCommand(unittest.TestCase):
         self.assertEqual(exit_info.exception.code, 0)
         return run, run.call_args
 
-    def test_config_supplies_database_and_default_user(self) -> None:
+    def test_config_supplies_database_without_selecting_a_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini(Path(tmp))
             _, call = self._call(config=ini)
-            self.assertEqual(call.kwargs["user"], "alice")
+            self.assertIsNone(call.kwargs["user"])
             self.assertEqual(call.args[0], db_path(tmp))
 
-    def test_user_overrides_the_config_default(self) -> None:
+    def test_explicit_user_selects_the_portfolio(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini(Path(tmp))
             _, call = self._call(config=ini, user="bob")
@@ -370,13 +398,13 @@ class TestCurateCommand(unittest.TestCase):
             self.assertEqual(call.args[0], flag)
             self.assertIsNone(call.kwargs["user"])
 
-    def test_db_file_wins_while_config_still_sets_the_user(self) -> None:
+    def test_db_file_wins_and_config_user_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ini = self._ini(Path(tmp))
             flag = Path(tmp) / "flag.db"
             _, call = self._call(config=ini, db_file=flag)
             self.assertEqual(call.args[0], flag)
-            self.assertEqual(call.kwargs["user"], "alice")
+            self.assertIsNone(call.kwargs["user"])
 
     def test_config_log_level_configures_logging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

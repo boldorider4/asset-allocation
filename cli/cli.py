@@ -72,7 +72,7 @@ def cmd_update(args: argparse.Namespace) -> None:
 
 
 def cmd_curate(args: argparse.Namespace) -> None:
-    """Refresh country/sector splits for cached ISINs."""
+    """Refresh country/sector splits for registry ISINs."""
     from cli.curate import CurateError, run_curate
 
     ini_path = getattr(args, "config", None)
@@ -96,8 +96,6 @@ def cmd_curate(args: argparse.Namespace) -> None:
         sys.exit(1)
     _configure_logging_from_args(args, config=config, default="INFO")
     user = getattr(args, "user", None)
-    if user is None and config is not None:
-        user = config.user
     if user is not None:
         user = str(user).strip()
         if not user:
@@ -482,10 +480,11 @@ def main(argv: list[str] | None = None) -> None:
 
     curate = subparsers.add_parser(
         "curate",
-        help="Refresh country and sector splits for cached ISINs.",
+        help="Refresh country and sector splits for registry ISINs.",
         epilog=(
-            "Pass --db-file or --config. With --config, [update] user "
-            "selects the portfolio to curate unless --user overrides it."
+            "Pass --db-file or --config. --config only supplies the "
+            "database; pass --user NAME to curate one portfolio, otherwise "
+            "every registry ISIN is curated."
         ),
     )
     _add_config_flag(curate, default=argparse.SUPPRESS)
@@ -504,8 +503,8 @@ def main(argv: list[str] | None = None) -> None:
         type=str,
         default=None,
         help=(
-            "Only curate ISINs in this user's portfolio (default: from "
-            "--config [update] user; without --config, curate every ISIN)."
+            "Only curate registry ISINs in this user's portfolio "
+            "(default: curate every registry ISIN)."
         ),
     )
     curate.add_argument(
