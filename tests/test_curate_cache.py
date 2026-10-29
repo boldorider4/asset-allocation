@@ -220,6 +220,37 @@ class TestCurateRun(unittest.TestCase):
             self.assertEqual(payload["examined"], [])
             self.assertEqual(payload["last_isin"], "IE00A")
 
+    def test_invalid_cache_split_does_not_stop_curation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            self._seed(db, "IE00A", "IE00B")
+
+            def fake_factory(isin: str, **_kwargs):
+                if isin == "IE00A":
+                    return _Position(
+                        [{"name": "Invalid", "weight_pct": 200.0}],
+                        _rows("New Sector"),
+                    )
+                return _Position(_rows("New Country"), _rows("New Sector"))
+
+            with patch("cli.curate.factory", side_effect=fake_factory):
+                self.assertEqual(run_curate(db), 1)
+
+            cache = read_cache(db)
+            self.assertEqual(
+                cache["IE00A"]["countries"], {"Old Country": 1.0}
+            )
+            self.assertEqual(cache["IE00A"]["sectors"], {"Old Sector": 1.0})
+            self.assertEqual(
+                cache["IE00B"]["countries"], {"New Country": 1.0}
+            )
+            self.assertEqual(cache["IE00B"]["sectors"], {"New Sector": 1.0})
+            files = _run_files(tmp)
+            self.assertEqual(len(files), 1)
+            payload = json.loads(files[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["failed"], ["IE00A"])
+            self.assertEqual(payload["examined"], ["IE00B"])
+
     def test_resume_skips_examined_and_retries_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)

@@ -229,6 +229,15 @@ def run_curate(
                 position = factory(isin, ctx=ctx, write_cache=False)
                 countries = position.countries() or []
                 sectors = position.sectors() or []
+                if countries or sectors:
+                    save_position_in_cache(
+                        ctx,
+                        isin,
+                        countries=countries if countries else None,
+                        sectors=sectors if sectors else None,
+                        update_countries=bool(countries),
+                        update_sectors=bool(sectors),
+                    )
             except Exception as exc:
                 logger.warning("curate: %s failed: %s", isin, exc)
                 failed.add(isin)
@@ -241,15 +250,6 @@ def run_curate(
                     ),
                 )
                 continue
-            if countries or sectors:
-                save_position_in_cache(
-                    ctx,
-                    isin,
-                    countries=countries if countries else None,
-                    sectors=sectors if sectors else None,
-                    update_countries=bool(countries),
-                    update_sectors=bool(sectors),
-                )
             ctx.cache_repo.persist()
             ctx.flush_isin_registry()
             examined.add(isin)
