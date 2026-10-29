@@ -134,6 +134,20 @@ class TestNormalizeSplitRows(unittest.TestCase):
             100.0,
         )
 
+    def test_float_dust_above_one_stages_into_cache(self) -> None:
+        # The CH0016999846 failure shape: 99.99 normalizes to
+        # 100.00000000000001, which becomes 1.0000000000000002 as a
+        # fraction. The cache boundary must clamp and snap it to 1.
+        from storage.records import CacheEntry
+
+        rows = [{"name": "Switzerland", "weight_pct": 99.99}]
+        staged = normalize_split_rows(rows)
+        fractions = CacheEntry.rows_to_fractions(staged)
+        entry = CacheEntry("CH0016999846", {"countries": fractions})
+        parsed = entry.to_dict()["countries"]
+        self.assertEqual(parsed, {"Switzerland": 1.0})
+        self.assertEqual(sum(parsed.values()), 1.0)
+
     def test_filtered_rows_stage_into_cache(self) -> None:
         # End to end: scraped rows with a nonsensical negative slice must
         # survive the rows_to_fractions -> CacheEntry validation boundary.

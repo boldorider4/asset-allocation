@@ -52,6 +52,13 @@ __all__ = [
 #: Name a user's portfolio carries until they rename it.
 DEFAULT_PORTFOLIO_NAME = "Portfolio"
 
+# Split fractions are normalized at assembly, but float dust can land a
+# hair outside [0, 1] or leave a full split at 0.9999999999999999. Accept
+# that dust, clamp it, and snap complete splits (within 1pp) to exactly 1
+# so value-weighted portfolio merges do not accumulate drift.
+_SPLIT_WEIGHT_TOLERANCE = 1e-9
+_SPLIT_TOTAL_TOLERANCE = 0.01
+
 
 class DictRow(StorageObject):
     """Dict-backed row with an explicit key allow-list."""
@@ -151,9 +158,10 @@ class CacheEntry(DictRow):
 
     @staticmethod
     def _coerce_split(value: Any, *, field: str, key: str) -> dict[str, float]:
-        # Strict: split rows are normalized at assembly (see
-        # ``position.normalize_split_rows``), so anything outside [0, 1]
-        # here is a genuine error, not source rounding.
+        # Split rows are normalized at assembly (see
+        # ``position.normalize_split_rows``). Still tolerate tiny float
+        # dust at the boundary, then snap near-complete splits to 1 so
+        # value-weighted portfolio merges do not accumulate drift.
         if not isinstance(value, dict):
             raise TypeError(f"row {key!r} field {field!r} must be an object")
         out: dict[str, float] = {}
@@ -164,12 +172,24 @@ class CacheEntry(DictRow):
                 raise ValueError(
                     f"row {key!r} field {field!r} weight for {name!r} is not a number"
                 ) from exc
-            if not math.isfinite(w) or not 0.0 <= w <= 1.0:
+            if (
+                not math.isfinite(w)
+                or w < -_SPLIT_WEIGHT_TOLERANCE
+                or w > 1.0 + _SPLIT_WEIGHT_TOLERANCE
+            ):
                 raise ValueError(
                     f"row {key!r} field {field!r} weight for {name!r} "
                     f"must be a fraction in [0, 1], got {weight!r}"
                 )
-            out[str(name)] = w
+            out[str(name)] = min(1.0, max(0.0, w))
+        total = math.fsum(out.values())
+        if out and total > 0.0 and abs(total - 1.0) <= _SPLIT_TOTAL_TOLERANCE:
+            scaled = {name: weight / total for name, weight in out.items()}
+            residual = 1.0 - math.fsum(scaled.values())
+            if residual:
+                largest = max(scaled, key=scaled.get)
+                scaled[largest] += residual
+            out = scaled
         return out
 
     @classmethod

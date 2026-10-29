@@ -13,6 +13,7 @@ Run from repo root::
 from __future__ import annotations
 
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -85,11 +86,10 @@ class TestDictRow(unittest.TestCase):
         with self.assertRaises(TypeError):
             CacheEntry.from_dict("IE00X", ["not", "a", "dict"])
 
-    def test_out_of_range_weights_rejected(self) -> None:
-        # Strict: split rows are normalized at Position assembly (see
-        # ``position.normalize_split_rows``), so anything outside [0, 1]
-        # here is a genuine error — including near misses from source
-        # rounding, which must never reach the store unnormalized.
+    def test_out_of_range_weights_beyond_float_tolerance_rejected(self) -> None:
+        # Split rows are normalized at Position assembly (see
+        # ``position.normalize_split_rows``); only float dust is tolerated
+        # here. Real out-of-range values must still be rejected.
         with self.assertRaises(ValueError):
             CacheEntry(
                 "IE00BFNM3L97", {"countries": {"Japan": 1.0003000000000006}}
@@ -100,6 +100,35 @@ class TestDictRow(unittest.TestCase):
             CacheEntry("IE00X", {"countries": {"France": 1.5}})
         with self.assertRaises(ValueError):
             CacheEntry("IE00X", {"countries": {"France": -0.5}})
+
+    def test_float_dust_weights_are_clamped_and_rescaled(self) -> None:
+        entry = CacheEntry(
+            "CH0016999846",
+            {"countries": {"Switzerland": 1.0000000000000002}},
+        )
+        self.assertEqual(entry.countries, {"Switzerland": 1.0})
+
+        entry = CacheEntry(
+            "IE00X",
+            {
+                "countries": {
+                    "A": 0.3333333333333333,
+                    "B": 0.3333333333333333,
+                    "C": 0.3333333333333333,
+                }
+            },
+        )
+        self.assertEqual(math.fsum(entry.countries.values()), 1.0)  # type: ignore[union-attr]
+
+        entry = CacheEntry(
+            "IE00X",
+            {"sectors": {"Tech": 0.50015, "Finance": 0.50015}},
+        )
+        self.assertEqual(math.fsum(entry.sectors.values()), 1.0)  # type: ignore[union-attr]
+
+    def test_partial_splits_are_not_inflated_to_one(self) -> None:
+        entry = CacheEntry("IE00X", {"countries": {"France": 0.6}})
+        self.assertEqual(entry.countries, {"France": 0.6})
 
     def test_row_converters_and_parsed(self) -> None:
         self.assertEqual(
