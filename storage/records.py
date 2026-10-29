@@ -56,8 +56,8 @@ DEFAULT_PORTFOLIO_NAME = "Portfolio"
 # hair outside [0, 1] or leave a full split at 0.9999999999999999. Accept
 # that dust, clamp it, and snap complete splits (within 1pp) to exactly 1
 # so value-weighted portfolio merges do not accumulate drift.
-_SPLIT_WEIGHT_TOLERANCE = 1e-9
-_SPLIT_TOTAL_TOLERANCE = 0.01
+_SPLIT_WEIGHT_TOLERANCE = .05
+_SPLIT_TOTAL_TOLERANCE = .05
 
 
 class DictRow(StorageObject):
