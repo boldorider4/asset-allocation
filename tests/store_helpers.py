@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from cli.context import AppConfig, RuntimeContext, ServerConfig
-from storage.records import DEFAULT_PORTFOLIO_NAME
+from storage.records import DEFAULT_PORTFOLIO_NAME, IsinRecord
 from storage.repositories import (
     AssetRepository,
     CacheRepository,
@@ -173,12 +173,15 @@ def write_isin(
         if fields is None:
             repo.register_isin(str(isin))
             continue
-        repo.register_isin(
+        record = repo.register_isin(
             str(isin),
             issuer=fields.get("issuer"),
             bucket=fields.get("bucket"),
             product_ref=fields.get("product_ref"),
         )
+        if "visits" in fields:
+            record.merge({IsinRecord.VISITS: int(fields["visits"])})
+            repo.backend.put(record)
     repo.persist()
     repo.close()
 

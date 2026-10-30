@@ -18,6 +18,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from position.factory import _IssuerProbe  # noqa: E402
 from scripts.list_justetf_isins import list_justetf_isins  # noqa: E402
+from scripts.rescan_isin_asset_classes import (  # noqa: E402
+    main as asset_classes_main,
+    rescan_asset_classes,
+)
 from scripts.rescan_isin_issuers import (  # noqa: E402
     _normalize_isins,
     main as rescan_main,
@@ -57,6 +61,182 @@ class TestListJustetfIsins(unittest.TestCase):
                 conn.close()
             with self.assertRaises(ValueError):
                 list_justetf_isins(db)
+
+
+class TestRescanAssetClasses(unittest.TestCase):
+    def test_updates_every_supported_bucket_and_preserves_other_fields(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {
+                    "IE00EQ": {
+                        "issuer": "justetf",
+                        "bucket": "bond_portfolio",
+                        "product_ref": "eq-ref",
+                        "visits": 4,
+                    },
+                    "IE00BOND": {
+                        "issuer": "dws",
+                        "bucket": "equity_portfolio",
+                    },
+                    "IE00COMM": {
+                        "issuer": "justetf",
+                        "bucket": "equity_portfolio",
+                    },
+                    "IE00CASH": {
+                        "issuer": "justetf",
+                        "bucket": "bond_portfolio",
+                    },
+                    "IE00FIX": {
+                        "issuer": "justetf",
+                        "bucket": "bond_portfolio",
+                    },
+                },
+            )
+            buckets = {
+                "IE00EQ": "equity_portfolio",
+                "IE00BOND": "bond_portfolio",
+                "IE00COMM": "commodity_portfolio",
+                "IE00CASH": "cash_portfolio",
+                "IE00FIX": "fixed_maturity_bond_portfolio",
+            }
+            messages: list[str] = []
+            counts = rescan_asset_classes(
+                db,
+                fetch_asset_class=buckets.__getitem__,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (5, 0, 0, 0))
+            rows = read_isin(db)
+            for isin, bucket in buckets.items():
+                with self.subTest(isin=isin):
+                    self.assertEqual(rows[isin]["bucket"], bucket)
+            self.assertEqual(rows["IE00EQ"]["issuer"], "justetf")
+            self.assertEqual(rows["IE00EQ"]["product_ref"], "eq-ref")
+            self.assertEqual(rows["IE00EQ"]["visits"], 4)
+            self.assertEqual(rows["IE00BOND"]["issuer"], "dws")
+
+    def test_unchanged_bucket_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {"IE00SAME": {"issuer": "justetf", "bucket": "equity_portfolio"}},
+            )
+            messages: list[str] = []
+            counts = rescan_asset_classes(
+                db,
+                fetch_asset_class=lambda _isin: "equity_portfolio",
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (0, 1, 0, 0))
+            self.assertEqual(
+                read_isin(db)["IE00SAME"]["bucket"], "equity_portfolio"
+            )
+            self.assertIn("unchanged (equity_portfolio)", messages[0])
+
+    def test_unresolved_focus_keeps_existing_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {"IE00UNK": {"issuer": "justetf", "bucket": "bond_portfolio"}},
+            )
+            messages: list[str] = []
+            counts = rescan_asset_classes(
+                db,
+                fetch_asset_class=lambda _isin: None,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (0, 0, 1, 0))
+            self.assertEqual(
+                read_isin(db)["IE00UNK"]["bucket"], "bond_portfolio"
+            )
+            self.assertIn("unresolved (no asset class); kept bond_portfolio", messages[0])
+
+    def test_dry_run_reports_without_persisting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {"IE00DRY": {"issuer": "justetf", "bucket": "bond_portfolio"}},
+            )
+            messages: list[str] = []
+            counts = rescan_asset_classes(
+                db,
+                fetch_asset_class=lambda _isin: "equity_portfolio",
+                dry_run=True,
+                emit=messages.append,
+            )
+            self.assertEqual(counts, (1, 0, 0, 0))
+            self.assertEqual(
+                read_isin(db)["IE00DRY"]["bucket"], "bond_portfolio"
+            )
+            self.assertIn(
+                "would update bond_portfolio -> equity_portfolio", messages[0]
+            )
+
+    def test_one_error_does_not_stop_the_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {
+                    "IE00BOOM": {"issuer": "justetf", "bucket": "bond_portfolio"},
+                    "IE00GOOD": {"issuer": "justetf", "bucket": "bond_portfolio"},
+                },
+            )
+
+            def fetch(isin: str) -> str | None:
+                if isin == "IE00BOOM":
+                    raise RuntimeError("boom")
+                return "equity_portfolio"
+
+            messages: list[str] = []
+            counts = rescan_asset_classes(
+                db, fetch_asset_class=fetch, emit=messages.append
+            )
+            self.assertEqual(counts, (1, 0, 0, 1))
+            rows = read_isin(db)
+            self.assertEqual(rows["IE00BOOM"]["bucket"], "bond_portfolio")
+            self.assertEqual(rows["IE00GOOD"]["bucket"], "equity_portfolio")
+            self.assertIn("error: boom", messages[0])
+
+    def test_missing_database_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                rescan_asset_classes(db_path(tmp))
+
+    def test_missing_registry_table_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            conn = sqlite3.connect(db)
+            try:
+                conn.execute("CREATE TABLE other (key TEXT PRIMARY KEY)")
+                conn.commit()
+            finally:
+                conn.close()
+            with self.assertRaises(ValueError):
+                rescan_asset_classes(db)
+
+    def test_main_passes_db_file_and_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            with (
+                patch(
+                    "scripts.rescan_isin_asset_classes.rescan_asset_classes",
+                    return_value=(0, 0, 0, 0),
+                ) as rescan,
+                redirect_stderr(io.StringIO()),
+            ):
+                code = asset_classes_main(
+                    ["--db-file", str(db), "--dry-run"]
+                )
+            self.assertEqual(code, 0)
+            rescan.assert_called_once_with(db, dry_run=True)
 
 
 class TestRescanIsins(unittest.TestCase):

@@ -13,6 +13,13 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+from cli.common import (
+    BOND_PORTFOLIO,
+    CASH_PORTFOLIO,
+    COMMODITY_PORTFOLIO,
+    EQUITY_PORTFOLIO,
+    FIXED_MATURITY_BOND_PORTFOLIO,
+)
 from position.position import Position, fold_unknown_sector_label
 from cli.logger import attach_color_stderr_handler_for_module
 
@@ -26,6 +33,11 @@ attach_color_stderr_handler_for_module(logger)
 _EXISTS_TIMEOUT_S = 10
 _PROFILE_TIMEOUT_S = 30
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_INVESTMENT_FOCUS_RE = re.compile(
+    r'data-testid="tl_etf-basics_value_investment-focus"[^>]*>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _chart_request(isin: str, currency: str) -> urllib.request.Request:
@@ -130,6 +142,66 @@ def just_etf_name(isin: str) -> str | None:
         logger.warning("JustETF name lookup failed for %s (%s)", cleaned, e)
         return None
     return _parse_etf_name(seed_html, cleaned)
+
+
+def _parse_investment_focus(html: str) -> str | None:
+    """Parse JustETF's ``Investment focus`` profile value."""
+    match = _INVESTMENT_FOCUS_RE.search(html or "")
+    if match is None:
+        return None
+    focus = _TAG_RE.sub(" ", match.group(1))
+    focus = html_lib.unescape(focus)
+    focus = re.sub(r"\s+", " ", focus).strip()
+    return focus or None
+
+
+def _asset_class_from_focus(focus: str) -> str | None:
+    """Map an ``Investment focus`` string to a registry portfolio bucket."""
+    cleaned = re.sub(r"\s+", " ", (focus or "").strip())
+    if not cleaned:
+        return None
+    base = cleaned.split(",", 1)[0].strip().casefold()
+    if base in {"equity", "equities"}:
+        return EQUITY_PORTFOLIO
+    if base in {"bond", "bonds"}:
+        if re.search(r"\bmaturity\b", cleaned, re.IGNORECASE):
+            return FIXED_MATURITY_BOND_PORTFOLIO
+        return BOND_PORTFOLIO
+    if base == "precious metals":
+        return COMMODITY_PORTFOLIO
+    if base in {"commodity", "commodities"}:
+        return COMMODITY_PORTFOLIO
+    if base == "money market":
+        return CASH_PORTFOLIO
+    return None
+
+
+def just_etf_asset_class(isin: str) -> str | None:
+    """Return the portfolio bucket implied by JustETF's Investment focus.
+
+    Fail-closed like :func:`just_etf_name`: HTTP failures, network errors,
+    and profiles without a recognized focus all return ``None`` so the
+    caller can leave the existing registry bucket untouched.
+    """
+    cleaned = (isin or "").strip().upper()
+    if not cleaned:
+        return None
+    try:
+        seed_html, _, _ = _fetch_profile_page(
+            cleaned, JustETFPosition._COUNTRY_PROFILE_FRAGMENT
+        )
+    except urllib.error.HTTPError as e:
+        logger.info(
+            "JustETF asset-class lookup for %s: HTTP %s", cleaned, e.code
+        )
+        return None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        logger.warning(
+            "JustETF asset-class lookup failed for %s (%s)", cleaned, e
+        )
+        return None
+    focus = _parse_investment_focus(seed_html)
+    return _asset_class_from_focus(focus or "")
 
 
 class JustETFPosition(Position):

@@ -527,6 +527,33 @@ class TestIsinRegistryComposition(unittest.TestCase):
         with self.assertRaises(ValueError):
             registry.set_issuer_for_isin("IE00NEWX03", "nope")
 
+    def test_set_bucket_creates_and_overwrites_without_touching_other_fields(
+        self,
+    ) -> None:
+        registry = _empty_registry()
+        created = registry.set_bucket_for_isin("IE00NEWX04", "bond_portfolio")
+        self.assertEqual(created.bucket, "bond_portfolio")
+        self.assertIsNone(created.issuer)
+
+        registry.backend.put(
+            IsinRecord(
+                "IE00NEWX04",
+                {
+                    "issuer": "dws",
+                    "bucket": "bond_portfolio",
+                    "product_ref": "dws-ref",
+                    "visits": 3,
+                },
+            )
+        )
+        updated = registry.set_bucket_for_isin(
+            "IE00NEWX04", "fixed_maturity_bond_portfolio"
+        )
+        self.assertEqual(updated.bucket, "fixed_maturity_bond_portfolio")
+        self.assertEqual(updated.issuer, "dws")
+        self.assertEqual(updated.product_ref, "dws-ref")
+        self.assertEqual(updated.visits, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

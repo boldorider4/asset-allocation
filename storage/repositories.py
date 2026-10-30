@@ -858,6 +858,23 @@ class IsinRegistry:
             self._backend.put(existing)
         return existing
 
+    def set_bucket_for_isin(self, isin: str, bucket: str) -> IsinRecord:
+        """Overwrite the portfolio bucket for ``isin``.
+
+        Maintenance corrections only; the issuer, product ref, and visits
+        counter are preserved.
+        """
+        key = str(isin)
+        existing = self._backend.get(key)
+        if existing is None:
+            record = IsinRecord(key, {"bucket": bucket})
+            self._backend.put(record)
+            return record
+        if existing.bucket != bucket:
+            existing.merge({IsinRecord.BUCKET: bucket})
+            self._backend.put(existing)
+        return existing
+
     # -- backend-neutral lifecycle (delegated, works on every backend) --
     def open(self) -> IsinRegistry:
         """Open the underlying ISIN backend (read-only use)."""
