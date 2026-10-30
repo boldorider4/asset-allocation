@@ -183,6 +183,58 @@ def _load_run_file(
     return examined, failed, last_isin
 
 
+def _save_curated_splits(
+    ctx: RuntimeContext,
+    isin: str,
+    countries: list[dict[str, Any]],
+    sectors: list[dict[str, Any]],
+) -> None:
+    """Stage curated splits, skipping any split the cache rejects.
+
+    ``CacheEntry`` validates weights strictly. A single bad source split
+    must not fail the whole ISIN (or the run): keep the other split, and
+    when both are bad leave the previous cache row untouched.
+    """
+    if not countries and not sectors:
+        return
+    try:
+        save_position_in_cache(
+            ctx,
+            isin,
+            countries=countries if countries else None,
+            sectors=sectors if sectors else None,
+            update_countries=bool(countries),
+            update_sectors=bool(sectors),
+        )
+        return
+    except ValueError as exc:
+        logger.warning(
+            "curate: %s has an invalid split weight (%s); retrying splits separately",
+            isin,
+            exc,
+        )
+
+    saved = False
+    if countries:
+        try:
+            save_position_in_cache(
+                ctx, isin, countries=countries, update_countries=True
+            )
+            saved = True
+        except ValueError as exc:
+            logger.warning("curate: %s countries skipped: %s", isin, exc)
+    if sectors:
+        try:
+            save_position_in_cache(
+                ctx, isin, sectors=sectors, update_sectors=True
+            )
+            saved = True
+        except ValueError as exc:
+            logger.warning("curate: %s sectors skipped: %s", isin, exc)
+    if not saved:
+        logger.warning("curate: %s kept its previous cache splits", isin)
+
+
 def _prepare_run_file(
     db_file: Path,
     selected: list[str],
@@ -229,15 +281,7 @@ def run_curate(
                 position = factory(isin, ctx=ctx, write_cache=False)
                 countries = position.countries() or []
                 sectors = position.sectors() or []
-                if countries or sectors:
-                    save_position_in_cache(
-                        ctx,
-                        isin,
-                        countries=countries if countries else None,
-                        sectors=sectors if sectors else None,
-                        update_countries=bool(countries),
-                        update_sectors=bool(sectors),
-                    )
+                _save_curated_splits(ctx, isin, countries, sectors)
             except Exception as exc:
                 logger.warning("curate: %s failed: %s", isin, exc)
                 failed.add(isin)

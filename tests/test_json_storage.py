@@ -86,16 +86,16 @@ class TestDictRow(unittest.TestCase):
         with self.assertRaises(TypeError):
             CacheEntry.from_dict("IE00X", ["not", "a", "dict"])
 
-    def test_out_of_range_weights_beyond_float_tolerance_rejected(self) -> None:
+    def test_out_of_range_weights_beyond_tolerance_rejected(self) -> None:
         # Split rows are normalized at Position assembly (see
-        # ``position.normalize_split_rows``); only float dust is tolerated
-        # here. Real out-of-range values must still be rejected.
+        # ``position.normalize_split_rows``); the cache tolerates a 5%
+        # band, but real out-of-range values must still be rejected.
         with self.assertRaises(ValueError):
             CacheEntry(
-                "IE00BFNM3L97", {"countries": {"Japan": 1.0003000000000006}}
+                "IE00BFNM3L97", {"countries": {"Japan": 1.06}}
             )
         with self.assertRaises(ValueError):
-            CacheEntry("IE00X", {"sectors": {"Tech": -0.0002}})
+            CacheEntry("IE00X", {"sectors": {"Tech": -0.06}})
         with self.assertRaises(ValueError):
             CacheEntry("IE00X", {"countries": {"France": 1.5}})
         with self.assertRaises(ValueError):
