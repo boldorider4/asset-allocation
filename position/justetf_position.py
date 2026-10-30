@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
+import html as html_lib
 import http.cookiejar
 import logging
 import json
@@ -23,6 +24,8 @@ attach_color_stderr_handler_for_module(logger)
 
 #: Timeout for the lightweight product-existence probe (UI-gated: fast fail).
 _EXISTS_TIMEOUT_S = 10
+_PROFILE_TIMEOUT_S = 30
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def _chart_request(isin: str, currency: str) -> urllib.request.Request:
@@ -60,6 +63,73 @@ def just_etf_product_url_exists(isin: str) -> bool:
             return True
         logger.info("JustETF product check for %s: unexpected payload", cleaned)
     return False
+
+
+def _fetch_profile_page(
+    isin: str, profile_fragment: str
+) -> tuple[str, str, urllib.request.OpenerDirector]:
+    """GET a JustETF profile page and its cookie-seeded opener."""
+    seed_query = urllib.parse.urlencode({"isin": isin})
+    seed_base = f"{JustETFPosition._COUNTRY_PAGE_URL}?{seed_query}"
+    seed_url = f"{seed_base}#{profile_fragment}"
+
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    seed_headers = {
+        **JustETFPosition._HEADERS,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    }
+    logger.info("JustETF: fetching seed HTML from %s", seed_url)
+    req_seed = urllib.request.Request(seed_url, headers=seed_headers, method="GET")
+    with opener.open(req_seed, timeout=_PROFILE_TIMEOUT_S) as resp:
+        seed_html = resp.read().decode("utf-8", errors="replace")
+    return seed_html, seed_base, opener
+
+
+def _parse_etf_name(html: str, isin: str) -> str | None:
+    """Parse the ETF name from a JustETF profile page title.
+
+    Profile titles look like ``"ETF Name | WKN | ISIN"`` (or
+    ``"ETF Name | ISIN"``). Requiring the ISIN in the title avoids treating
+    generic error/search pages as products.
+    """
+    cleaned = (isin or "").strip().upper()
+    if not cleaned:
+        return None
+    match = _TITLE_RE.search(html or "")
+    if match is None:
+        return None
+    title = html_lib.unescape(match.group(1)).strip()
+    if cleaned not in title.upper():
+        return None
+    parts = [part.strip() for part in title.split("|")]
+    if len(parts) < 2:
+        return None
+    name = re.sub(r"\s+", " ", parts[0]).strip()
+    return name or None
+
+
+def just_etf_name(isin: str) -> str | None:
+    """Return the JustETF product name for ``isin``, or ``None``.
+
+    Fail-closed: 403s, network errors, and pages without a recognizable
+    product title all return ``None`` so callers can fall back to a
+    user-supplied name.
+    """
+    cleaned = (isin or "").strip().upper()
+    if not cleaned:
+        return None
+    try:
+        seed_html, _, _ = _fetch_profile_page(
+            cleaned, JustETFPosition._COUNTRY_PROFILE_FRAGMENT
+        )
+    except urllib.error.HTTPError as e:
+        logger.info("JustETF name lookup for %s: HTTP %s", cleaned, e.code)
+        return None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        logger.warning("JustETF name lookup failed for %s (%s)", cleaned, e)
+        return None
+    return _parse_etf_name(seed_html, cleaned)
 
 
 class JustETFPosition(Position):
@@ -177,6 +247,9 @@ class JustETFPosition(Position):
         ctx: RuntimeContext | None = None,
     ) -> None:
         self._chart: dict | None = None
+        self._seed_page: (
+            tuple[str, str, urllib.request.OpenerDirector] | None
+        ) = None
         super().__init__(
             isin,
             name=name,
@@ -218,22 +291,14 @@ class JustETFPosition(Position):
 
         Any ``#fragment`` is never sent on the wire; it only matches the
         site's in-page anchor. Returns ``(seed_html, seed_base, opener)``.
+        The profile page is cached per instance: countries and sectors
+        share one GET (and its cookie-seeded opener).
         """
-        seed_query = urllib.parse.urlencode({"isin": self._isin})
-        seed_base = f"{self._COUNTRY_PAGE_URL}?{seed_query}"
-        seed_url = f"{seed_base}#{profile_fragment}"
-
-        cj = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-        seed_headers = {
-            **self._HEADERS,
-            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-        }
-        logger.info("JustETF: fetching seed HTML from %s", seed_url)
-        req_seed = urllib.request.Request(seed_url, headers=seed_headers, method="GET")
-        with opener.open(req_seed, timeout=30) as resp:
-            seed_html = resp.read().decode("utf-8", errors="replace")
-        return seed_html, seed_base, opener
+        if self._seed_page is None:
+            self._seed_page = _fetch_profile_page(
+                self._isin, profile_fragment
+            )
+        return self._seed_page
 
     def _holdings_wicket_fragment(
         self,

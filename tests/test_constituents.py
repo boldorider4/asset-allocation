@@ -1278,9 +1278,20 @@ class TestRenderConstituentsPage(unittest.TestCase):
         self.assertIn("Add failed: ", js)
         # Draft value/price cells show the Euro unit like finalized rows.
         self.assertIn("unitSpan", js)
+        # A recognized ISIN fills a blank name and any cached price, while
+        # stale responses for an edited ISIN are ignored.
+        self.assertIn("function setDraftPrice", js)
+        self.assertIn("draft-price-cell", js)
+        self.assertIn("data.name", js)
+        self.assertIn("data.price", js)
+        self.assertIn("isinInput.value.trim().toUpperCase()", js)
         # Draft fields are editable from the start (shares still gated
-        # on the ISIN check); OK enables only for persistable drafts.
+        # on the ISIN check); OK enables for a name or an ISIN, and a
+        # blank name is allowed when an ISIN can resolve it server-side.
         self.assertIn("refreshOkState", js)
+        self.assertIn("hasIsin", js)
+        self.assertIn("Enter a name or an ISIN", js)
+        self.assertIn("isin || null", js)
         self.assertIn('setAttribute("disabled"', js)
         self.assertIn('removeAttribute("disabled")', js)
         css = (
@@ -2529,6 +2540,102 @@ class TestConstituentsRoute(_RouteCase):
         registry = read_isin(self.db)
         self.assertEqual(registry["DE0001234567"]["bucket"], "bond_portfolio")
 
+    def test_post_add_resolves_blank_name_from_isin(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "position.justetf_position.just_etf_name",
+            return_value="Resolved Fund",
+        ), patch(
+            "visual.web.backend.serve.fetch_price_for_isin",
+            return_value=None,
+        ) as fetch:
+            status, body = self._post_add(
+                {
+                    "bucket": "equity_portfolio",
+                    "name": "",
+                    "isin": "DE0001234567",
+                    "value": 100,
+                    "broker": "scalable",
+                }
+            )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertIn("Resolved Fund", payload["row"])
+        data = _positions(self.db, "default")
+        self.assertEqual(data["equity_portfolio"][2]["name"], "Resolved Fund")
+        fetch.assert_called_once_with(str(self.db), "DE0001234567", "default")
+
+    def test_post_add_uses_cached_price_without_fetching(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "visual.web.backend.serve.fetch_price_for_isin"
+        ) as fetch:
+            status, body = self._post_add(
+                {
+                    "bucket": "equity_portfolio",
+                    "name": "Cached Fund",
+                    "isin": "IE000BI8OT95",
+                    "value": 100,
+                    "broker": "scalable",
+                }
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("81.25", json.loads(body)["row"])
+        fetch.assert_not_called()
+
+    def test_post_add_fetches_missing_price_after_registration(self) -> None:
+        from unittest.mock import patch
+
+        def fake_fetch(db_file, isin, user):
+            self.assertEqual(
+                read_isin(self.db)[isin]["bucket"], "bond_portfolio"
+            )
+            return 42.0
+
+        with patch(
+            "visual.web.backend.serve.fetch_price_for_isin",
+            side_effect=fake_fetch,
+        ) as fetch:
+            status, body = self._post_add(
+                {
+                    "bucket": "bond_portfolio",
+                    "name": "New Bond",
+                    "isin": "DE0001234567",
+                    "value": 100,
+                    "broker": "scalable",
+                }
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("42.00", json.loads(body)["row"])
+        fetch.assert_called_once_with(
+            str(self.db), "DE0001234567", "default"
+        )
+
+    def test_post_add_blank_unresolved_name_is_rejected(self) -> None:
+        from unittest.mock import patch
+
+        before = read_positions(self.db)
+        with patch(
+            "position.justetf_position.just_etf_name",
+            return_value=None,
+        ), patch(
+            "visual.web.backend.serve.fetch_price_for_isin"
+        ) as fetch:
+            status, _ = self._post_add(
+                {
+                    "bucket": "equity_portfolio",
+                    "name": "",
+                    "isin": "DE0001234567",
+                    "value": 100,
+                    "broker": "scalable",
+                }
+            )
+        self.assertEqual(status, 400)
+        self.assertEqual(read_positions(self.db), before)
+        fetch.assert_not_called()
+
     def test_post_add_rejects_junk_and_leaves_file_untouched(self) -> None:
         before = read_positions(self.db)
         for payload in [
@@ -2563,23 +2670,35 @@ class TestConstituentsRoute(_RouteCase):
         for entry in brokers:
             self.assertTrue("icons/" in entry["mark"] or "<svg" in entry["mark"])
 
-    def test_post_check_isin_reports_probe(self) -> None:
+    def test_post_check_isin_reports_name_price_and_existence(self) -> None:
         from unittest.mock import patch
 
         with patch(
-            "position.justetf_position.just_etf_product_url_exists",
-            return_value=True,
+            "position.justetf_position.just_etf_name",
+            return_value="Amundi Core MSCI World UCITS ETF Acc",
         ):
             status, body = self._post_check_isin({"isin": "IE000BI8OT95"})
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), {"exists": True})
+        self.assertEqual(
+            json.loads(body),
+            {
+                "exists": True,
+                "name": "Amundi Core MSCI World UCITS ETF Acc",
+                "price": 81.25,
+            },
+        )
         with patch(
+            "position.justetf_position.just_etf_name",
+            return_value=None,
+        ), patch(
             "position.justetf_position.just_etf_product_url_exists",
             return_value=False,
         ):
             status, body = self._post_check_isin({"isin": "XX0000000000"})
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), {"exists": False})
+        self.assertEqual(
+            json.loads(body), {"exists": False, "name": None, "price": None}
+        )
 
     def test_post_check_isin_rejects_blank(self) -> None:
         for payload in [{"isin": "   "}, {"isin": 123}, {}]:
@@ -3326,17 +3445,22 @@ class TestDatabaseBackendRoute(unittest.TestCase):
 
     def test_add_registers_the_bucket_in_the_database(self) -> None:
         import sqlite3
+        from unittest.mock import patch
 
-        status, body = self._post_json(
-            "/api/constituents/add",
-            {
-                "bucket": "bond_portfolio",
-                "name": "New Bond",
-                "isin": "DE0001234567",
-                "value": 100,
-                "broker": "scalable",
-            },
-        )
+        with patch(
+            "visual.web.backend.serve.fetch_price_for_isin",
+            return_value=None,
+        ):
+            status, body = self._post_json(
+                "/api/constituents/add",
+                {
+                    "bucket": "bond_portfolio",
+                    "name": "New Bond",
+                    "isin": "DE0001234567",
+                    "value": 100,
+                    "broker": "scalable",
+                },
+            )
         self.assertEqual(status, 200, body)
         self.assertTrue(json.loads(body)["needs_full_update"])
         with sqlite3.connect(self.db) as conn:

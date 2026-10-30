@@ -17,10 +17,11 @@
  *
  * New rows start as a draft behind each section's + button: broker
  * (dropdown, anytime before OK), name/group/ISIN/value editable from
- * the start, a JustETF ISIN check unlocking shares, and OK to persist
- * (server-rendered row swaps in). OK stays disabled until broker, name,
- * and value-or-ISIN-plus-shares are set. Discard via the draft trash
- * button or Escape.
+ * the start, a JustETF ISIN check that auto-fills the name and cached
+ * price and unlocks shares, and OK to persist (server-rendered row
+ * swaps in). OK stays disabled until broker and value-or-ISIN-plus-
+ * shares are set; a blank name is resolved server-side from the ISIN.
+ * Discard via the draft trash button or Escape.
  *
  * The incognito button blurs Value/Shares figures via a body.incognito
  * CSS class (price, names, and ISINs stay sharp). Instant toggle with
@@ -300,6 +301,26 @@
     return cell;
   }
 
+  function setDraftPrice(row, price) {
+    if (price === null || price === undefined) {
+      return;
+    }
+    const text = formatFigure(price);
+    if (!text) {
+      return;
+    }
+    const cell = row.querySelector(".draft-price-cell");
+    if (!cell) {
+      return;
+    }
+    cell.innerHTML = "";
+    const box = document.createElement("span");
+    box.className = "cell-box locked";
+    box.textContent = text;
+    cell.appendChild(box);
+    cell.appendChild(unitSpan());
+  }
+
   function focusDraft(row) {
     const first = row.querySelector("input:not([disabled]), select");
     if (first) {
@@ -307,21 +328,23 @@
     }
   }
 
-  /* OK is clickable only for a persistable draft: broker chosen, name
-   * given, and either a value or an ISIN-plus-shares pair. Backend
-   * validation in confirmDraft stays as the backstop.
+  /* OK is clickable only for a persistable draft: broker chosen, a name
+   * or ISIN, and either a value or an ISIN-plus-shares pair. Backend
+   * validation in confirmDraft stays as the backstop; a blank name is
+   * resolved from the ISIN there.
    */
   function refreshOkState(row) {
     const ok = row.querySelector("button.ok");
     if (!ok || ok.dataset.busy === "1") {
       return;
     }
+    const hasIsin = draftText(row, "draft-isin").trim() !== "";
+    const hasName = draftText(row, "draft-name").trim() !== "";
     const ready =
       (row.dataset.broker || "") !== "" &&
-      draftText(row, "draft-name").trim() !== "" &&
+      (hasName || hasIsin) &&
       (draftText(row, "draft-value").trim() !== "" ||
-        (draftText(row, "draft-isin").trim() !== "" &&
-          draftText(row, "draft-shares").trim() !== ""));
+        (hasIsin && draftText(row, "draft-shares").trim() !== ""));
     if (ready) {
       ok.removeAttribute("disabled");
     } else {
@@ -376,6 +399,7 @@
     sharesCell.className = "draft-shares-cell";
     row.appendChild(sharesCell);
     const priceCell = draftCell(draftDash());
+    priceCell.className = "draft-price-cell";
     priceCell.appendChild(unitSpan());
     row.appendChild(priceCell);
 
@@ -455,7 +479,7 @@
       return;
     }
     isinInput.dataset.busy = "1";
-    let exists = false;
+    let data = null;
     try {
       const response = await fetch(urlWithParams("/api/constituents/check-isin"), {
         method: "POST",
@@ -465,7 +489,7 @@
       if (!response.ok) {
         throw new Error(await response.text());
       }
-      exists = !!(await response.json()).exists;
+      data = await response.json();
     } catch (err) {
       setStatus("ISIN check failed: " + (err && err.message ? err.message : err));
       isinInput.dataset.busy = "";
@@ -474,12 +498,27 @@
       return;
     }
     isinInput.dataset.busy = "";
-    if (!exists) {
+    if (isinInput.value.trim().toUpperCase() !== isin.toUpperCase()) {
+      refreshOkState(row);
+      return;
+    }
+    if (!data || !data.exists) {
       flash(isinInput, "stale-flash");
       refreshOkState(row);
       return;
     }
     row.dataset.isinOk = "1";
+    const nameInput = row.querySelector(".draft-name");
+    if (
+      nameInput &&
+      !nameInput.value.trim() &&
+      typeof data.name === "string" &&
+      data.name.trim()
+    ) {
+      nameInput.value = data.name.trim();
+      flash(nameInput, "saved-flash");
+    }
+    setDraftPrice(row, data.price);
     const cell = row.querySelector(".draft-shares-cell");
     if (cell && !cell.querySelector("input")) {
       cell.innerHTML = "";
@@ -523,8 +562,9 @@
       return;
     }
     const name = draftText(row, "draft-name");
-    if (!name.trim()) {
-      setStatus("Name must not be empty");
+    const isin = draftText(row, "draft-isin").trim();
+    if (!name.trim() && !isin) {
+      setStatus("Enter a name or an ISIN");
       const input = row.querySelector(".draft-name");
       if (input) {
         input.focus();
@@ -551,7 +591,7 @@
           bucket: bucket,
           name: name,
           short_name: draftText(row, "draft-group"),
-          isin: draftText(row, "draft-isin") || null,
+          isin: isin || null,
           value: value.value,
           shares: shares.value,
           broker: broker,

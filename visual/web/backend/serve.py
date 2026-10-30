@@ -29,6 +29,7 @@ from .constituents import (
     load_constituents,
     render_constituents_page,
 )
+from .isin_lookup import fetch_price_for_isin, lookup_isin
 from .session import (
     Session,
     clear_cookie_header,
@@ -1098,8 +1099,6 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def _check_isin(self) -> bool:
         """Handle ``POST /api/constituents/check-isin`` via JustETF."""
-        from position.justetf_position import just_etf_product_url_exists
-
         if urlsplit(self.path).path != "/api/constituents/check-isin":
             return False
         payload = self._read_json_body()
@@ -1110,12 +1109,21 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self._plain_status(400, "isin must be a non-blank string")
             return True
         try:
-            exists = just_etf_product_url_exists(raw.strip())
+            result = lookup_isin(
+                str(self._db_file) if self._db_file else "",
+                raw.strip(),
+            )
         except Exception as exc:
             logger.warning("constituents isin check failed: %s", exc)
             self._plain_status(502, f"ISIN check unavailable: {exc}")
             return True
-        body = json.dumps({"exists": bool(exists)}).encode("utf-8")
+        body = json.dumps(
+            {
+                "exists": bool(result.exists),
+                "name": result.name,
+                "price": result.price,
+            }
+        ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1142,13 +1150,36 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             if not self._store_configured():
                 raise RuntimeError("assets or isin store not configured")
             cache = self._cache_map()
+            posted_name = payload.get("name")
+            posted_isin = payload.get("isin")
+            clean_isin = (
+                posted_isin.strip() if isinstance(posted_isin, str) else ""
+            )
+            if (
+                (not isinstance(posted_name, str) or not posted_name.strip())
+                and len(clean_isin) == 12
+                and clean_isin.isalnum()
+            ):
+                from position.justetf_position import just_etf_name
+
+                try:
+                    resolved_name = just_etf_name(clean_isin)
+                except Exception as exc:
+                    logger.warning(
+                        "constituents name lookup failed for %s: %s",
+                        clean_isin,
+                        exc,
+                    )
+                    resolved_name = None
+                if resolved_name:
+                    posted_name = resolved_name
             registry = IsinRegistry(isin_backend(self._db_file))
             display = add_constituent(
                 self._db_file,
                 payload.get("bucket"),
-                name=payload.get("name"),
+                name=posted_name,
                 short_name=payload.get("short_name"),
-                isin=payload.get("isin"),
+                isin=posted_isin,
                 value=payload.get("value"),
                 shares=payload.get("shares"),
                 broker=payload.get("broker"),
@@ -1166,6 +1197,14 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             logger.warning("constituents add failed: %s", exc)
             self._plain_status(502, f"constituents unavailable: {exc}")
             return True
+        if display.get("isin") and display.get("price") is None:
+            price = fetch_price_for_isin(
+                str(self._db_file) if self._db_file else "",
+                display["isin"],
+                session.user,
+            )
+            if price is not None:
+                display["price"] = price
         body = json.dumps(
             {
                 "index": display["index"],
