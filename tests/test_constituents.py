@@ -1701,8 +1701,59 @@ class TestAddConstituent(unittest.TestCase):
             self.assertEqual(stored["name"], "New Fund")
             self.assertEqual(stored["ISIN"], "IE000BI8OT95")
             self.assertEqual(stored["shares"], 7.0)
+            self.assertEqual(stored["value"], 100.5)
             # Other buckets are untouched.
             self.assertEqual(len(data["cash_portfolio"]), 2)
+
+    def test_cached_price_computes_value_from_shares(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="Shares Only",
+                isin="DE0001234567",
+                shares="5",
+                broker="scalable",
+                cache={"DE0001234567": {"price": 10.0}},
+            )
+            self.assertEqual(display["value"], 50.0)
+            self.assertEqual(display["shares"], 5.0)
+            stored = _positions(db_file, "default")["equity_portfolio"][0]
+            self.assertEqual(stored["value"], 50.0)
+
+    def test_cached_price_estimates_shares_from_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="Value Only",
+                isin="DE0001234567",
+                value="100",
+                broker="scalable",
+                cache={"DE0001234567": {"price": 8.0}},
+            )
+            self.assertEqual(display["value"], 100.0)
+            self.assertEqual(display["shares"], 12.5)
+            stored = _positions(db_file, "default")["equity_portfolio"][0]
+            self.assertEqual(stored["shares"], 12.5)
+
+    def test_cached_price_leaves_two_given_figures_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "equity_portfolio",
+                name="Both Figures",
+                isin="DE0001234567",
+                value="100",
+                shares="5",
+                broker="scalable",
+                cache={"DE0001234567": {"price": 10.0}},
+            )
+            self.assertEqual(display["value"], 100.0)
+            self.assertEqual(display["shares"], 5.0)
 
     def test_add_registers_isin_with_the_selected_bucket(self) -> None:
         from storage.repositories import IsinRegistry
@@ -2583,6 +2634,8 @@ class TestConstituentsRoute(_RouteCase):
             )
         self.assertEqual(status, 200)
         self.assertIn("81.25", json.loads(body)["row"])
+        stored = _positions(self.db, "default")["equity_portfolio"][-1]
+        self.assertAlmostEqual(stored["shares"], 100 / 81.25)
         fetch.assert_not_called()
 
     def test_post_add_fetches_missing_price_after_registration(self) -> None:
@@ -2609,9 +2662,32 @@ class TestConstituentsRoute(_RouteCase):
             )
         self.assertEqual(status, 200)
         self.assertIn("42.00", json.loads(body)["row"])
+        stored = _positions(self.db, "default")["bond_portfolio"][-1]
+        self.assertAlmostEqual(stored["shares"], 100 / 42.0)
         fetch.assert_called_once_with(
             str(self.db), "DE0001234567", "default"
         )
+
+    def test_post_add_computes_value_from_fetched_price(self) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "visual.web.backend.serve.fetch_price_for_isin",
+            return_value=42.0,
+        ):
+            status, body = self._post_add(
+                {
+                    "bucket": "equity_portfolio",
+                    "name": "Shares Only",
+                    "isin": "DE0001234567",
+                    "shares": 3,
+                    "broker": "scalable",
+                }
+            )
+        self.assertEqual(status, 200)
+        self.assertIn("126.00", json.loads(body)["row"])
+        stored = _positions(self.db, "default")["equity_portfolio"][-1]
+        self.assertEqual(stored["value"], 126.0)
 
     def test_post_add_blank_unresolved_name_is_rejected(self) -> None:
         from unittest.mock import patch

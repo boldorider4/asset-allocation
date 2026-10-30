@@ -365,6 +365,58 @@ def _cached_price_for(cache: dict[str, Any] | None, isin: Any) -> float | None:
     return float(price) if _is_number(price) else None
 
 
+def _fill_missing_figure(row: dict[str, Any], price: float | None) -> bool:
+    """Fill a row's missing value/shares sibling from a known quote.
+
+    A shares entry computes ``value = shares × price``; a value entry
+    estimates ``shares = value / price``. Rows with both figures, neither
+    figure, or no usable price are left untouched. Returns True when a
+    field changed.
+    """
+    if not _is_number(price) or not price:
+        return False
+    value = row.get(VALUE)
+    shares = row.get(SHARES)
+    if _is_number(shares) and value is None:
+        row[VALUE] = shares * price
+        return True
+    if _is_number(value) and shares is None:
+        row[SHARES] = value / price
+        return True
+    return False
+
+
+def fill_constituent_figures(
+    db_file: str,
+    bucket: str,
+    index: int,
+    price: float | None,
+    user: str = DEFAULT_USER_NAME,
+) -> dict[str, Any]:
+    """Fill a freshly added row's missing figure from a fetched price.
+
+    The add endpoint calls this after a price was fetched, because the row
+    has to exist (and be registered under its bucket) before the factory
+    runs. Returns ``{"value": ..., "shares": ...}`` for the display row.
+    """
+    repo = _assets_repo(db_file, user)
+    repo.open()
+    assets = repo.snapshot()
+    rows = assets.get(bucket)
+    if not isinstance(rows, list):
+        raise ValueError(f"unknown bucket: {bucket!r}")
+    if not isinstance(index, bool) and isinstance(index, int) and 0 <= index < len(rows):
+        row = rows[index]
+    else:
+        raise ValueError(f"row index out of range: {index!r}")
+    if not isinstance(row, dict):
+        raise ValueError(f"row {index} in {bucket!r} is not an object")
+    if _fill_missing_figure(row, price):
+        repo.restore(assets)
+        repo.persist()
+    return {VALUE: row.get(VALUE), SHARES: row.get(SHARES)}
+
+
 def _parse_stored_text(raw: Any) -> str:
     """Parse a posted label value; empty stays empty, junk raises ValueError."""
     if raw is None:
@@ -563,8 +615,10 @@ def add_constituent(
 
     A non-empty ISIN is registered under *bucket* when ``registry`` is
     given; existing registry fields are left untouched (a wrong bucket is
-    preserved). The display row reports ``needs_full_update`` when the
-    cache has no country or sector data for the ISIN.
+    preserved). When the cache already holds a price, a lone value or
+    shares entry gets its missing sibling computed immediately. The
+    display row reports ``needs_full_update`` when the cache has no
+    country or sector data for the ISIN.
 
     Returns the display row (same shape as :func:`load_constituents`
     rows) for rendering.
@@ -593,6 +647,7 @@ def add_constituent(
         assets[bucket] = rows
     if not isinstance(rows, list):
         raise ValueError(f"unknown bucket: {bucket!r}")
+    price = _cached_price_for(cache, clean_isin)
     stored = {
         NAME: name.strip(),
         SHORT_NAME: clean_short,
@@ -604,6 +659,7 @@ def add_constituent(
         DMEM_OTHER: 0.5,
         USAVN: None,
     }
+    _fill_missing_figure(stored, price)
     rows.append(stored)
     index = len(rows) - 1
     if registry is not None and clean_isin is not None:
@@ -612,7 +668,6 @@ def add_constituent(
         registry.persist()
     repo.restore(assets)
     repo.persist()
-    price = _cached_price_for(cache, clean_isin)
     fields = updatable_fields(bucket, stored)
     return {
         NAME: stored[NAME],

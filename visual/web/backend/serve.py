@@ -1136,7 +1136,11 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         from storage.repositories import IsinRegistry
         from storage.wiring import isin_backend
 
-        from .constituents import _render_row, add_constituent
+        from .constituents import (
+            _render_row,
+            add_constituent,
+            fill_constituent_figures,
+        )
 
         if urlsplit(self.path).path != "/api/constituents/add":
             return False
@@ -1205,6 +1209,22 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             )
             if price is not None:
                 display["price"] = price
+                try:
+                    display.update(
+                        fill_constituent_figures(
+                            str(self._db_file) if self._db_file else "",
+                            display["bucket"],
+                            display["index"],
+                            price,
+                            session.user,
+                        )
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "constituents figure fill failed for %s: %s",
+                        display["isin"],
+                        exc,
+                    )
         body = json.dumps(
             {
                 "index": display["index"],
