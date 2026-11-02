@@ -3,7 +3,7 @@ Description=Run asalloc update every 24 hours
 
 [Timer]
 OnBootSec=5min
-OnCalendar=Sun *-*-* 15:00:00
+OnCalendar=Sun *-*-* 14:00:00
 Persistent=true
 
 [Install]

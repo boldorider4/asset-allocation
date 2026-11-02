@@ -1,9 +1,9 @@
 [Unit]
-Description=Run asalloc update every day, except Sunday, at 3pm
+Description=Run asalloc update every day, except Sunday, at 2pm
 
 [Timer]
 OnBootSec=5min
-OnCalendar=Mon..Sat *-*-* 15:00:00
+OnCalendar=Mon..Sat *-*-* 14:00:00
 Persistent=true
 
 [Install]
