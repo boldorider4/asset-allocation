@@ -1140,6 +1140,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             _render_row,
             add_constituent,
             fill_constituent_figures,
+            resolve_name_for_add,
         )
 
         if urlsplit(self.path).path != "/api/constituents/add":
@@ -1159,6 +1160,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             clean_isin = (
                 posted_isin.strip() if isinstance(posted_isin, str) else ""
             )
+            registry = IsinRegistry(isin_backend(self._db_file))
             if (
                 (not isinstance(posted_name, str) or not posted_name.strip())
                 and len(clean_isin) == 12
@@ -1166,18 +1168,13 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             ):
                 from position.justetf_position import just_etf_name
 
-                try:
-                    resolved_name = just_etf_name(clean_isin)
-                except Exception as exc:
-                    logger.warning(
-                        "constituents name lookup failed for %s: %s",
-                        clean_isin,
-                        exc,
-                    )
-                    resolved_name = None
+                resolved_name = resolve_name_for_add(
+                    clean_isin,
+                    registry=registry,
+                    name_provider=just_etf_name,
+                )
                 if resolved_name:
                     posted_name = resolved_name
-            registry = IsinRegistry(isin_backend(self._db_file))
             display = add_constituent(
                 self._db_file,
                 payload.get("bucket"),

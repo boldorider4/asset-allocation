@@ -2615,6 +2615,8 @@ class TestConstituentsRoute(_RouteCase):
         self.assertIn("Resolved Fund", payload["row"])
         data = _positions(self.db, "default")
         self.assertEqual(data["equity_portfolio"][2]["name"], "Resolved Fund")
+        registry = read_isin(self.db)
+        self.assertEqual(registry["DE0001234567"]["name"], "Resolved Fund")
         fetch.assert_called_once_with(str(self.db), "DE0001234567", "default")
 
     def test_post_add_uses_cached_price_without_fetching(self) -> None:

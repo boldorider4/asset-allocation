@@ -61,6 +61,7 @@ class TestIsinRegistryBackend(unittest.TestCase):
         self.assertEqual(record.issuer, "justetf")
         self.assertEqual(record.bucket, "equity_portfolio")
         self.assertEqual(record.product_ref, "prod")
+        self.assertIsNone(record.name)
         self.assertEqual(record.visits, 3)
         self.assertIn("IE00TEST0001", self.store)
 
@@ -75,10 +76,29 @@ class TestIsinRegistryBackend(unittest.TestCase):
                     "issuer": "yfinance",
                     "bucket": "bond_portfolio",
                     "product_ref": None,
+                    "name": None,
                     "visits": 0,
                 }
             },
         )
+
+    def test_name_round_trips(self) -> None:
+        self.store.put(
+            IsinRecord(
+                "IE00TEST0005",
+                issuer="justetf",
+                name="Example ETF",
+                visits=1,
+            )
+        )
+        record = self.store.get("IE00TEST0005")
+        assert record is not None
+        self.assertEqual(record.name, "Example ETF")
+        record.merge({"name": None})
+        self.store.put(record)
+        fetched = self.store.get("IE00TEST0005")
+        assert fetched is not None
+        self.assertIsNone(fetched.name)
 
     def test_get_or_create_add_and_remove(self) -> None:
         created = self.store.get_or_create("IE00TEST0003")

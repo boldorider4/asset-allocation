@@ -790,6 +790,12 @@ class IsinRegistry:
         record = self._backend.get(str(isin))
         return None if record is None else record.product_ref
 
+    def get_name_for_isin(self, isin: str) -> str | None:
+        record = self._backend.get(str(isin))
+        if record is None or not record.name or not record.name.strip():
+            return None
+        return record.name
+
     def get_visits_for_isin(self, isin: str) -> int:
         """Number of maintenance-script scans for ``isin`` (0 when absent)."""
         record = self._backend.get(str(isin))
@@ -819,6 +825,7 @@ class IsinRegistry:
         issuer: str | None = None,
         bucket: str | None = None,
         product_ref: str | None = None,
+        name: str | None = None,
     ) -> IsinRecord:
         """Ensure a row exists, filling only fields that are still null.
 
@@ -829,7 +836,13 @@ class IsinRegistry:
         existing = self._backend.get(key)
         if existing is None:
             record = IsinRecord(
-                key, {"issuer": issuer, "bucket": bucket, "product_ref": product_ref}
+                key,
+                {
+                    "issuer": issuer,
+                    "bucket": bucket,
+                    "product_ref": product_ref,
+                    "name": name,
+                },
             )
             self._backend.put(record)
             return record
@@ -840,6 +853,12 @@ class IsinRegistry:
             patch[IsinRecord.BUCKET] = bucket
         if existing.product_ref is None and product_ref is not None:
             patch[IsinRecord.PRODUCT_REF] = product_ref
+        if (
+            (existing.name is None or not existing.name.strip())
+            and name is not None
+            and name.strip()
+        ):
+            patch[IsinRecord.NAME] = name
         if patch:
             existing.merge(patch)
             self._backend.put(existing)

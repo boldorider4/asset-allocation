@@ -361,7 +361,7 @@ class SqliteStorage(Storage[T]):
 
     @staticmethod
     def _isin_columns() -> str:
-        return "isin, issuer, bucket, product_ref, visits"
+        return "isin, issuer, bucket, product_ref, name, visits"
 
     @staticmethod
     def _isin_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -369,6 +369,7 @@ class SqliteStorage(Storage[T]):
             "issuer": row["issuer"],
             "bucket": row["bucket"],
             "product_ref": row["product_ref"],
+            "name": row["name"],
             "visits": int(row["visits"] or 0),
         }
 
@@ -587,7 +588,8 @@ class SqliteStorage(Storage[T]):
             conn.execute(
                 f"CREATE TABLE IF NOT EXISTS {self._quoted_table()} "
                 "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, "
-                "product_ref TEXT, visits INTEGER NOT NULL DEFAULT 0)"
+                "product_ref TEXT, name TEXT, "
+                "visits INTEGER NOT NULL DEFAULT 0)"
             )
         elif table == "users":
             conn.execute(
@@ -713,7 +715,8 @@ class SqliteStorage(Storage[T]):
                 obj = self._factory.from_dict(key, {})  # type: ignore[assignment]
                 self._require_conn().execute(
                     f"INSERT OR IGNORE INTO {self._quoted_table()} "
-                    "(isin, issuer, bucket, product_ref) VALUES (?, NULL, NULL, NULL)",
+                    "(isin, issuer, bucket, product_ref, name) "
+                    "VALUES (?, NULL, NULL, NULL, NULL)",
                     (key,),
                 )
                 return self.get(key) or obj
@@ -775,16 +778,17 @@ class SqliteStorage(Storage[T]):
                 d = obj.to_dict()
                 self._require_conn().execute(
                     f"INSERT INTO {self._quoted_table()} "
-                    "(isin, issuer, bucket, product_ref, visits) "
-                    "VALUES (?, ?, ?, ?, ?) "
+                    "(isin, issuer, bucket, product_ref, name, visits) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(isin) DO UPDATE SET issuer = excluded.issuer, "
                     "bucket = excluded.bucket, product_ref = excluded.product_ref, "
-                    "visits = excluded.visits",
+                    "name = excluded.name, visits = excluded.visits",
                     (
                         obj.key,
                         d.get("issuer"),
                         d.get("bucket"),
                         d.get("product_ref"),
+                        d.get("name"),
                         d.get("visits", 0),
                     ),
                 )

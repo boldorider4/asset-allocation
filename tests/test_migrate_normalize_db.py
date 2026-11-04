@@ -136,7 +136,7 @@ class TestMigrateNormalizeDb(unittest.TestCase):
                             "PRAGMA table_info(isin_registry)"
                         )
                     },
-                    {"isin", "issuer", "bucket", "product_ref", "visits"},
+                    {"isin", "issuer", "bucket", "product_ref", "name", "visits"},
                 )
 
     def test_it_preserves_the_uppercase_json_isin(self) -> None:

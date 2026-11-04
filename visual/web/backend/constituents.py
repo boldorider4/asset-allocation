@@ -12,7 +12,7 @@ from __future__ import annotations
 import html
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 from cli.common import (
     BROKER,
@@ -591,6 +591,41 @@ def known_brokers() -> list[dict[str, str]]:
 
 
 _ISIN_SHAPE_RE = re.compile(r"^[A-Za-z0-9]{12}$")
+
+
+def resolve_name_for_add(
+    isin: Any,
+    *,
+    registry: IsinRegistry | None = None,
+    name_provider: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """A registry-first product name for a new constituent row.
+
+    The registry is checked first; when it has no cached name yet, the
+    (optional) ``name_provider`` is asked. A freshly fetched name is
+    persisted on the registry row for that ISIN, so the next add is a
+    pure database read. Registry stays untouched when ``isin`` is not a
+    usable ISIN or when neither source yields a name.
+    """
+    cleaned = isin.strip().upper() if isinstance(isin, str) else ""
+    if not _ISIN_SHAPE_RE.fullmatch(cleaned):
+        return None
+    if registry is not None:
+        registry.open()
+        cached = registry.get_name_for_isin(cleaned)
+        if cached:
+            return cached
+    if name_provider is None:
+        return None
+    try:
+        fetched = name_provider(cleaned)
+    except Exception as exc:
+        logger.warning("constituents name lookup failed for %s: %s", cleaned, exc)
+        return None
+    if fetched and registry is not None:
+        registry.register_isin(cleaned, name=fetched)
+        registry.persist()
+    return fetched
 
 
 def add_constituent(

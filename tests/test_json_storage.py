@@ -518,6 +518,16 @@ class TestIsinRegistryComposition(unittest.TestCase):
         with self.assertRaises(ValueError):
             registry.register_isin("IE00BADX01", issuer="nope")
 
+    def test_name_is_cached_and_never_overwritten(self) -> None:
+        registry = _empty_registry()
+        record = registry.register_isin("IE00NEWX01", name="Fresh ETF")
+        self.assertEqual(record.name, "Fresh ETF")
+        self.assertEqual(registry.get_name_for_isin("IE00NEWX01"), "Fresh ETF")
+        # A cached name is decided: a fresh fetch must not overwrite it.
+        registry.register_isin("IE00NEWX01", name="Different ETF")
+        self.assertEqual(registry.get_name_for_isin("IE00NEWX01"), "Fresh ETF")
+        self.assertIsNone(registry.get_name_for_isin("unknown"))
+
     def test_set_issuer_overwrites(self) -> None:
         registry = _empty_registry()
         registry.set_issuer_for_isin("IE00NEWX03", "dws")

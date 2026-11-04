@@ -178,6 +178,7 @@ def write_isin(
             issuer=fields.get("issuer"),
             bucket=fields.get("bucket"),
             product_ref=fields.get("product_ref"),
+            name=fields.get("name"),
         )
         if "visits" in fields:
             record.merge({IsinRecord.VISITS: int(fields["visits"])})

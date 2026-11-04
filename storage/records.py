@@ -340,17 +340,18 @@ class IsinRecord(DictRow):
     ``issuer`` is a slug from :attr:`ISSUERS` (``justetf``/``yfinance``
     mark decided-generic rows); ``bucket`` is a portfolio bucket key;
     ``product_ref`` is the Vanguard PortId / iShares product id / SSGA
-    slug where one exists. ``visits`` counts maintenance-script scans.
-    The first three fields are nullable; ``visits`` is a non-negative
-    integer.
+    slug where one exists. ``name`` is the cached product name; ``visits``
+    counts maintenance-script scans. The first four fields are nullable;
+    ``visits`` is a non-negative integer.
     """
 
     ISSUER = "issuer"
     BUCKET = "bucket"
     PRODUCT_REF = "product_ref"
+    NAME = "name"
     VISITS = "visits"
     ALLOWED_KEYS: frozenset[str] = frozenset(
-        {ISSUER, BUCKET, PRODUCT_REF, VISITS}
+        {ISSUER, BUCKET, PRODUCT_REF, NAME, VISITS}
     )
 
     #: Canonical issuer slugs (module of origin in ``position/``),
@@ -378,6 +379,7 @@ class IsinRecord(DictRow):
         issuer: str | None = None,
         bucket: str | None = None,
         product_ref: str | None = None,
+        name: str | None = None,
         visits: int | None = None,
     ) -> None:
         payload: dict[str, Any] = dict(data) if data else {}
@@ -387,6 +389,8 @@ class IsinRecord(DictRow):
             payload[self.BUCKET] = bucket
         if product_ref is not None:
             payload[self.PRODUCT_REF] = product_ref
+        if name is not None:
+            payload[self.NAME] = name
         if visits is not None:
             payload[self.VISITS] = visits
         payload.setdefault(self.VISITS, 0)
@@ -414,6 +418,9 @@ class IsinRecord(DictRow):
         ref = self._data.get(self.PRODUCT_REF)
         if ref is not None and not isinstance(ref, str):
             raise TypeError(f"row {self._key!r} field 'product_ref' must be a string or null")
+        cached_name = self._data.get(self.NAME)
+        if cached_name is not None and not isinstance(cached_name, str):
+            raise TypeError(f"row {self._key!r} field 'name' must be a string or null")
         visits = self._data.get(self.VISITS)
         if isinstance(visits, bool) or not isinstance(visits, int) or visits < 0:
             raise ValueError(
@@ -435,6 +442,11 @@ class IsinRecord(DictRow):
     def product_ref(self) -> str | None:
         ref = self._data.get(self.PRODUCT_REF)
         return None if ref is None else str(ref)
+
+    @property
+    def name(self) -> str | None:
+        cached_name = self._data.get(self.NAME)
+        return None if cached_name is None else str(cached_name)
 
     @property
     def visits(self) -> int:
