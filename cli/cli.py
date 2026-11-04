@@ -106,6 +106,7 @@ def cmd_curate(args: argparse.Namespace) -> None:
             database,
             user=user,
             run_file=getattr(args, "run", None),
+            all_isins=bool(getattr(args, "all_isins", False)),
         )
     except CurateError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -484,7 +485,8 @@ def main(argv: list[str] | None = None) -> None:
         epilog=(
             "Pass --db-file or --config. --config only supplies the "
             "database; pass --user NAME to curate one portfolio, otherwise "
-            "every registry ISIN is curated."
+            "the registry intersection of all portfolios is curated. "
+            "--all-isins selects the full registry."
         ),
     )
     _add_config_flag(curate, default=argparse.SUPPRESS)
@@ -504,8 +506,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=(
             "Only curate registry ISINs in this user's portfolio "
-            "(default: curate every registry ISIN)."
+            "(default: only curate portfolio ISINs across every user)."
         ),
+    )
+    curate.add_argument(
+        "--all-isins",
+        action="store_true",
+        help="Curate every registry ISIN, regardless of portfolios.",
     )
     curate.add_argument(
         "--run",

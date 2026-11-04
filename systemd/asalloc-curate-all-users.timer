@@ -1,9 +1,9 @@
 [Unit]
-Description=Run asalloc update every 24 hours
+Description=Run asalloc curate every day at 2pm
 
 [Timer]
 OnBootSec=5min
-OnCalendar=Sun *-*-* 14:00:00
+OnCalendar=*-*-* 14:00:00
 Persistent=true
 
 [Install]

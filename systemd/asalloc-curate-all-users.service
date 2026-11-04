@@ -1,5 +1,5 @@
 [Unit]
-Description=asalloc curate every registry ISIN
+Description=asalloc curate the registry ISINs in user portfolios
 After=network-online.target
 Wants=network-online.target
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -56,31 +57,73 @@ def _build_context(db_file: Path, user: str | None) -> RuntimeContext:
     return RuntimeContext(config=config)
 
 
-def _selected_isins(ctx: RuntimeContext, user: str | None) -> list[str]:
-    registry = ctx.isin_registry.snapshot()
-    all_isins = sorted(
+def _read_only_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
+def _portfolio_isins(db_file: Path, user: str | None) -> list[str]:
+    """Portfolio ISINs from SQLite, filtered by *user* when requested."""
+    if user is not None:
+        query = (
+            "SELECT DISTINCT UPPER(TRIM(p.isin))"
+            " FROM user_positions AS p"
+            " JOIN isin_registry AS r"
+            " ON UPPER(TRIM(r.isin)) = UPPER(TRIM(p.isin))"
+            " WHERE p.isin IS NOT NULL"
+            " AND TRIM(p.isin) <> ''"
+            " AND p.username = ?"
+            " ORDER BY 1"
+        )
+        parameters: tuple[Any, ...] = (user,)
+    else:
+        query = (
+            "SELECT DISTINCT UPPER(TRIM(p.isin))"
+            " FROM user_positions AS p"
+            " JOIN isin_registry AS r"
+            " ON UPPER(TRIM(r.isin)) = UPPER(TRIM(p.isin))"
+            " WHERE p.isin IS NOT NULL"
+            " AND TRIM(p.isin) <> ''"
+            " ORDER BY 1"
+        )
+        parameters = ()
+    try:
+        conn = sqlite3.connect(_read_only_uri(db_file), uri=True)
+        try:
+            rows = conn.execute(query, parameters).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        if "no such table" in str(exc):
+            return []
+        raise CurateError(
+            f"cannot read portfolio ISINs from {db_file}: {exc}"
+        ) from exc
+    return [str(row[0]) for row in rows if str(row[0]).strip()]
+
+
+def _selected_isins(
+    ctx: RuntimeContext,
+    db_file: Path,
+    user: str | None,
+    *,
+    all_isins: bool = False,
+) -> list[str]:
+    registry = sorted(
         {
-            str(isin).strip()
-            for isin in registry
+            str(isin).strip().upper()
+            for isin in ctx.isin_registry.snapshot()
             if str(isin).strip()
         }
     )
+    if all_isins:
+        return registry
     if user is None:
-        return all_isins
+        return _portfolio_isins(db_file, user)
     if not ctx.asset_repo.exists():
         raise CurateError(
             f"unknown user {user!r}: no portfolio stored for it"
         )
-    wanted: set[str] = set()
-    for positions in ctx.asset_repo.snapshot().values():
-        for position in positions:
-            raw = position.get("ISIN") or position.get("isin")
-            if raw is None:
-                continue
-            isin = str(raw).strip().upper()
-            if isin:
-                wanted.add(isin)
-    return [isin for isin in all_isins if isin.upper() in wanted]
+    return _portfolio_isins(db_file, user)
 
 
 def _run_payload(
@@ -260,9 +303,12 @@ def run_curate(
     *,
     user: str | None = None,
     run_file: str | Path | None = None,
+    all_isins: bool = False,
 ) -> int:
     """Curate registry ISINs.
 
+    By default only registry ISINs reachable through the user positions
+    are processed; pass ``all_isins`` to curate the complete registry.
     Return 0 on success, 1 on per-ISIN failures, 130 on interrupt.
     """
     database = Path(db_file).expanduser()
@@ -270,7 +316,9 @@ def run_curate(
         raise CurateError(f"database not found: {database}")
     user = _normalize_user(user)
     ctx = _build_context(database, user)
-    selected = _selected_isins(ctx, user)
+    selected = _selected_isins(
+        ctx, database, user, all_isins=bool(all_isins)
+    )
     path, examined, failed, last_isin = _prepare_run_file(
         database, selected, user, run_file
     )

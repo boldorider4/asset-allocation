@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from cli.cli import cmd_curate, main
 from cli.curate import CurateError, run_curate
@@ -74,7 +74,7 @@ class TestCurateRun(unittest.TestCase):
                 return _Position(_rows("New Country"), _rows("New Sector"))
 
             with patch("cli.curate.factory", side_effect=fake_factory):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
 
             self.assertEqual(calls, ["IE00A", "IE00B"])
             cache = read_cache(db)
@@ -97,7 +97,7 @@ class TestCurateRun(unittest.TestCase):
                 return _Position(_rows("New Country"), _rows("New Sector"))
 
             with patch("cli.curate.factory", side_effect=fake_factory):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
 
             self.assertEqual(calls, ["IE00REG"])
             cache = read_cache(db)
@@ -107,6 +107,70 @@ class TestCurateRun(unittest.TestCase):
             self.assertEqual(
                 cache["IE00CACHE"]["countries"], {"Old Country": 1.0}
             )
+
+    def test_default_intersects_all_portfolio_isins_with_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            self._seed(db, "IE00A", "IE00B", "IE00C")
+            write_positions(
+                db,
+                {
+                    "equity_portfolio": [
+                        {"name": "A", "isin": "IE00A", "shares": 1}
+                    ]
+                },
+                user="alice",
+            )
+            write_positions(
+                db,
+                {
+                    "bond_portfolio": [
+                        {"name": "B", "ISIN": "IE00B", "shares": 1}
+                    ],
+                    "cash_portfolio": [
+                        {"name": "Unknown", "ISIN": "IE00X", "shares": 1}
+                    ],
+                },
+                user="bob",
+            )
+            calls: list[str] = []
+
+            def fake_factory(isin: str, **_kwargs):
+                calls.append(isin)
+                return _Position(_rows("New Country"), _rows("New Sector"))
+
+            with patch("cli.curate.factory", side_effect=fake_factory):
+                self.assertEqual(run_curate(db), 0)
+
+            self.assertEqual(calls, ["IE00A", "IE00B"])
+
+    def test_default_ignores_registry_isins_without_portfolio_positions(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            self._seed(db, "IE00A", "IE00ORPHAN")
+            write_positions(
+                db,
+                {
+                    "equity_portfolio": [
+                        {"name": "A", "isin": "IE00A", "shares": 1}
+                    ]
+                },
+                user="alice",
+            )
+            with patch("cli.curate.factory") as factory:
+                factory.return_value = _Position([], [])
+                self.assertEqual(run_curate(db), 0)
+            factory.assert_called_once_with("IE00A", ctx=ANY, write_cache=False)
+
+    def test_default_without_positions_curates_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            self._seed(db, "IE00A")
+            with patch("cli.curate.factory") as factory:
+                self.assertEqual(run_curate(db), 0)
+            factory.assert_not_called()
 
     def test_user_filter_reads_user_positions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +240,7 @@ class TestCurateRun(unittest.TestCase):
                 "cli.curate.factory",
                 return_value=_Position([], _rows("New Sector")),
             ):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
             cache = read_cache(db)
             self.assertEqual(
                 cache["IE00A"]["countries"], {"Old Country": 1.0}
@@ -191,7 +255,7 @@ class TestCurateRun(unittest.TestCase):
                 "cli.curate.factory",
                 return_value=_Position(_rows("New Country"), []),
             ):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
             cache = read_cache(db)
             self.assertEqual(
                 cache["IE00A"]["countries"], {"New Country": 1.0}
@@ -206,7 +270,7 @@ class TestCurateRun(unittest.TestCase):
                 "cli.curate.factory",
                 side_effect=RuntimeError("boom"),
             ):
-                self.assertEqual(run_curate(db), 1)
+                self.assertEqual(run_curate(db, all_isins=True), 1)
 
             cache = read_cache(db)
             self.assertEqual(
@@ -234,7 +298,7 @@ class TestCurateRun(unittest.TestCase):
                 return _Position(_rows("New Country"), _rows("New Sector"))
 
             with patch("cli.curate.factory", side_effect=fake_factory):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
 
             cache = read_cache(db)
             self.assertEqual(
@@ -259,7 +323,7 @@ class TestCurateRun(unittest.TestCase):
                     [{"name": "Invalid", "weight_pct": 200.0}],
                 ),
             ):
-                self.assertEqual(run_curate(db), 0)
+                self.assertEqual(run_curate(db, all_isins=True), 0)
 
             cache = read_cache(db)
             self.assertEqual(
@@ -293,7 +357,9 @@ class TestCurateRun(unittest.TestCase):
                 return _Position(_rows("New Country"), _rows("New Sector"))
 
             with patch("cli.curate.factory", side_effect=fake_factory):
-                self.assertEqual(run_curate(db, run_file=run_file), 0)
+                self.assertEqual(
+                    run_curate(db, run_file=run_file, all_isins=True), 0
+                )
 
             self.assertEqual(calls, ["IE00B", "IE00C"])
             self.assertFalse(run_file.exists())
@@ -330,7 +396,9 @@ class TestCurateRun(unittest.TestCase):
                 "cli.curate.factory",
                 return_value=_Position(_rows("New Country"), _rows("New Sector")),
             ) as factory:
-                self.assertEqual(run_curate(db, run_file=run_file), 0)
+                self.assertEqual(
+                    run_curate(db, run_file=run_file, all_isins=True), 0
+                )
             factory.assert_called_once()
             self.assertFalse(run_file.exists())
 
@@ -417,6 +485,7 @@ class TestCurateCommand(unittest.TestCase):
             "db_file": None,
             "user": None,
             "run": None,
+            "all_isins": False,
         }
         values.update(overrides)
         with patch("cli.curate.run_curate", return_value=0) as run:
@@ -445,6 +514,14 @@ class TestCurateCommand(unittest.TestCase):
             _, call = self._call(db_file=flag)
             self.assertEqual(call.args[0], flag)
             self.assertIsNone(call.kwargs["user"])
+            self.assertFalse(call.kwargs["all_isins"])
+
+    def test_all_isins_selects_the_full_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ini = self._ini(Path(tmp))
+            _, call = self._call(config=ini, all_isins=True)
+            self.assertIsNone(call.kwargs["user"])
+            self.assertTrue(call.kwargs["all_isins"])
 
     def test_db_file_wins_and_config_user_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -574,6 +651,21 @@ class TestCurateCommand(unittest.TestCase):
                         )
             self.assertEqual(exit_info.exception.code, 0)
             configure.assert_called_with(logging.DEBUG)
+
+    def test_parser_accepts_all_isins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("cli.curate.run_curate", return_value=0) as run:
+                with self.assertRaises(SystemExit) as exit_info:
+                    main(
+                        [
+                            "curate",
+                            "--db-file",
+                            str(db_path(tmp)),
+                            "--all-isins",
+                        ]
+                    )
+            self.assertEqual(exit_info.exception.code, 0)
+            self.assertTrue(run.call_args.kwargs["all_isins"])
 
 
 if __name__ == "__main__":

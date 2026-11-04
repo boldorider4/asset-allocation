@@ -87,7 +87,7 @@ class TestLiteUpdateUnit(unittest.TestCase):
 class TestCurateUnits(unittest.TestCase):
     _UNITS = (
         "asalloc-curate-all-users.service",
-        "asalloc-curate-default-user.service",
+        "asalloc-curate-all-isins.service",
     )
 
     def _text(self, name: str) -> str:
@@ -100,29 +100,51 @@ class TestCurateUnits(unittest.TestCase):
             self.assertNotIn("Type=oneshot", text)
             self.assertIn("asalloc curate", text)
 
-    def test_default_user_unit_selects_the_user_explicitly(self) -> None:
-        text = self._text("asalloc-curate-default-user.service")
-        self.assertIn("--user default", text)
-
-    def test_all_users_unit_does_not_select_a_user(self) -> None:
-        text = self._text("asalloc-curate-all-users.service")
+    def test_all_isins_unit_selects_the_full_registry(self) -> None:
+        text = self._text("asalloc-curate-all-isins.service")
+        self.assertIn("--all-isins", text)
         self.assertNotIn("--user", text)
 
-    def test_make_service_copies_and_enables_curate_timers(self) -> None:
+    def test_all_users_unit_does_not_select_the_full_registry(self) -> None:
+        text = self._text("asalloc-curate-all-users.service")
+        self.assertNotIn("--all-isins", text)
+        self.assertNotIn("--user", text)
+
+    def test_all_users_timer_runs_once_a_day_at_2pm(self) -> None:
+        text = self._text("asalloc-curate-all-users.timer")
+        self.assertIn("OnCalendar=*-*-* 14:00:00", text)
+
+    def test_make_service_copies_and_enables_the_daily_curate_timer(
+        self,
+    ) -> None:
         block = _service_recipe()
         recipe = "\n".join(block)
         self.assertIn("systemd/asalloc-curate-all-users.service", recipe)
         self.assertIn("systemd/asalloc-curate-all-users.timer", recipe)
-        self.assertIn("systemd/asalloc-curate-default-user.service", recipe)
-        self.assertIn("systemd/asalloc-curate-default-user.timer", recipe)
+        self.assertIn("systemd/asalloc-curate-all-isins.service", recipe)
         self.assertIn(
             "systemctl --user enable --now asalloc-curate-all-users.timer",
             recipe,
         )
-        self.assertIn(
-            "systemctl --user enable --now asalloc-curate-default-user.timer",
+        self.assertNotIn(
+            "systemctl --user enable --now asalloc-curate-all-isins.service",
             recipe,
         )
+        self.assertNotIn(
+            "asalloc-curate-default-user.timer",
+            recipe,
+        )
+
+    def test_make_service_leaves_the_all_isins_unit_disabled(self) -> None:
+        block = _service_recipe()
+        all_isins_lines = [
+            line
+            for line in block
+            if "asalloc-curate-all-isins.service" in line
+            and line.strip().startswith("cp ")
+        ]
+        self.assertEqual(len(all_isins_lines), 1)
+        self.assertTrue(all_isins_lines[0].strip().startswith("cp "))
 
 
 class TestServeUnit(unittest.TestCase):
