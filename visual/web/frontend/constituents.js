@@ -614,6 +614,35 @@
       okButton.dataset.busy = "";
       return;
     }
+    const movedBucket = real.dataset.bucket || bucket;
+    if (movedBucket !== bucket) {
+      // The registry relocated the ISIN into another section: the server
+      // appended it last there, so drop the draft and file the row into
+      // that section's table instead of swapping it in place here.
+      const sel =
+        'button.add[data-bucket="' +
+        (window.CSS && CSS.escape ? CSS.escape(movedBucket) : movedBucket) +
+        '"]';
+      const addButton = document.querySelector(sel);
+      const section = addButton && addButton.closest("section");
+      const tbody = section && section.querySelector("tbody");
+      if (tbody) {
+        const heading = section.querySelector("h2");
+        row.remove();
+        tbody.appendChild(real);
+        if (data && data.needs_full_update === true) {
+          fullUpdateNeeded = true;
+        }
+        dirty = true;
+        setStatus(
+          "Added to " +
+            (heading && heading.textContent
+              ? heading.textContent
+              : movedBucket)
+        );
+        return;
+      }
+    }
     row.replaceWith(real);
     if (data && data.needs_full_update === true) {
       fullUpdateNeeded = true;

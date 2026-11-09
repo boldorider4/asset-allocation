@@ -592,6 +592,10 @@ def known_brokers() -> list[dict[str, str]]:
 
 _ISIN_SHAPE_RE = re.compile(r"^[A-Za-z0-9]{12}$")
 
+# The one bucket a user's explicit choice is honored in without a
+# registry cross-check (adding a bond into it is an intent to schedule).
+_FIXED_MATURITY_BUCKET = "fixed_maturity_bond_portfolio"
+
 
 def resolve_name_for_add(
     isin: Any,
@@ -648,15 +652,19 @@ def add_constituent(
     must be a 12-character alphanumeric ISIN. ``broker`` must be a known
     broker id. Numbers accept the same shapes as cell edits.
 
-    A non-empty ISIN is registered under *bucket* when ``registry`` is
-    given; existing registry fields are left untouched (a wrong bucket is
-    preserved). When the cache already holds a price, a lone value or
-    shares entry gets its missing sibling computed immediately. The
-    display row reports ``needs_full_update`` when the cache has no
-    country or sector data for the ISIN.
+    When ``registry`` is given and the ISIN already holds a registry
+    bucket, the row is added *there* instead (appended last, so other
+    rows keep their indices) — posting into the fixed maturity bucket
+    wins regardless of the registry. Otherwise the ISIN is registered
+    under *bucket*; existing registry fields are left untouched. When
+    the cache already holds a price, a lone value or shares entry gets
+    its missing sibling computed immediately. The display row reports
+    ``needs_full_update`` when the cache has no country or sector data
+    for the ISIN.
 
     Returns the display row (same shape as :func:`load_constituents`
-    rows) for rendering.
+    rows, ``bucket``/``index`` reflecting the row's real home) for
+    rendering.
     """
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be a non-blank string")
@@ -668,6 +676,11 @@ def add_constituent(
         clean_isin = isin.strip().upper()
     else:
         raise ValueError(f"ISIN must be 12 alphanumeric characters, got {isin!r}")
+    if registry is not None and clean_isin and bucket != _FIXED_MATURITY_BUCKET:
+        registry.open()
+        held = registry.get_bucket_for_isin(clean_isin)
+        if held:
+            bucket = held
     parsed_value = None if value is None else _parse_stored_value(value)
     parsed_shares = None if shares is None else _parse_stored_value(shares)
     clean_short = _parse_stored_text("" if short_name is None else short_name)

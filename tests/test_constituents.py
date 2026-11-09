@@ -26,6 +26,7 @@ from tests.store_helpers import (
     read_isin,
     read_positions,
     write_cache,
+    write_isin,
     write_positions,
     write_users,
 )
@@ -1212,9 +1213,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
         # Shares/value edits, short_name edits, deletes, adds, and the
         # portfolio name stage an update: one dirty flag in the
         # pair-refresh path, one in the short_name path, one in the delete
-        # flow, one in the add flow, one for the portfolio name. Reorders
-        # persist silently.
-        self.assertEqual(js.count("dirty = true"), 5)
+        # flow, one in the add flow plus one for its relocated-row branch,
+        # one for the portfolio name. Reorders persist silently.
+        self.assertEqual(js.count("dirty = true"), 6)
         # In the pair-refresh path (shares/value), dirty is set after refreshPair.
         pair_refresh = js.split("const updated = refreshPair(input, data);")[1].split(
             "if (data && data.recomputed === false)"
@@ -1815,7 +1816,130 @@ class TestAddConstituent(unittest.TestCase):
                 "equity_portfolio",
             )
 
-    def test_add_uses_cache_to_decide_whether_a_full_update_is_needed(self) -> None:
+    def test_add_moves_the_row_into_the_registry_bucket(self) -> None:
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            registry = IsinRegistry(isin_backend(assets))
+            registry.register_isin(
+                "DE0001234567", bucket="cash_portfolio"
+            )
+            display = add_constituent(
+                assets,
+                "equity_portfolio",
+                name="Misfiled Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(display["bucket"], "cash_portfolio")
+            self.assertEqual(display["index"], 2)
+            data = _positions(assets)
+            # Appended last into the registry bucket; earlier rows and
+            # the untouched buckets keep their indices.
+            self.assertEqual(data["cash_portfolio"][2]["name"], "Misfiled Bond")
+            self.assertEqual(data["cash_portfolio"][2]["ISIN"], "DE0001234567")
+            self.assertEqual(
+                [row["name"] for row in data["cash_portfolio"][:2]],
+                ["Tagesgeld", "<evil> & co"],
+            )
+            self.assertEqual(len(data["equity_portfolio"]), 2)
+            # The registry keeps its bucket; it was never overwritten.
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "cash_portfolio",
+            )
+
+    def test_add_into_fixed_maturity_ignores_the_registry_bucket(self) -> None:
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            registry = IsinRegistry(isin_backend(assets))
+            registry.register_isin(
+                "DE0001234567", bucket="equity_portfolio"
+            )
+            display = add_constituent(
+                assets,
+                "fixed_maturity_bond_portfolio",
+                name="Scheduled Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(
+                display["bucket"], "fixed_maturity_bond_portfolio"
+            )
+            self.assertEqual(display["index"], 0)
+            data = _positions(assets)
+            stored = data["fixed_maturity_bond_portfolio"][0]
+            self.assertEqual(stored["name"], "Scheduled Bond")
+            self.assertEqual(len(data["equity_portfolio"]), 2)
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "equity_portfolio",
+            )
+
+    def test_registry_fixed_maturity_pulls_the_row_in(self) -> None:
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            registry = IsinRegistry(isin_backend(assets))
+            registry.register_isin(
+                "DE0001234567",
+                bucket="fixed_maturity_bond_portfolio",
+            )
+            display = add_constituent(
+                assets,
+                "equity_portfolio",
+                name="Maturing Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(
+                display["bucket"], "fixed_maturity_bond_portfolio"
+            )
+            stored = _positions(assets)["fixed_maturity_bond_portfolio"][0]
+            self.assertEqual(stored["name"], "Maturing Bond")
+            self.assertEqual(len(_positions(assets)["equity_portfolio"]), 2)
+
+    def test_add_without_registry_bucket_stays_in_the_posted_bucket(
+        self,
+    ) -> None:
+        from storage.repositories import IsinRegistry
+        from storage.wiring import isin_backend
+
+        with tempfile.TemporaryDirectory() as tmp:
+            assets = self._assets(Path(tmp))
+            registry = IsinRegistry(isin_backend(assets))
+            registry.register_isin("DE0001234567", name="Untitled Fund")
+            display = add_constituent(
+                assets,
+                "bond_portfolio",
+                name="New Bond",
+                isin="DE0001234567",
+                broker="scalable",
+                registry=registry,
+            )
+            self.assertEqual(display["bucket"], "bond_portfolio")
+            self.assertEqual(display["index"], 0)
+            stored = _positions(assets)["bond_portfolio"][0]
+            self.assertEqual(stored["name"], "New Bond")
+            # The posted bucket was registered on the (bucketless) row.
+            self.assertEqual(
+                registry.get_bucket_for_isin("DE0001234567"),
+                "bond_portfolio",
+            )
+
+    def test_add_uses_cache_to_decide_whether_a_full_update_is_needed(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_file = self._database(Path(tmp))
             price_only = add_constituent(
@@ -2590,6 +2714,56 @@ class TestConstituentsRoute(_RouteCase):
         self.assertFalse(payload["needs_full_update"])
         registry = read_isin(self.db)
         self.assertEqual(registry["DE0001234567"]["bucket"], "bond_portfolio")
+
+    def test_post_add_moves_row_into_the_registry_bucket(self) -> None:
+        write_isin(self.db, {"DE0007654321": {"bucket": "bond_portfolio"}})
+        status, body = self._post_add(
+            {
+                "bucket": "equity_portfolio",
+                "name": "Misfiled Bond",
+                "isin": "DE0007654321",
+                "value": 100,
+                "broker": "scalable",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["index"], 0)
+        self.assertIn('data-bucket="bond_portfolio"', payload["row"])
+        self.assertIn("Misfiled Bond", payload["row"])
+        data = _positions(self.db, "default")
+        self.assertEqual(data["bond_portfolio"][0]["name"], "Misfiled Bond")
+        self.assertEqual(len(data["equity_portfolio"]), 2)
+        registry = read_isin(self.db)
+        self.assertEqual(registry["DE0007654321"]["bucket"], "bond_portfolio")
+
+    def test_post_add_into_fixed_maturity_ignores_the_registry_bucket(
+        self,
+    ) -> None:
+        write_isin(self.db, {"DE0007654321": {"bucket": "equity_portfolio"}})
+        status, body = self._post_add(
+            {
+                "bucket": "fixed_maturity_bond_portfolio",
+                "name": "Scheduled Bond",
+                "isin": "DE0007654321",
+                "value": 100,
+                "broker": "scalable",
+            }
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["index"], 0)
+        self.assertIn(
+            'data-bucket="fixed_maturity_bond_portfolio"', payload["row"]
+        )
+        data = _positions(self.db, "default")
+        stored = data["fixed_maturity_bond_portfolio"][0]
+        self.assertEqual(stored["name"], "Scheduled Bond")
+        self.assertEqual(len(data["equity_portfolio"]), 2)
+        registry = read_isin(self.db)
+        self.assertEqual(
+            registry["DE0007654321"]["bucket"], "equity_portfolio"
+        )
 
     def test_post_add_resolves_blank_name_from_isin(self) -> None:
         from unittest.mock import patch
