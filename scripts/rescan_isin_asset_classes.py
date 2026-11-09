@@ -6,12 +6,16 @@ Usage::
 
     python scripts/rescan_isin_asset_classes.py --db-file asalloc.db
     python scripts/rescan_isin_asset_classes.py --db-file asalloc.db --dry-run
+    python scripts/rescan_isin_asset_classes.py --db-file asalloc.db --users
 
 Every ISIN in ``isin_registry`` is fetched from JustETF. The profile's
 Investment focus is mapped to a portfolio bucket and written only when it
 differs. Unknown focus, fetch failures, and profiles without the row leave
 the existing bucket untouched. The issuer, product ref, and visits counter
 are preserved.
+
+With ``--users`` only ISINs that also appear in ``user_positions`` are
+scanned, so maintenance work can be scoped to the rows portfolios use.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from position.justetf_position import just_etf_asset_class  # noqa: E402
+from scripts.curate_isin_names import _position_isins  # noqa: E402
 from storage.repositories import IsinRegistry  # noqa: E402
 from storage.wiring import isin_backend  # noqa: E402
 
@@ -66,6 +71,7 @@ def rescan_asset_classes(
     *,
     fetch_asset_class: FetchAssetClass = just_etf_asset_class,
     dry_run: bool = False,
+    users: bool = False,
     emit: Callable[[str], None] = print,
 ) -> tuple[int, int, int, int]:
     """Refresh every registry bucket from JustETF.
@@ -79,7 +85,11 @@ def rescan_asset_classes(
     registry.open()
     updated = unchanged = unresolved = errors = 0
     try:
-        for isin in sorted(registry.snapshot()):
+        isins = sorted(registry.snapshot())
+        if users:
+            allowed = _position_isins(db_file)
+            isins = [isin for isin in isins if isin in allowed]
+        for isin in isins:
             try:
                 before = registry.get_bucket_for_isin(isin)
                 after = fetch_asset_class(isin)
@@ -130,11 +140,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Report the changes without persisting them.",
     )
+    parser.add_argument(
+        "--users",
+        action="store_true",
+        help="Only rescan ISINs that also appear in user_positions.",
+    )
     args = parser.parse_args(argv)
 
     try:
         updated, unchanged, unresolved, errors = rescan_asset_classes(
-            args.db_file, dry_run=args.dry_run
+            args.db_file, dry_run=args.dry_run, users=args.users
         )
     except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)

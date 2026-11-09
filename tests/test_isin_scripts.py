@@ -27,7 +27,12 @@ from scripts.rescan_isin_issuers import (  # noqa: E402
     main as rescan_main,
     rescan_isins,
 )
-from tests.store_helpers import db_path, read_isin, write_isin  # noqa: E402
+from tests.store_helpers import (  # noqa: E402
+    db_path,
+    read_isin,
+    write_isin,
+    write_positions,
+)
 
 
 class TestListJustetfIsins(unittest.TestCase):
@@ -138,6 +143,48 @@ class TestRescanAssetClasses(unittest.TestCase):
             )
             self.assertIn("unchanged (equity_portfolio)", messages[0])
 
+    def test_users_flag_limits_the_run_to_position_isins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            write_isin(
+                db,
+                {"IE00HELD": None, "IE00ITEM": None, "IE00OTHER": None},
+            )
+            write_positions(
+                db,
+                {
+                    "equity_portfolio": [
+                        {"name": "A", "isin": "IE00ITEM", "shares": 1}
+                    ]
+                },
+                user="alice",
+            )
+            write_positions(
+                db,
+                {
+                    "bond_portfolio": [
+                        {"name": "B", "isin": "IE00OTHER", "shares": 1}
+                    ]
+                },
+                user="bob",
+            )
+            fetched: set[str] = set()
+
+            def fetch(isin: str) -> str:
+                fetched.add(isin)
+                return "equity_portfolio"
+
+            counts = rescan_asset_classes(
+                db, fetch_asset_class=fetch, users=True, emit=lambda _m: None
+            )
+
+            self.assertEqual(fetched, {"IE00ITEM", "IE00OTHER"})
+            self.assertEqual(counts, (2, 0, 0, 0))
+            rows = read_isin(db)
+            self.assertEqual(rows["IE00ITEM"]["bucket"], "equity_portfolio")
+            self.assertEqual(rows["IE00OTHER"]["bucket"], "equity_portfolio")
+            self.assertIsNone(rows["IE00HELD"]["bucket"])
+
     def test_unresolved_focus_keeps_existing_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = db_path(tmp)
@@ -236,7 +283,23 @@ class TestRescanAssetClasses(unittest.TestCase):
                     ["--db-file", str(db), "--dry-run"]
                 )
             self.assertEqual(code, 0)
-            rescan.assert_called_once_with(db, dry_run=True)
+            rescan.assert_called_once_with(db, dry_run=True, users=False)
+
+    def test_main_passes_users(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = db_path(tmp)
+            with (
+                patch(
+                    "scripts.rescan_isin_asset_classes.rescan_asset_classes",
+                    return_value=(0, 0, 0, 0),
+                ) as rescan,
+                redirect_stderr(io.StringIO()),
+            ):
+                code = asset_classes_main(
+                    ["--db-file", str(db), "--users"]
+                )
+            self.assertEqual(code, 0)
+            rescan.assert_called_once_with(db, dry_run=False, users=True)
 
 
 class TestRescanIsins(unittest.TestCase):
