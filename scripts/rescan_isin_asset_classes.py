@@ -7,6 +7,8 @@ Usage::
     python scripts/rescan_isin_asset_classes.py --db-file asalloc.db
     python scripts/rescan_isin_asset_classes.py --db-file asalloc.db --dry-run
     python scripts/rescan_isin_asset_classes.py --db-file asalloc.db --users
+    python scripts/rescan_isin_asset_classes.py --db-file asalloc.db --run \
+state.json
 
 Every ISIN in ``isin_registry`` is fetched from JustETF. The profile's
 Investment focus is mapped to a portfolio bucket and written only when it
@@ -16,6 +18,11 @@ are preserved.
 
 With ``--users`` only ISINs that also appear in ``user_positions`` are
 scanned, so maintenance work can be scoped to the rows portfolios use.
+
+Progress is written to a temp JSON file next to the database, and a
+``--run`` option re-reads that file to resume a partial run. When the
+whole registry has been traversed, the file is removed; if any ISIN is
+still unresolved, it is kept so a later run can continue there.
 """
 
 from __future__ import annotations
@@ -31,7 +38,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from position.justetf_position import just_etf_asset_class  # noqa: E402
-from scripts.curate_isin_names import _position_isins  # noqa: E402
+from scripts.curate_isin_names import (  # noqa: E402,F401
+    _position_isins,
+    _prepare_run_file,
+    _run_payload,
+    _write_run_file,
+)
 from storage.repositories import IsinRegistry  # noqa: E402
 from storage.wiring import isin_backend  # noqa: E402
 
@@ -72,51 +84,101 @@ def rescan_asset_classes(
     fetch_asset_class: FetchAssetClass = just_etf_asset_class,
     dry_run: bool = False,
     users: bool = False,
+    run_file: str | Path | None = None,
     emit: Callable[[str], None] = print,
 ) -> tuple[int, int, int, int]:
     """Refresh every registry bucket from JustETF.
 
     Returns ``(updated, unchanged, unresolved, errors)``. ``unresolved``
     covers profiles whose focus is missing or outside the supported
-    mapping; those rows keep their current bucket.
+    mapping; those rows keep their current bucket. When one or more rows
+    are unresolved, a run file stays behind so a later ``--run <file>``
+    can continue where this run left off.
     """
-    _require_registry_table(db_file)
-    registry = IsinRegistry(isin_backend(db_file))
+    database = Path(db_file).expanduser().resolve()
+    _require_registry_table(database)
+    registry = IsinRegistry(isin_backend(database))
     registry.open()
     updated = unchanged = unresolved = errors = 0
+    path: Path | None = None
+    examined: set[str] = set()
+    failed: set[str] = set()
+    last_isin: str | None = None
     try:
-        isins = sorted(registry.snapshot())
+        candidates = {
+            str(isin).strip().upper()
+            for isin in registry.snapshot()
+            if str(isin).strip()
+        }
         if users:
-            allowed = _position_isins(db_file)
-            isins = [isin for isin in isins if isin in allowed]
-        for isin in isins:
-            try:
-                before = registry.get_bucket_for_isin(isin)
-                after = fetch_asset_class(isin)
-                if after is None:
-                    emit(
-                        f"{isin}: unresolved (no asset class); "
-                        f"kept {before or 'missing'}"
-                    )
-                    unresolved += 1
-                    continue
-                if before == after:
-                    emit(f"{isin}: unchanged ({after})")
-                    unchanged += 1
-                    continue
-                if dry_run:
-                    emit(
-                        f"{isin}: would update {before or 'missing'} -> {after}"
-                    )
+            candidates &= _position_isins(database)
+        if not dry_run:
+            path, examined, failed, last_isin = _prepare_run_file(
+                database,
+                candidates,
+                users=users,
+                run_file=run_file,
+            )
+        pending = (
+            isin for isin in sorted(candidates) if isin not in examined
+        )
+        try:
+            for isin in pending:
+                try:
+                    before = registry.get_bucket_for_isin(isin)
+                    after = fetch_asset_class(isin)
+                    if after is None:
+                        emit(
+                            f"{isin}: unresolved (no asset class); "
+                            f"kept {before or 'missing'}"
+                        )
+                        unresolved += 1
+                        failed.add(isin)
+                        examined.discard(isin)
+                        last_isin = isin
+                        continue
+                    if before == after:
+                        emit(f"{isin}: unchanged ({after})")
+                        unchanged += 1
+                        examined.add(isin)
+                        failed.discard(isin)
+                        last_isin = isin
+                        continue
+                    if dry_run:
+                        emit(
+                            f"{isin}: would update "
+                            f"{before or 'missing'} -> {after}"
+                        )
+                        updated += 1
+                        continue
+                    registry.set_bucket_for_isin(isin, after)
+                    registry.persist()
+                    emit(f"{isin}: {before or 'missing'} -> {after}")
                     updated += 1
-                    continue
-                registry.set_bucket_for_isin(isin, after)
-                registry.persist()
-                emit(f"{isin}: {before or 'missing'} -> {after}")
-                updated += 1
-            except Exception as exc:  # noqa: BLE001 - keep scanning
-                emit(f"{isin}: error: {exc}")
-                errors += 1
+                    examined.add(isin)
+                    failed.discard(isin)
+                    last_isin = isin
+                except Exception as exc:  # noqa: BLE001 - keep scanning
+                    emit(f"{isin}: error: {exc}")
+                    errors += 1
+                    failed.add(isin)
+                    examined.discard(isin)
+                    last_isin = isin
+                finally:
+                    if path is not None:
+                        _write_run_file(
+                            path,
+                            _run_payload(
+                                database,
+                                users=users,
+                                examined=examined,
+                                failed=failed,
+                                last_isin=last_isin,
+                            ),
+                        )
+        finally:
+            if path is not None and not failed:
+                path.unlink(missing_ok=True)
     finally:
         registry.close()
     return updated, unchanged, unresolved, errors
@@ -145,11 +207,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Only rescan ISINs that also appear in user_positions.",
     )
+    parser.add_argument(
+        "--run",
+        type=Path,
+        default=None,
+        help="Resume a previous run from this state file.",
+    )
     args = parser.parse_args(argv)
 
     try:
         updated, unchanged, unresolved, errors = rescan_asset_classes(
-            args.db_file, dry_run=args.dry_run, users=args.users
+            args.db_file,
+            dry_run=args.dry_run,
+            users=args.users,
+            run_file=args.run,
         )
     except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
