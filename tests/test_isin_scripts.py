@@ -283,7 +283,9 @@ class TestRescanAssetClasses(unittest.TestCase):
                     ["--db-file", str(db), "--dry-run"]
                 )
             self.assertEqual(code, 0)
-            rescan.assert_called_once_with(db, dry_run=True, users=False)
+            rescan.assert_called_once_with(
+                db, dry_run=True, users=False, run_file=None
+            )
 
     def test_main_passes_users(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -299,7 +301,9 @@ class TestRescanAssetClasses(unittest.TestCase):
                     ["--db-file", str(db), "--users"]
                 )
             self.assertEqual(code, 0)
-            rescan.assert_called_once_with(db, dry_run=False, users=True)
+            rescan.assert_called_once_with(
+                db, dry_run=False, users=True, run_file=None
+            )
 
 
 class TestRescanIsins(unittest.TestCase):
