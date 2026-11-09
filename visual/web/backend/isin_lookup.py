@@ -5,6 +5,10 @@ The draft UI needs a name before the row exists, but the price resolver
 must run after ``add_constituent`` has registered the selected bucket.
 Keeping those two steps here keeps ``constituents.py`` free of scrape and
 ``RuntimeContext`` dependencies.
+
+The name follows the same eager pattern as the price: the name cached in
+``isin_registry`` fills the draft instantly, and a freshly fetched name
+is persisted there so the next check is a pure database read.
 """
 
 from __future__ import annotations
@@ -14,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from position import justetf_position
+from storage.repositories import IsinRegistry
+from storage.wiring import isin_backend
 
-from .constituents import _cached_price_for, cache_lookup
+from .constituents import _cached_price_for, cache_lookup, resolve_name_for_add
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +38,13 @@ class IsinLookup:
 def lookup_isin(db_file: str | Path, isin: str) -> IsinLookup:
     """Resolve name, cached price, and existence for ``isin``.
 
-    Name parsing doubles as a product probe when it succeeds; the chart
-    probe is only the fallback. A cached price alone is also enough to
-    treat the ISIN as known, so the draft can fill it without network.
+    The name is resolved exactly like on add: registry cached first, a
+    JustETF fetch as fallback (persisted back into the registry). A
+    broken registry skips the cache and fetches directly, without
+    writing. Name parsing doubles as a product probe when it succeeds;
+    the chart probe is only the fallback. A cached price alone is also
+    enough to treat the ISIN as known, so the draft can fill it without
+    network.
     """
     cleaned = (isin or "").strip().upper()
     if not cleaned:
@@ -43,11 +53,25 @@ def lookup_isin(db_file: str | Path, isin: str) -> IsinLookup:
     cache = cache_lookup(str(db_file)) if db_file else {}
     price = _cached_price_for(cache, cleaned)
 
-    try:
-        name = justetf_position.just_etf_name(cleaned)
-    except Exception as exc:
-        logger.warning("JustETF name lookup failed for %s (%s)", cleaned, exc)
-        name = None
+    name: str | None = None
+    resolved = False
+    provider = justetf_position.just_etf_name
+    if db_file:
+        try:
+            registry = IsinRegistry(isin_backend(str(db_file)))
+            name = resolve_name_for_add(
+                cleaned, registry=registry, name_provider=provider
+            )
+            resolved = True
+        except Exception as exc:
+            logger.warning("isin_registry name lookup failed for %s (%s)", cleaned, exc)
+    if not name and not resolved:
+        # Registry unusable or absent: fetch directly, without writing.
+        try:
+            name = provider(cleaned)
+        except Exception as exc:
+            logger.warning("JustETF name lookup failed for %s (%s)", cleaned, exc)
+            name = None
 
     exists = bool(name) or price is not None
     if not exists:

@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tests.store_helpers import db_path, write_cache
+from tests.store_helpers import db_path, read_isin, write_cache, write_isin
 
 from visual.web.backend.isin_lookup import fetch_price_for_isin, lookup_isin
 
@@ -32,6 +33,54 @@ class TestLookupIsin(unittest.TestCase):
         self.assertEqual(result.name, "Example ETF")
         self.assertEqual(result.price, 12.5)
         probe.assert_not_called()
+
+    def test_registry_name_fills_the_draft_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = db_path(tmp)
+            write_isin(db_file, {_ISIN: {"name": "Cached ETF"}})
+            with patch(
+                "position.justetf_position.just_etf_name"
+            ) as name, patch(
+                "position.justetf_position.just_etf_product_url_exists"
+            ) as probe:
+                result = lookup_isin(db_file, _ISIN)
+        self.assertTrue(result.exists)
+        self.assertEqual(result.name, "Cached ETF")
+        self.assertIsNone(result.price)
+        name.assert_not_called()
+        probe.assert_not_called()
+
+    def test_fetched_name_is_persisted_to_the_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = db_path(tmp)
+            with patch(
+                "position.justetf_position.just_etf_name",
+                return_value="Fresh ETF",
+            ), patch(
+                "position.justetf_position.just_etf_product_url_exists"
+            ) as probe:
+                result = lookup_isin(db_file, f" {_ISIN.lower()} ")
+        self.assertTrue(result.exists)
+        self.assertEqual(result.name, "Fresh ETF")
+        probe.assert_not_called()
+        self.assertEqual(read_isin(db_file)[_ISIN]["name"], "Fresh ETF")
+
+    def test_unmigrated_registry_still_fills_the_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "old.db"
+            with sqlite3.connect(db_file) as conn:
+                conn.execute(
+                    "CREATE TABLE isin_registry "
+                    "(isin TEXT PRIMARY KEY, issuer TEXT, bucket TEXT, "
+                    "product_ref TEXT, visits INTEGER NOT NULL DEFAULT 0)"
+                )
+            with patch(
+                "position.justetf_position.just_etf_name",
+                return_value="Direct ETF",
+            ):
+                result = lookup_isin(db_file, _ISIN)
+        self.assertTrue(result.exists)
+        self.assertEqual(result.name, "Direct ETF")
 
     def test_cached_price_keeps_isin_known_when_name_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
