@@ -17,6 +17,7 @@ from cli.common import (
     BOND_PORTFOLIO,
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
+    CRYPTO_PORTFOLIO,
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
 )
@@ -173,6 +174,8 @@ def _asset_class_from_focus(focus: str) -> str | None:
         return COMMODITY_PORTFOLIO
     if base == "money market":
         return CASH_PORTFOLIO
+    if base in {"crypto", "cryptocurrency", "cryptocurrencies"}:
+        return CRYPTO_PORTFOLIO
     return None
 
 

@@ -11,6 +11,7 @@ from cli.common import (
     BOND_PORTFOLIO,
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
+    CRYPTO_PORTFOLIO,
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
 )
@@ -74,6 +75,10 @@ class TestAssetClassFromFocus(unittest.TestCase):
             "Bonds, EUR, World, Corporate, Maturity 1-3": (
                 FIXED_MATURITY_BOND_PORTFOLIO
             ),
+            "Crypto, World": CRYPTO_PORTFOLIO,
+            "Cryptocurrency, World": CRYPTO_PORTFOLIO,
+            "Cryptocurrencies, Global": CRYPTO_PORTFOLIO,
+            "crypto, world": CRYPTO_PORTFOLIO,
         }
         for focus, expected in cases.items():
             with self.subTest(focus=focus):

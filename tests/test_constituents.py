@@ -199,6 +199,9 @@ class TestLoadConstituents(unittest.TestCase):
                 "Fixed Maturity",
                 "Cash",
                 "Pensions",
+                "Crypto",
+                "Real Estate",
+                "Private Equity",
                 "Weird Bucket",
             ],
         )
@@ -226,6 +229,9 @@ class TestLoadConstituents(unittest.TestCase):
                 "Fixed Maturity",
                 "Cash",
                 "Pensions",
+                "Crypto",
+                "Real Estate",
+                "Private Equity",
             ],
         )
 
@@ -369,13 +375,13 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_thin_rules_divide_sections(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="section-rule"'), 6)
+        self.assertEqual(page.count('class="section-rule"'), 9)
         self.assertIn("<h2>Equity</h2>", page)
         self.assertIn("<h2>Weird Bucket</h2>", page)
 
     def test_tables_scroll_horizontally_on_small_screens(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="table-scroll"'), 7)
+        self.assertEqual(page.count('class="table-scroll"'), 10)
         css = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -490,15 +496,19 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_sections_offer_add_row_button(self) -> None:
         page = self._page()
-        # One + button per section: the six canonical classes plus the
+        # One + button per section: the nine canonical classes plus the
         # fixture's extra bucket.
-        self.assertEqual(page.count('class="add-row"'), 7)
+        self.assertEqual(page.count('class="add-row"'), 10)
         self.assertIn(
             '<button type="button" class="add" data-bucket="equity_portfolio"',
             page,
         )
         self.assertIn(
             '<button type="button" class="add" data-bucket="cash_portfolio"',
+            page,
+        )
+        self.assertIn(
+            '<button type="button" class="add" data-bucket="crypto_portfolio"',
             page,
         )
         # No draft rows in server-rendered HTML; JS builds them on demand.
@@ -575,6 +585,9 @@ class TestRenderConstituentsPage(unittest.TestCase):
                 "Fixed Maturity",
                 "Cash",
                 "Pensions",
+                "Crypto",
+                "Real Estate",
+                "Private Equity",
             ],
         )
         row = dict((label, rows) for _, label, rows in sections)["Pensions"][0]
@@ -1624,6 +1637,9 @@ class TestFreshUserSections(unittest.TestCase):
                 "Fixed Maturity",
                 "Cash",
                 "Pensions",
+                "Crypto",
+                "Real Estate",
+                "Private Equity",
             ],
         )
         self.assertTrue(all(rows == [] for _, _, rows in sections))
@@ -1632,7 +1648,7 @@ class TestFreshUserSections(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_file = self._store(Path(tmp), None)
             sections = load_constituents(db_file, "alice")
-        self.assertEqual(len(sections), 6)
+        self.assertEqual(len(sections), 9)
         self.assertTrue(all(rows == [] for _, _, rows in sections))
 
     def test_extra_buckets_of_other_users_are_not_shown(self) -> None:
@@ -1641,19 +1657,19 @@ class TestFreshUserSections(unittest.TestCase):
             write_positions(db_file, {}, user="alice")
             write_positions(
                 db_file,
-                {"crypto_portfolio": [{"name": "C"}]},
+                {"weird_extra_bucket": [{"name": "C"}]},
                 user="bob",
             )
             write_cache(db_file, {})
             sections = load_constituents(db_file, "alice")
-        self.assertNotIn("Crypto Portfolio", [label for _, label, _ in sections])
+        self.assertNotIn("Weird Extra Bucket", [label for _, label, _ in sections])
 
     def test_add_button_on_every_section(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_file = self._store(Path(tmp), {})
             page = render_constituents_page(load_constituents(db_file, "alice"))
         # One "+" per class, so an empty portfolio can be filled.
-        self.assertEqual(page.count('class="add-row"'), 6)
+        self.assertEqual(page.count('class="add-row"'), 9)
         for bucket in (
             "equity_portfolio",
             "bond_portfolio",
@@ -1661,6 +1677,9 @@ class TestFreshUserSections(unittest.TestCase):
             "fixed_maturity_bond_portfolio",
             "cash_portfolio",
             "pension_portfolio",
+            "crypto_portfolio",
+            "real_estate_portfolio",
+            "private_equity_portfolio",
         ):
             self.assertIn(f'data-bucket="{bucket}"', page)
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from utils import save_position_in_cache
 from cli.common import (
     BROKER,
+    CRYPTO_PORTFOLIO,
     DEFAULT_ISIN_PORTFOLIO_BUCKET,
     DMEM,
     DMEM_OTHER,
@@ -23,6 +24,7 @@ from position.blackrock_position import (
     ishares_product_ref_for_isin,
     ishares_product_url_exists,
 )
+from position.crypto_position import CryptoPosition
 from position.invesco_position import InvescoPosition, invesco_product_url_exists
 from position.justetf_position import JustETFPosition
 from position.l_and_g_position import LAndGPosition, landg_product_url_exists
@@ -187,6 +189,12 @@ def factory(
     prefer_scrape_value = _scrape_holdings_value_prevails(broker, value, ctx)
     logger.info("Factory: prefer scrape value from broker %s for position %s: %s", broker, name, prefer_scrape_value)
 
+    # Registry bucket decides crypto routing: crypto ETCs shortcut the
+    # issuer dispatch entirely (CryptoPosition never geo/sector-scrapes).
+    registry = ctx.isin_registry
+    bucket = registry.get_bucket_for_isin(isin) if isin else None
+    crypto_position = bucket == CRYPTO_PORTFOLIO
+
     # ``ctor_price``/``countries_arg``/``sectors_arg`` are the only cache-vs-network switches: a value
     # means "use this", ``None`` lets the Position fetch it from its own source.
     if use_broker_quote:
@@ -271,7 +279,13 @@ def factory(
 
     validate_data = _validate_data_for_flags(fetch_geosplit, fetch_sectorsplit)
     position: JustETFPosition | YFinancePosition | None = None
-    if issuer in _ISSUER_POSITION:
+    if crypto_position:
+        logger.info(
+            "Factory: using CryptoPosition for %s (crypto bucket)",
+            isin,
+        )
+        position = CryptoPosition(isin, **ctor_kwargs)
+    elif issuer in _ISSUER_POSITION:
         position_cls = _ISSUER_POSITION[issuer]
         logger.info(
             "Factory: using %s for %s (registry)",

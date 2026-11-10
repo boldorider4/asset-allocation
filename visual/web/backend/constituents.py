@@ -15,10 +15,13 @@ import re
 from typing import Any, Callable
 
 from cli.common import (
+    ASSET_BUCKETS,
+    ASSET_BUCKET_KEYS,
     BROKER,
     DEFAULT_USER_NAME,
     DMEM,
     DMEM_OTHER,
+    FIXED_MATURITY_BOND_PORTFOLIO,
     ISIN,
     NAME,
     PRICE,
@@ -36,16 +39,14 @@ from storage.wiring import (
 
 logger = logging.getLogger(__name__)
 
-# Canonical section order with display labels; unknown bucket keys are
-# appended after these, prettified.
-SECTION_ORDER: tuple[tuple[str, str], ...] = (
-    ("equity_portfolio", "Equity"),
-    ("bond_portfolio", "Fixed Income"),
-    ("commodity_portfolio", "Commodities / Inflation"),
-    ("fixed_maturity_bond_portfolio", "Fixed Maturity"),
-    ("cash_portfolio", "Cash"),
-    ("pension_portfolio", "Pensions"),
-)
+# Canonical section order (bucket keys and display labels) is shared
+# with ``cli.common``; unknown bucket keys are appended after these,
+# prettified.
+SECTION_ORDER: tuple[tuple[str, str], ...] = ASSET_BUCKETS
+
+# The one bucket a user's explicit choice is honored in without a
+# registry cross-check (adding a bond into it is an intent to schedule).
+_FIXED_MATURITY_BUCKET = FIXED_MATURITY_BOND_PORTFOLIO
 
 _MISSING = "—"
 _NO_QUOTE = "-"
@@ -591,10 +592,6 @@ def known_brokers() -> list[dict[str, str]]:
 
 
 _ISIN_SHAPE_RE = re.compile(r"^[A-Za-z0-9]{12}$")
-
-# The one bucket a user's explicit choice is honored in without a
-# registry cross-check (adding a bond into it is an intent to schedule).
-_FIXED_MATURITY_BUCKET = "fixed_maturity_bond_portfolio"
 
 
 def resolve_name_for_add(
