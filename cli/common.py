@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared constants (portfolio bucket keys, position field keys, etc.)."""
 
-from typing import Literal
-
 EQUITY_PORTFOLIO = "equity_portfolio"
 FIXED_MATURITY_BOND_PORTFOLIO = "fixed_maturity_bond_portfolio"
 CASH_PORTFOLIO = "cash_portfolio"
@@ -18,17 +16,6 @@ PRIVATE_EQUITY_PORTFOLIO = "private_equity_portfolio"
 #: section order, where empty sections are always rendered for a fresh
 #: user). Non-canonical buckets a user happens to hold are appended
 #: after these.
-AssetBucket = Literal[
-    "equity_portfolio",
-    "bond_portfolio",
-    "commodity_portfolio",
-    "crypto_portfolio",
-    "fixed_maturity_bond_portfolio",
-    "cash_portfolio",
-    "pension_portfolio",
-    "real_estate_portfolio",
-    "private_equity_portfolio",
-]
 ASSET_BUCKETS: tuple[tuple[str, str], ...] = (
     (EQUITY_PORTFOLIO, "Equity"),
     (BOND_PORTFOLIO, "Fixed Income"),
@@ -43,6 +30,39 @@ ASSET_BUCKETS: tuple[tuple[str, str], ...] = (
 ASSET_BUCKET_KEYS: frozenset[str] = frozenset(
     key for key, _ in ASSET_BUCKETS
 )
+
+# Canonical broker literals: single source of truth for broker ids in
+# scrapes (data labels), factory switch logic, and the constituents UI.
+# The two manual-kind brokers are not connected to any scrape: the
+# realestate broker is forced on Real Estate Equity entries, and the
+# cryptowallet broker is offered in the add-row dropdown only inside
+# the Cryptocurrencies section (see BROKER_SECTIONS).
+OSKAR = "oskar"
+SCALABLE = "scalable"
+TRADEREPUBLIC = "traderepublic"
+CHECK24 = "check24"
+ALTE_LEIPZIGER = "alte-leipziger"
+CRYPTOWALLET = "cryptowallet"
+REALESTATE = "realestate"
+
+#: Broker id -> icon filename served from frontend/icons/.
+BROKER_ICONS: dict[str, str] = {
+    OSKAR: "oskar.png",
+    SCALABLE: "scalable.png",
+    TRADEREPUBLIC: "traderepublic.png",
+    CHECK24: "check24.png",
+    ALTE_LEIPZIGER: "alte-leipziger.png",
+    CRYPTOWALLET: "cryptowallet.svg",
+    REALESTATE: "realestate.svg",
+}
+
+#: Sections a broker is offered in (add-row dropdown); keys missing from
+#: this mapping are offered in every section. REALESTATE only appears
+#: where it is also forced; CRYPTOWALLET only in the crypto section.
+BROKER_SECTIONS: dict[str, frozenset[str]] = {
+    CRYPTOWALLET: frozenset([CRYPTO_PORTFOLIO]),
+    REALESTATE: frozenset([REAL_ESTATE_PORTFOLIO]),
+}
 
 # Portfolio user used when nothing else is configured: positions and
 # portfolios are keyed by user.

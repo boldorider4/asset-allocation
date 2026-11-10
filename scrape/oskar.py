@@ -34,6 +34,7 @@ from cli.common import (
     EQUITY_PORTFOLIO,
     ISIN,
     NAME,
+    OSKAR,
     SHARES,
     USAVN,
     VALUE,
@@ -42,7 +43,7 @@ from cli.common import (
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-_OSKAR = "oskar"
+_OSKAR = OSKAR
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
 _DASHBOARD_PATH = urlparse(_DASHBOARD_URL).path.rstrip("/")

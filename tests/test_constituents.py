@@ -32,6 +32,7 @@ from tests.store_helpers import (
 )
 
 from visual.web.backend.constituents import (
+    _render_row,
     assets_portfolio_name,
     add_constituent,
     delete_constituent,
@@ -196,7 +197,7 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
-                "Crypto",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
                 "Annuities",
@@ -226,7 +227,7 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
-                "Crypto",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
                 "Annuities",
@@ -582,7 +583,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
-                "Crypto",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
                 "Annuities",
@@ -1598,17 +1599,35 @@ class TestReorderConstituents(unittest.TestCase):
 
 
 class TestKnownBrokers(unittest.TestCase):
-    def test_five_icon_brokers_with_marks(self) -> None:
+    def test_seven_icon_brokers_with_marks_and_sections(self) -> None:
         brokers = known_brokers()
         self.assertEqual(
             [b["id"] for b in brokers],
-            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+            [
+                "oskar",
+                "scalable",
+                "traderepublic",
+                "check24",
+                "alte-leipziger",
+                "cryptowallet",
+                "realestate",
+            ],
         )
         for entry in brokers:
             self.assertIn(entry["id"], entry["mark"])
             self.assertTrue(
                 "icons/" in entry["mark"] or "<svg" in entry["mark"]
             )
+        by_id = {b["id"]: b for b in brokers}
+        self.assertEqual(
+            by_id["cryptowallet"]["sections"], ["crypto_portfolio"]
+        )
+        self.assertEqual(
+            by_id["realestate"]["sections"], ["real_estate_portfolio"]
+        )
+        # Generic brokers carry no sections field (offered everywhere).
+        self.assertNotIn("sections", by_id["scalable"])
+        self.assertNotIn("sections", by_id["oskar"])
 
 
 class TestFreshUserSections(unittest.TestCase):
@@ -1634,7 +1653,7 @@ class TestFreshUserSections(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
-                "Crypto",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
                 "Annuities",
@@ -1694,6 +1713,39 @@ class TestAddConstituent(unittest.TestCase):
         db_file = db_path(tmp)
         write_positions(db_file, {})
         return db_file
+
+    def test_real_estate_rows_get_realestate_broker_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "real_estate_portfolio",
+                name="Rental Flat",
+                value="350000",
+                broker="scalable",  # posted choice is ignored
+                cache=None,
+            )
+            self.assertEqual(display["broker"], "realestate")
+            stored = _positions(db_file, "default")["real_estate_portfolio"][0]
+            self.assertEqual(stored["broker"], "realestate")
+            self.assertEqual(stored["value"], 350000.0)
+            # The persisted row renders the stylized house icon.
+            self.assertIn("icons/realestate.svg", _render_row(display))
+
+    def test_cryptowallet_is_a_valid_broker_for_crypto_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "crypto_portfolio",
+                name="BTC wallet",
+                value="1234.5",
+                broker="cryptowallet",
+                cache=None,
+            )
+            self.assertEqual(display["broker"], "cryptowallet")
+            stored = _positions(db_file, "default")["crypto_portfolio"][0]
+            self.assertEqual(stored["broker"], "cryptowallet")
 
     def test_full_row_appends_and_reports_display(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2933,13 +2985,24 @@ class TestConstituentsRoute(_RouteCase):
         status, body = self._get("/api/constituents/brokers")
         self.assertEqual(status, 200)
         brokers = json.loads(body)["brokers"]
-        self.assertEqual(len(brokers), 5)
+        self.assertEqual(len(brokers), 7)
         self.assertEqual(
             [b["id"] for b in brokers],
-            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+            [
+                "oskar",
+                "scalable",
+                "traderepublic",
+                "check24",
+                "alte-leipziger",
+                "cryptowallet",
+                "realestate",
+            ],
         )
         for entry in brokers:
             self.assertTrue("icons/" in entry["mark"] or "<svg" in entry["mark"])
+        by_id = {b["id"]: b for b in brokers}
+        self.assertEqual(by_id["realestate"]["sections"], ["real_estate_portfolio"])
+        self.assertNotIn("sections", by_id["scalable"])
 
     def test_post_check_isin_reports_name_price_and_existence(self) -> None:
         from unittest.mock import patch

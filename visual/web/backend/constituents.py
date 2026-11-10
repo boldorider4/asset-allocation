@@ -18,6 +18,8 @@ from cli.common import (
     ASSET_BUCKETS,
     ASSET_BUCKET_KEYS,
     BROKER,
+    BROKER_ICONS,
+    BROKER_SECTIONS,
     DEFAULT_USER_NAME,
     DMEM,
     DMEM_OTHER,
@@ -25,6 +27,8 @@ from cli.common import (
     ISIN,
     NAME,
     PRICE,
+    REAL_ESTATE_PORTFOLIO,
+    REALESTATE,
     SHARES,
     SHORT_NAME,
     USAVN,
@@ -51,14 +55,9 @@ _FIXED_MATURITY_BUCKET = FIXED_MATURITY_BOND_PORTFOLIO
 _MISSING = "—"
 _NO_QUOTE = "-"
 
-# Broker icons served from visual/web/icons/ (copied by `make web`).
-_BROKER_ICONS: dict[str, str] = {
-    "oskar": "oskar.png",
-    "scalable": "scalable.png",
-    "traderepublic": "traderepublic.png",
-    "check24": "check24.png",
-    "alte-leipziger": "alte-leipziger.png",
-}
+# Broker icons are the shared BROKER_ICONS catalog in ``cli.common``
+# (id -> icon filename served from frontend/icons/); unknown brokers
+# keep the letter-mark fallback below.
 _FALLBACK_MARK = ("?", "#6b6259")
 
 # Max accepted characters per editable box (Name is plain text, not a box).
@@ -75,7 +74,7 @@ def _prettify_bucket(key: str) -> str:
 def _broker_mark(broker: str | None) -> str:
     key = (broker or "").strip().casefold()
     title = html.escape(broker or "", quote=True)
-    icon = _BROKER_ICONS.get(key)
+    icon = BROKER_ICONS.get(key)
     if icon is not None:
         return (
             f'<span class="broker-mark" title="{title}">'
@@ -583,11 +582,24 @@ def delete_constituent(
     return {"deleted": True, "rows": len(rows)}
 
 
-def known_brokers() -> list[dict[str, str]]:
-    """Brokers offered by the add-row dropdown, with ready-made icon marks."""
+def known_brokers() -> list[dict[str, Any]]:
+    """Brokers offered by the add-row dropdown, with ready-made icon marks.
+
+    Restrictive entries carry the ``sections`` list (bucket keys) where
+    they are offered; unrestricted ones omit it (available everywhere).
+    """
     return [
-        {"id": key, "label": key, "mark": _broker_mark(key)}
-        for key in _BROKER_ICONS
+        {
+            "id": key,
+            "label": key,
+            "mark": _broker_mark(key),
+            **(
+                {"sections": sorted(BROKER_SECTIONS[key])}
+                if key in BROKER_SECTIONS
+                else {}
+            ),
+        }
+        for key in BROKER_ICONS
     ]
 
 
@@ -663,9 +675,13 @@ def add_constituent(
     rows, ``bucket``/``index`` reflecting the row's real home) for
     rendering.
     """
+    # Real Estate Equity entries carry no vendor link: the realestate
+    # broker is forced regardless of what was posted.
+    if bucket == REAL_ESTATE_PORTFOLIO:
+        broker = REALESTATE
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be a non-blank string")
-    if broker not in _BROKER_ICONS:
+    if broker not in BROKER_ICONS:
         raise ValueError(f"unknown broker: {broker!r}")
     if isin is None or (isinstance(isin, str) and not isin.strip()):
         clean_isin = None

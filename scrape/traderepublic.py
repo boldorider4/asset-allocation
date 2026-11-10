@@ -19,7 +19,7 @@ from typing import Any
 
 from typing import TYPE_CHECKING
 
-from cli.common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, USAVN, VALUE
+from cli.common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, SHARES, TRADEREPUBLIC, USAVN, VALUE
 from cli.logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-_TRADEREPUBLIC = "traderepublic"
+_TRADEREPUBLIC = TRADEREPUBLIC
 _CASH_NAME = "Cash"
 _CASH_FETCH_KEY = "__TRADEREPUBLIC_CASH__"
 

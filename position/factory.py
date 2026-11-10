@@ -41,9 +41,7 @@ from position.vanguard_position import (
 )
 from position.xtrackers_position import XtrackersPosition, dws_product_url_exists
 from position.yfinance_position import YFinancePosition
-from scrape.oskar import _OSKAR as OSKAR
-from scrape.scalable import _SCALABLE as SCALABLE
-from scrape.traderepublic import _TRADEREPUBLIC as TRADEREPUBLIC
+from cli.common import OSKAR, SCALABLE, TRADEREPUBLIC
 from cli.logger import attach_color_stderr_handler_for_module
 
 if TYPE_CHECKING:
