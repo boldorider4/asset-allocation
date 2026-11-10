@@ -33,7 +33,7 @@ ASSET_BUCKETS: tuple[tuple[str, str], ...] = (
     (EQUITY_PORTFOLIO, "Equity"),
     (BOND_PORTFOLIO, "Fixed Income"),
     (COMMODITY_PORTFOLIO, "Commodities / Inflation"),
-    (CRYPTO_PORTFOLIO, "Crypto"),
+    (CRYPTO_PORTFOLIO, "Cryptocurrencies"),
     (FIXED_MATURITY_BOND_PORTFOLIO, "Fixed Maturity"),
     (CASH_PORTFOLIO, "Cash"),
     (PENSION_PORTFOLIO, "Annuities"),
