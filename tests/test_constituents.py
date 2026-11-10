@@ -196,11 +196,11 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Crypto",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
-                "Crypto",
-                "Real Estate",
+                "Annuities",
+                "Real Estate Equity",
                 "Private Equity",
                 "Weird Bucket",
             ],
@@ -226,11 +226,11 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Crypto",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
-                "Crypto",
-                "Real Estate",
+                "Annuities",
+                "Real Estate Equity",
                 "Private Equity",
             ],
         )
@@ -558,7 +558,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         )
 
     def test_pension_rows_show_dashes(self) -> None:
-        # Pensions carry no ISIN, so shares/price lock as "-"; the bucket
+        # Annuities carry no ISIN, so shares/price lock as "-"; the bucket
         # itself plays no role in the rule.
         assets = {
             "pension_portfolio": [
@@ -582,15 +582,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Crypto",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
-                "Crypto",
-                "Real Estate",
+                "Annuities",
+                "Real Estate Equity",
                 "Private Equity",
             ],
         )
-        row = dict((label, rows) for _, label, rows in sections)["Pensions"][0]
+        row = dict((label, rows) for _, label, rows in sections)["Annuities"][0]
         self.assertFalse(row["editable_shares"])
         self.assertTrue(row["no_quote"])
         page = render_constituents_page(sections)
@@ -1634,11 +1634,11 @@ class TestFreshUserSections(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Crypto",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
-                "Crypto",
-                "Real Estate",
+                "Annuities",
+                "Real Estate Equity",
                 "Private Equity",
             ],
         )

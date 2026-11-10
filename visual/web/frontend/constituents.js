@@ -260,6 +260,12 @@
    */
   var brokerCatalog = null;
 
+  /* Manual buckets (no vendor page to track): values only, no ISIN,
+   * so the draft row gets a locked dash in the ISIN column and the
+   * JustETF check can never fire for them.
+   */
+  var NO_ISIN_BUCKETS = new Set(["real_estate_portfolio", "private_equity_portfolio"]);
+
   async function loadBrokers() {
     if (brokerCatalog) {
       return brokerCatalog;
@@ -390,7 +396,11 @@
 
     row.appendChild(draftCell(draftInput("draft-name name", 64)));
     row.appendChild(draftCell(draftInput("draft-group text", 32)));
-    row.appendChild(draftCell(draftInput("draft-isin", 12)));
+    if (NO_ISIN_BUCKETS.has(bucket)) {
+      row.appendChild(draftCell(draftDash()));
+    } else {
+      row.appendChild(draftCell(draftInput("draft-isin", 12)));
+    }
     const valueCell = draftCell(draftInput("draft-value", 16));
     valueCell.appendChild(unitSpan());
     row.appendChild(valueCell);

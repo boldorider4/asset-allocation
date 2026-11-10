@@ -22,10 +22,10 @@ AssetBucket = Literal[
     "equity_portfolio",
     "bond_portfolio",
     "commodity_portfolio",
+    "crypto_portfolio",
     "fixed_maturity_bond_portfolio",
     "cash_portfolio",
     "pension_portfolio",
-    "crypto_portfolio",
     "real_estate_portfolio",
     "private_equity_portfolio",
 ]
@@ -33,11 +33,11 @@ ASSET_BUCKETS: tuple[tuple[str, str], ...] = (
     (EQUITY_PORTFOLIO, "Equity"),
     (BOND_PORTFOLIO, "Fixed Income"),
     (COMMODITY_PORTFOLIO, "Commodities / Inflation"),
+    (CRYPTO_PORTFOLIO, "Crypto"),
     (FIXED_MATURITY_BOND_PORTFOLIO, "Fixed Maturity"),
     (CASH_PORTFOLIO, "Cash"),
-    (PENSION_PORTFOLIO, "Pensions"),
-    (CRYPTO_PORTFOLIO, "Crypto"),
-    (REAL_ESTATE_PORTFOLIO, "Real Estate"),
+    (PENSION_PORTFOLIO, "Annuities"),
+    (REAL_ESTATE_PORTFOLIO, "Real Estate Equity"),
     (PRIVATE_EQUITY_PORTFOLIO, "Private Equity"),
 )
 ASSET_BUCKET_KEYS: frozenset[str] = frozenset(
