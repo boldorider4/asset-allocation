@@ -52,7 +52,7 @@ class TestOskarCategoryFromRow(unittest.TestCase):
 
     def test_infers_from_subcategory(self) -> None:
         self.assertEqual(
-            _oskar_category_from_row(category="", subcategory="Aktien USA"),
+            _oskar_category_from_row(category="", subcategory="Aktien US"),
             _OSKAR_CATEGORY_AKTIEN,
         )
         self.assertEqual(
