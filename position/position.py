@@ -82,6 +82,9 @@ _LIST_OF_STAPLE_SECTORS = [
     "Utilities",
     "Real Estate",
     "Government",
+    # Crypto ETC/ETPs carry no vendor sector table; CryptoPosition
+    # hardcodes this one wedge for the whole crypto bucket.
+    "Cryptocurrencies",
     "Other",
 ]
 

@@ -32,6 +32,7 @@ from tests.store_helpers import (
 )
 
 from visual.web.backend.constituents import (
+    _render_row,
     assets_portfolio_name,
     add_constituent,
     delete_constituent,
@@ -196,9 +197,12 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
+                "Annuities",
+                "Real Estate Equity",
+                "Private Equity",
                 "Weird Bucket",
             ],
         )
@@ -223,9 +227,12 @@ class TestLoadConstituents(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
+                "Annuities",
+                "Real Estate Equity",
+                "Private Equity",
             ],
         )
 
@@ -369,13 +376,13 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_thin_rules_divide_sections(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="section-rule"'), 6)
+        self.assertEqual(page.count('class="section-rule"'), 9)
         self.assertIn("<h2>Equity</h2>", page)
         self.assertIn("<h2>Weird Bucket</h2>", page)
 
     def test_tables_scroll_horizontally_on_small_screens(self) -> None:
         page = self._page()
-        self.assertEqual(page.count('class="table-scroll"'), 7)
+        self.assertEqual(page.count('class="table-scroll"'), 10)
         css = (
             Path(__file__).resolve().parent.parent
             / "visual"
@@ -490,15 +497,19 @@ class TestRenderConstituentsPage(unittest.TestCase):
 
     def test_sections_offer_add_row_button(self) -> None:
         page = self._page()
-        # One + button per section: the six canonical classes plus the
+        # One + button per section: the nine canonical classes plus the
         # fixture's extra bucket.
-        self.assertEqual(page.count('class="add-row"'), 7)
+        self.assertEqual(page.count('class="add-row"'), 10)
         self.assertIn(
             '<button type="button" class="add" data-bucket="equity_portfolio"',
             page,
         )
         self.assertIn(
             '<button type="button" class="add" data-bucket="cash_portfolio"',
+            page,
+        )
+        self.assertIn(
+            '<button type="button" class="add" data-bucket="crypto_portfolio"',
             page,
         )
         # No draft rows in server-rendered HTML; JS builds them on demand.
@@ -548,7 +559,7 @@ class TestRenderConstituentsPage(unittest.TestCase):
         )
 
     def test_pension_rows_show_dashes(self) -> None:
-        # Pensions carry no ISIN, so shares/price lock as "-"; the bucket
+        # Annuities carry no ISIN, so shares/price lock as "-"; the bucket
         # itself plays no role in the rule.
         assets = {
             "pension_portfolio": [
@@ -572,12 +583,15 @@ class TestRenderConstituentsPage(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
+                "Annuities",
+                "Real Estate Equity",
+                "Private Equity",
             ],
         )
-        row = dict((label, rows) for _, label, rows in sections)["Pensions"][0]
+        row = dict((label, rows) for _, label, rows in sections)["Annuities"][0]
         self.assertFalse(row["editable_shares"])
         self.assertTrue(row["no_quote"])
         page = render_constituents_page(sections)
@@ -1585,17 +1599,35 @@ class TestReorderConstituents(unittest.TestCase):
 
 
 class TestKnownBrokers(unittest.TestCase):
-    def test_five_icon_brokers_with_marks(self) -> None:
+    def test_seven_icon_brokers_with_marks_and_sections(self) -> None:
         brokers = known_brokers()
         self.assertEqual(
             [b["id"] for b in brokers],
-            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+            [
+                "oskar",
+                "scalable",
+                "traderepublic",
+                "check24",
+                "alte-leipziger",
+                "cryptowallet",
+                "realestate",
+            ],
         )
         for entry in brokers:
             self.assertIn(entry["id"], entry["mark"])
             self.assertTrue(
                 "icons/" in entry["mark"] or "<svg" in entry["mark"]
             )
+        by_id = {b["id"]: b for b in brokers}
+        self.assertEqual(
+            by_id["cryptowallet"]["sections"], ["crypto_portfolio"]
+        )
+        self.assertEqual(
+            by_id["realestate"]["sections"], ["real_estate_portfolio"]
+        )
+        # Generic brokers carry no sections field (offered everywhere).
+        self.assertNotIn("sections", by_id["scalable"])
+        self.assertNotIn("sections", by_id["oskar"])
 
 
 class TestFreshUserSections(unittest.TestCase):
@@ -1621,9 +1653,12 @@ class TestFreshUserSections(unittest.TestCase):
                 "Equity",
                 "Fixed Income",
                 "Commodities / Inflation",
+                "Cryptocurrencies",
                 "Fixed Maturity",
                 "Cash",
-                "Pensions",
+                "Annuities",
+                "Real Estate Equity",
+                "Private Equity",
             ],
         )
         self.assertTrue(all(rows == [] for _, _, rows in sections))
@@ -1632,7 +1667,7 @@ class TestFreshUserSections(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_file = self._store(Path(tmp), None)
             sections = load_constituents(db_file, "alice")
-        self.assertEqual(len(sections), 6)
+        self.assertEqual(len(sections), 9)
         self.assertTrue(all(rows == [] for _, _, rows in sections))
 
     def test_extra_buckets_of_other_users_are_not_shown(self) -> None:
@@ -1641,19 +1676,19 @@ class TestFreshUserSections(unittest.TestCase):
             write_positions(db_file, {}, user="alice")
             write_positions(
                 db_file,
-                {"crypto_portfolio": [{"name": "C"}]},
+                {"weird_extra_bucket": [{"name": "C"}]},
                 user="bob",
             )
             write_cache(db_file, {})
             sections = load_constituents(db_file, "alice")
-        self.assertNotIn("Crypto Portfolio", [label for _, label, _ in sections])
+        self.assertNotIn("Weird Extra Bucket", [label for _, label, _ in sections])
 
     def test_add_button_on_every_section(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_file = self._store(Path(tmp), {})
             page = render_constituents_page(load_constituents(db_file, "alice"))
         # One "+" per class, so an empty portfolio can be filled.
-        self.assertEqual(page.count('class="add-row"'), 6)
+        self.assertEqual(page.count('class="add-row"'), 9)
         for bucket in (
             "equity_portfolio",
             "bond_portfolio",
@@ -1661,6 +1696,9 @@ class TestFreshUserSections(unittest.TestCase):
             "fixed_maturity_bond_portfolio",
             "cash_portfolio",
             "pension_portfolio",
+            "crypto_portfolio",
+            "real_estate_portfolio",
+            "private_equity_portfolio",
         ):
             self.assertIn(f'data-bucket="{bucket}"', page)
 
@@ -1675,6 +1713,39 @@ class TestAddConstituent(unittest.TestCase):
         db_file = db_path(tmp)
         write_positions(db_file, {})
         return db_file
+
+    def test_real_estate_rows_get_realestate_broker_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "real_estate_portfolio",
+                name="Rental Flat",
+                value="350000",
+                broker="scalable",  # posted choice is ignored
+                cache=None,
+            )
+            self.assertEqual(display["broker"], "realestate")
+            stored = _positions(db_file, "default")["real_estate_portfolio"][0]
+            self.assertEqual(stored["broker"], "realestate")
+            self.assertEqual(stored["value"], 350000.0)
+            # The persisted row renders the stylized house icon.
+            self.assertIn("icons/realestate.svg", _render_row(display))
+
+    def test_cryptowallet_is_a_valid_broker_for_crypto_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = self._database(Path(tmp))
+            display = add_constituent(
+                db_file,
+                "crypto_portfolio",
+                name="BTC wallet",
+                value="1234.5",
+                broker="cryptowallet",
+                cache=None,
+            )
+            self.assertEqual(display["broker"], "cryptowallet")
+            stored = _positions(db_file, "default")["crypto_portfolio"][0]
+            self.assertEqual(stored["broker"], "cryptowallet")
 
     def test_full_row_appends_and_reports_display(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2914,13 +2985,24 @@ class TestConstituentsRoute(_RouteCase):
         status, body = self._get("/api/constituents/brokers")
         self.assertEqual(status, 200)
         brokers = json.loads(body)["brokers"]
-        self.assertEqual(len(brokers), 5)
+        self.assertEqual(len(brokers), 7)
         self.assertEqual(
             [b["id"] for b in brokers],
-            ["oskar", "scalable", "traderepublic", "check24", "alte-leipziger"],
+            [
+                "oskar",
+                "scalable",
+                "traderepublic",
+                "check24",
+                "alte-leipziger",
+                "cryptowallet",
+                "realestate",
+            ],
         )
         for entry in brokers:
             self.assertTrue("icons/" in entry["mark"] or "<svg" in entry["mark"])
+        by_id = {b["id"]: b for b in brokers}
+        self.assertEqual(by_id["realestate"]["sections"], ["real_estate_portfolio"])
+        self.assertNotIn("sections", by_id["scalable"])
 
     def test_post_check_isin_reports_name_price_and_existence(self) -> None:
         from unittest.mock import patch

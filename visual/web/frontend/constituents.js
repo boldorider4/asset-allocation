@@ -253,12 +253,27 @@
   /* Row creation via the + button. One draft per section: a draft <tr>
    * with OK (far left), text/figure inputs editable from the start,
    * locked shares/price dashes, a broker <select>, and a discard button.
+   * Brokers marked with a sections list are offered only in those
+   * sections (cryptowallet only in Cryptocurrencies); Real Estate
+   * Equity drafts get the realestate broker forced (no dropdown).
    * Choosing a broker swaps the select for its icon; a successful
    * JustETF check on the ISIN unlocks shares. OK validates and POSTs the
    * row, swapping in the server-rendered <tr>; failures and discards
    * keep or drop the draft locally.
    */
   var brokerCatalog = null;
+
+  /* Manual buckets (no vendor page to track): values only, no ISIN,
+   * so the draft row gets a locked dash in the ISIN column and the
+   * JustETF check can never fire for them. Real Estate Equity rows
+   * additionally get the realestate broker forced: no dropdown at
+   * all (the server overwrites whatever is posted).
+   */
+  var NO_ISIN_BUCKETS = {
+    real_estate_portfolio: true,
+    private_equity_portfolio: true,
+  };
+  var FORCED_BROKERS = { real_estate_portfolio: "realestate" };
 
   async function loadBrokers() {
     if (brokerCatalog) {
@@ -390,7 +405,11 @@
 
     row.appendChild(draftCell(draftInput("draft-name name", 64)));
     row.appendChild(draftCell(draftInput("draft-group text", 32)));
-    row.appendChild(draftCell(draftInput("draft-isin", 12)));
+    if (NO_ISIN_BUCKETS[bucket]) {
+      row.appendChild(draftCell(draftDash()));
+    } else {
+      row.appendChild(draftCell(draftInput("draft-isin", 12)));
+    }
     const valueCell = draftCell(draftInput("draft-value", 16));
     valueCell.appendChild(unitSpan());
     row.appendChild(valueCell);
@@ -403,20 +422,36 @@
     priceCell.appendChild(unitSpan());
     row.appendChild(priceCell);
 
-    const select = document.createElement("select");
-    select.className = "broker-select";
-    select.setAttribute("aria-label", "Broker");
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Broker…";
-    select.appendChild(placeholder);
-    for (const entry of entries) {
-      const option = document.createElement("option");
-      option.value = entry.id;
-      option.textContent = entry.label || entry.id;
-      select.appendChild(option);
+    var forced = FORCED_BROKERS[bucket];
+    if (forced) {
+      // The broker is not a choice here: preset it and show a locked
+      // dash (the icon paints once the row is persisted).
+      row.dataset.broker = forced;
+      const forcedDash = draftDash();
+      forcedDash.title = "Broker: " + forced + " (fixed for this section)";
+      row.appendChild(draftCell(forcedDash));
+    } else {
+      const select = document.createElement("select");
+      select.className = "broker-select";
+      select.setAttribute("aria-label", "Broker");
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Broker…";
+      select.appendChild(placeholder);
+      for (const entry of entries) {
+        // Restrictive brokers (sections on the catalog entry) are
+        // offered only in their sections, e.g. cryptowallet only here
+        // in the Cryptocurrencies section.
+        if (entry.sections && entry.sections.indexOf(bucket) === -1) {
+          continue;
+        }
+        const option = document.createElement("option");
+        option.value = entry.id;
+        option.textContent = entry.label || entry.id;
+        select.appendChild(option);
+      }
+      row.appendChild(draftCell(select));
     }
-    row.appendChild(draftCell(select));
 
     const discard = document.createElement("button");
     discard.type = "button";

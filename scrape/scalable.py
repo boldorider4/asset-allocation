@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
-from cli.common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, PRICE, SHARES, USAVN, VALUE
+from cli.common import BROKER, CASH_PORTFOLIO, DMEM, DMEM_OTHER, ISIN, NAME, PRICE, SCALABLE, SHARES, USAVN, VALUE
 from cli.logger import attach_color_stderr_handler_for_module
 from utils import bucket_for_isin, cache_broker_quotes
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-_SCALABLE = "scalable"
+_SCALABLE = SCALABLE
 _SC_BIN = "sc"
 _LOGIN_TIMEOUT_S = 300
 _CMD_TIMEOUT_S = 60

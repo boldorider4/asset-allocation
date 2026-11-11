@@ -68,6 +68,9 @@ The script leaves the JSON files untouched, skips a broken row with a warning an
 | `bond_portfolio` | Other bonds |
 | `commodity_portfolio` | Commodities |
 | `pension_portfolio` | Pension |
+| `crypto_portfolio` | Crypto ETCs/ETPs (JustETF-tracked, single "Cryptocurrencies" sector wedge) |
+| `real_estate_portfolio` | Manual real estate equity entries (no ISIN) |
+| `private_equity_portfolio` | Manual private equity entries (no ISIN) |
 
 Each asset class is an array of position objects. Typical fields:
 

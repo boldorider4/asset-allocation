@@ -34,6 +34,7 @@ from cli.common import (
     EQUITY_PORTFOLIO,
     ISIN,
     NAME,
+    OSKAR,
     SHARES,
     USAVN,
     VALUE,
@@ -42,7 +43,7 @@ from cli.common import (
 logger = logging.getLogger(__name__)
 attach_color_stderr_handler_for_module(logger)
 
-_OSKAR = "oskar"
+_OSKAR = OSKAR
 
 _DASHBOARD_URL = "https://mein.oskar.de/cockpit/dashboard"
 _DASHBOARD_PATH = urlparse(_DASHBOARD_URL).path.rstrip("/")
@@ -547,7 +548,7 @@ _OSKAR_ALLOCATION_BUCKETS = {
         "Aktien Europa", "Aktien Japan",
         "Aktien Schwellenländer",
         "Aktien Asien und pazifischer Raum",
-        "Aktien USA"
+        "Aktien US"
         ),
     _OSKAR_CATEGORY_ANLEIHEN: (
         "Anleihen Global",
@@ -593,13 +594,19 @@ _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
             break;
         }
     }
-    if (i0 < 0) return { clicked: false, rowLabel: null };
+    if (i0 < 0) return { clicked: false, rowLabel: null, labels: [] };
     let end = rows.length;
     for (let j = i0 + 1; j < rows.length; j++) {
         if (rows[j].classList.contains("level1")) {
             end = j;
             break;
         }
+    }
+    const labels = [];
+    for (let j = i0 + 1; j < end; j++) {
+        if (!rows[j].classList.contains("level2")) continue;
+        const a = rows[j].querySelector(".asset");
+        labels.push(norm(a ? a.textContent : ""));
     }
     const RL = norm(rowLabel);
     for (let j = i0 + 1; j < end; j++) {
@@ -610,11 +617,11 @@ _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS = r"""
         const em = r.querySelector("em.fa-angle-right.mirror");
         if (em && em.offsetParent) {
             em.click();
-            return { clicked: true, rowLabel: t || null };
+            return { clicked: true, rowLabel: t || null, labels: labels };
         }
-        return { clicked: false, rowLabel: t || null };
+        return { clicked: false, rowLabel: t || null, labels: labels };
     }
-    return { clicked: false, rowLabel: null };
+    return { clicked: false, rowLabel: null, labels: labels };
 }
 """
 
@@ -657,27 +664,39 @@ def _expand_oskar_allocation_bucket(
 
     page.wait_for_timeout(200)
     for row_label in sub_labels:
-        try:
-            raw = allocation_scope.evaluate(_CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS, [top_label, row_label])
-        except Exception as exc:
-            logger.debug(
-                "OSKAR expand: bucket=%r row=%r mirror click failed: %s",
+        raw: Any = None
+        for attempt in range(2):
+            try:
+                raw = allocation_scope.evaluate(
+                    _CLICK_MIRROR_FOR_ROW_IN_BUCKET_JS, [top_label, row_label]
+                )
+            except Exception as exc:
+                logger.debug(
+                    "OSKAR expand: bucket=%r row=%r mirror click failed: %s",
+                    top_label,
+                    row_label,
+                    exc,
+                )
+                break
+            clicked = bool(raw.get("clicked")) if isinstance(raw, dict) else bool(raw)
+            if clicked:
+                break
+            if attempt == 0:
+                page.wait_for_timeout(400)
+        clicked = bool(raw.get("clicked")) if isinstance(raw, dict) else bool(raw)
+        page.wait_for_timeout(480)
+        if clicked:
+            logger.info(
+                "OSKAR expand: bucket=%r sub_row=%r clicked=True", top_label, row_label
+            )
+        else:
+            logger.warning(
+                "OSKAR expand: bucket=%r sub_row=%r clicked=False rowLabel=%r labels=%r",
                 top_label,
                 row_label,
-                exc,
+                raw.get("rowLabel") if isinstance(raw, dict) else None,
+                raw.get("labels") if isinstance(raw, dict) else None,
             )
-            continue
-        if isinstance(raw, dict):
-            clicked = bool(raw.get("clicked"))
-        else:
-            clicked = bool(raw)
-        page.wait_for_timeout(480)
-        logger.info(
-            "OSKAR expand: bucket=%r sub_row=%r clicked=%s",
-            top_label,
-            row_label,
-            clicked,
-        )
         if merge_state is not None:
             snap = _collect_raw_rows_from_page(page)
             _merge_row_snapshots_into(

@@ -8,12 +8,16 @@ from cli.common import (
     BOND_PORTFOLIO,
     CASH_PORTFOLIO,
     COMMODITY_PORTFOLIO,
+    CRYPTO_PORTFOLIO,
     EQUITY_PORTFOLIO,
     FIXED_MATURITY_BOND_PORTFOLIO,
     PENSION_PORTFOLIO,
+    PRIVATE_EQUITY_PORTFOLIO,
+    REAL_ESTATE_PORTFOLIO,
 )
 from cli.logger import attach_color_stderr_handler_for_module
 from position.justetf_position import JustETFPosition
+from portfolio.crypto_portfolio import CryptoPortfolio
 from portfolio.regional_portfolio import RegionalPortfolio
 from portfolio.non_regional_portfolio import NonRegionalPortfolio
 from scrape.oskar import _ISIN_STRICT, _OSKAR, update_oskar_etfs_in_portfolio
@@ -120,6 +124,9 @@ def main(ctx: RuntimeContext) -> None:
     non_regional_bond_portfolio = NonRegionalPortfolio(name="Bonds", positions=ctx.portfolio.get(BOND_PORTFOLIO, []), ctx=ctx)
     commodity_portfolio = NonRegionalPortfolio(name="Inflation Hedge", positions=ctx.portfolio.get(COMMODITY_PORTFOLIO, []), ctx=ctx)
     pension_portfolio = NonRegionalPortfolio(name="bAV", positions=ctx.portfolio.get(PENSION_PORTFOLIO, []), ctx=ctx)
+    crypto_portfolio = CryptoPortfolio(name="Crypto", positions=ctx.portfolio.get(CRYPTO_PORTFOLIO, []), ctx=ctx)
+    real_estate_portfolio = NonRegionalPortfolio(name="Real Estate", positions=ctx.portfolio.get(REAL_ESTATE_PORTFOLIO, []), ctx=ctx)
+    private_equity_portfolio = NonRegionalPortfolio(name="Private Equity", positions=ctx.portfolio.get(PRIVATE_EQUITY_PORTFOLIO, []), ctx=ctx)
 
     # The persists consume the factory-queued pending writes
     persist_oskar_shares_in_portfolio(ctx)
@@ -127,8 +134,23 @@ def main(ctx: RuntimeContext) -> None:
 
     # Sector and geo splits were calculated once at composition above from
     # trusted staged splits (or freshly scraped ones when the fetch flags are on)
-    total_growth_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio
-    total_portfolio = equity_portfolio + non_regional_bond_portfolio + commodity_portfolio + fixed_maturity_bond_portfolio + cash_portfolio + pension_portfolio
+    total_growth_portfolio = (
+        equity_portfolio
+        + non_regional_bond_portfolio
+        + commodity_portfolio
+        + crypto_portfolio
+    )
+    total_portfolio = (
+        equity_portfolio
+        + non_regional_bond_portfolio
+        + commodity_portfolio
+        + crypto_portfolio
+        + fixed_maturity_bond_portfolio
+        + cash_portfolio
+        + pension_portfolio
+        + real_estate_portfolio
+        + private_equity_portfolio
+    )
 
     output_dir = ctx.output_data_dir()
     plotter = ctx.plotter_class()
